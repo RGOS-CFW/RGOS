@@ -16,7 +16,7 @@ mount -t devtmpfs devtmpfs /dev 2>/dev/null
 klog() { echo "rgos-initramfs: $*" > /dev/kmsg 2>/dev/null; }
 say()  { klog "$*"; echo "RG OS: $*"; }
 
-# boot= from the kernel command line (boot=LABEL=ROCKNIX, the stock value; the partition keeps that label); only a hint, we fall back to a scan
+# boot= from the kernel command line (boot=LABEL=RGOS; build.sh renames the stock ROCKNIX label to RGOS); only a hint, we fall back to a scan
 WANT=""
 for a in $(cat /proc/cmdline); do case "$a" in boot=*) WANT=${a#boot=} ;; esac; done
 

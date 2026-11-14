@@ -190,8 +190,15 @@ fi
 echo "==> Copying stock image to $IMG"
 cp --sparse=always "$RX_IMG" "$IMG"
 LOOP="$(losetup -Pf --show "$IMG")"
-# The FAT boot partition (partition 1) keeps its stock label ROCKNIX. ROCKNIX's own init (the fallback if rdinit is ever ignored)
-# and its boot= argument look the partition up by that label; renaming it is what caused "ROCKNIX partition not found".
+# The FAT boot partition (partition 1) is relabelled from the stock ROCKNIX to $BOOT_LABEL. The label and the boot=LABEL=... argument in
+# extlinux.conf (and extlinux.conf.stock) MUST change together: ROCKNIX's own init looks the partition up by the boot= label, and a
+# label that does not match it is what caused "ROCKNIX partition not found". Done here, while the partition is not mounted.
+BOOT_LABEL="RGOS"
+echo "==> Renaming the boot partition label: $(blkid -s LABEL -o value "${LOOP}p1" 2>/dev/null) -> $BOOT_LABEL"
+if command -v fatlabel >/dev/null 2>&1; then fatlabel "${LOOP}p1" "$BOOT_LABEL"
+elif command -v mlabel >/dev/null 2>&1; then MTOOLS_SKIP_CHECK=1 mlabel -i "${LOOP}p1" "::$BOOT_LABEL"
+else echo "!! need fatlabel (dosfstools) or mlabel (mtools) to rename the boot partition" >&2; exit 1; fi
+[[ "$(blkid -s LABEL -o value "${LOOP}p1")" == "$BOOT_LABEL" ]] || { echo "!! the boot partition label is not $BOOT_LABEL after renaming" >&2; exit 1; }
 mount "${LOOP}p1" "$WORK/mnt"
 echo "==> Stock boot partition:"; ls -la "$WORK/mnt"
 echo "==> Stock extlinux config (left untouched):"
@@ -565,7 +572,11 @@ python3 "$HERE/initramfs/mkinitramfs.py" "$BB" "$HERE/initramfs/init" "$WORK/mnt
 EXT="$WORK/mnt/extlinux/extlinux.conf"; [[ -f "$EXT" ]] || EXT="$WORK/mnt/extlinux.conf"
 [[ -f "$EXT" ]] || { echo "!! no extlinux.conf on the boot partition"; exit 1; }
 rm -f "$WORK/mnt/white.cpio.gz"                 # leftover from very old builds
-# boot=LABEL=ROCKNIX stays as shipped: the partition keeps its ROCKNIX label, so both our init and ROCKNIX's own can find it
+# boot=LABEL=ROCKNIX -> boot=LABEL=$BOOT_LABEL, matching the renamed partition; done BEFORE the .stock copy so that copy (and ROCKNIX's own
+# init, if you boot it that way) still finds the partition. The device-tree/kernel lines are not touched.
+sed -i "s/boot=LABEL=ROCKNIX/boot=LABEL=$BOOT_LABEL/g" "$EXT"
+grep -q "boot=LABEL=$BOOT_LABEL" "$EXT" || echo "   (note: no boot=LABEL=... argument found in extlinux.conf; nothing to rewrite)"
+! grep -q "LABEL=ROCKNIX" "$EXT" || { echo "!! extlinux.conf still refers to LABEL=ROCKNIX" >&2; exit 1; }
 cp "$EXT" "$(dirname "$EXT")/extlinux.conf.stock"   # recovery: copy this over extlinux.conf from a PC to boot ROCKNIX's own init again
 if [[ "$RGOS_INITRD" == 1 ]]; then
   echo "==> Patched extlinux config:"

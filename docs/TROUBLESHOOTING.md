@@ -1,6 +1,6 @@
 # Troubleshooting: the card does not boot
 
-RG OS leaves up to four evidence files on the FAT boot partition (the one labelled ROCKNIX). Put the card in a PC and look at which exist.
+RG OS leaves up to four evidence files on the FAT boot partition (the one labelled RGOS; older cards still carry the stock ROCKNIX label). Put the card in a PC and look at which exist.
 
 | File on the FAT partition | Written by | If it is missing |
 |---|---|---|
