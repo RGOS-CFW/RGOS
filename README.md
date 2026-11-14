@@ -9,18 +9,24 @@ RG OS is an open source Linux emulation distribution for retro handhelds built o
 | Anbernic RG35XX SP | `rg35xxsp` | Allwinner H700 | ROCKNIX-H700 (DDR4) | MBR |
 | Anbernic RG Rotate | `rg-rotate` | Unisoc T618 | ROCKNIX-T618 | GPT (`uboot` partition) |
 
-## Build
+## Build Image
 
     sudo ./build.sh rg34xxsp        # out/rg34xxsp-rgos.img
     sudo ./build.sh rg35xxh         # out/rg35xxh-rgos.img
     sudo ./build.sh rg35xxsp        # out/rg35xxsp-rgos.img
     sudo ./build.sh rg-rotate       # out/rg-rotate-rgos.img
     sudo ./build.sh all             # both
-    sudo ./build.sh rg34xxsp update # offline update tar (see docs/UPDATES.md)
 
 `sudo ./build.sh` with no device only prints the usage text; nothing is downloaded, mounted or written.
 
-See `docs/BUILD-WORKFLOW.md` (GitHub Actions and build options) and `docs/UPDATES.md`.
+## Build Update
+
+    sudo ./build.sh rg34xxsp update         #out/rg34xxsp-update.tar
+    sudo ./build.sh rg35xxh update          #out/rg35xxh-update.tar
+    sudo ./build.sh rg35xxsp update         #out/rg35xxsp-update.tar
+    sudo ./build.sh rg-rotate update        #out/rg-rotate-update.tar
+
+Place the `device-update.tar` in the updates folder which is located in the ROMS partition.
 
 # Join the Discord!
 By joining our [Discord Server](https://discord.gg/PmQeRvpGa), you can help grow our community as well as chat with us, get support and much more.
