@@ -290,6 +290,41 @@ def scan_roms():
     return games
 
 
+class Rescan:
+    """scan_roms() on a worker thread, so pressing X never freezes the menu (walking a big ROM library off an SD card takes seconds).
+    start() begins a scan (ignored while one runs); take() hands the finished list to the main loop exactly once, which then swaps it in,
+    so the drawing code never sees a half-built list. `busy` is True from start() until take() has delivered (or discarded) the result."""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._res = None                        # None = not finished; (list_or_None,) = finished (None if the scan failed)
+        self.busy = False
+
+    def start(self):
+        with self._lock:
+            if self.busy:
+                return False
+            self.busy, self._res = True, None
+        threading.Thread(target=self._work, daemon=True).start()
+        return True
+
+    def _work(self):
+        try:
+            r = scan_roms()
+        except Exception:
+            r = None
+        with self._lock:
+            self._res = (r,)
+
+    def take(self):
+        """The finished game list, or None while the scan is still running (or after a failed one: the old list is then kept)."""
+        with self._lock:
+            if self._res is None:
+                return None
+            r = self._res[0]
+            self._res, self.busy = None, False
+            return r
+
+
 def visible_systems(games):
     """The SYSTEMS entries that have at least one game (systems without ROMs are not listed)."""
     have = {g["sid"] for g in games}
@@ -1787,7 +1822,8 @@ def main():
     f_logo, f_big, f_row, f_small, f_tiny = mk(30), mk(22), mk(19), mk(14), mk(11)
 
     inp = Input()
-    all_games = scan_roms()
+    all_games = scan_roms()                    # the first scan is synchronous: there is nothing to show without it
+    rescan = Rescan()                          # X rescans in the background (see the loop)
     _gcache = [None, {}]
 
     def games_of(sid):                         # per-system lists, rebuilt only when the ROM scan is replaced (was O(all games) per frame)
@@ -2059,6 +2095,18 @@ def main():
         blanked = False
         if pygame.mixer.get_init() and not pygame.mixer.music.get_busy() and (_music_playlist or _music_tracks()):
             _play_next_launcher_track()
+        _scanned = rescan.take()               # a finished background rescan: swap it in here, on the main thread, between frames
+        if _scanned is not None:
+            cur_sid = vsys[sys_idx][0] if vsys else None
+            all_games = _scanned
+            vsys = visible_systems(all_games)
+            sys_idx = next((i for i, sy in enumerate(vsys) if sy[0] == cur_sid), min(sys_idx, max(0, len(vsys) - 1)))
+            if view == "games" and not any(sy[0] == cur_sid for sy in vsys):
+                view = "home" if launcher_id == "xmb" else "systems"               # the system lost its last game
+            elif view in ("games", "recents", "favorites"):
+                _k = "\0" + view if view in ("recents", "favorites") else (vsys[sys_idx][0] if vsys else "")
+                _n = len(recent_games() if view == "recents" else (favorite_games() if view == "favorites" else games_of(_k)))
+                idx_by[_k] = min(idx_by.get(_k, 0), max(0, _n - 1))
         _acts = inp.poll()
         if pending_acts:
             _acts, pending_acts = pending_acts + list(_acts), []
@@ -2100,15 +2148,7 @@ def main():
                 elif view == "bmap" and bmap and bmap.state in ("done", "fail"):
                     view = "home"
             elif a == "x" and view in ("home", "systems", "games", "recents", "favorites"):
-                cur_sid = vsys[sys_idx][0] if vsys else None
-                all_games = scan_roms()        # rescan
-                vsys = visible_systems(all_games)
-                sys_idx = next((i for i, sy in enumerate(vsys) if sy[0] == cur_sid), min(sys_idx, max(0, len(vsys) - 1)))
-                if view == "games" and not any(sy[0] == cur_sid for sy in vsys):
-                    view = "home" if launcher_id == "xmb" else "systems"           # the system lost its last game
-                elif view in ("games", "recents", "favorites"):
-                    n = len(recent_games() if view == "recents" else (favorite_games() if view == "favorites" else games_of(vsys[sys_idx][0] if vsys else "")))
-                    idx_by[key] = min(idx, max(0, n - 1))
+                rescan.start()                 # runs in the background; the loop swaps the new list in when it is done
             elif view == "home" and launcher_id == "xmb":      # XMB: left/right = category, up/down = item, A = open
                 cat = XMB_CATS[xmb_cat][0]
                 nav = a in ("left", "right", "l", "r", "up", "down")
@@ -2528,6 +2568,8 @@ def main():
             info = clk
         if forced:
             info = "First-time setup   %s" % clk
+        if rescan.busy:
+            info = "Scanning...   " + info
         s = f_small.render(info, True, DIM)
         bat = rd_bat()
         right = W - 20
