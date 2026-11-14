@@ -4,6 +4,7 @@
 #   rg-rotate   Anbernic RG Rotate  (Unisoc T618)   GPT, U-Boot found by the SPL through the "uboot" partition
 #   rg34xxsp    Anbernic RG34XXSP   (Allwinner H700) MBR, U-Boot in front of partition 1 (stock ROCKNIX H700 image)
 #   rg35xxh     Anbernic RG35XX H   (Allwinner H700) same stock ROCKNIX H700 image as the RG34XXSP, different dtb.img; 640x480 screen, two sticks
+#   rg35xxsp    Anbernic RG35XX SP  (Allwinner H700) clamshell, same stock ROCKNIX H700 image, different dtb.img; 640x480 screen, D-pad only (no sticks)
 #
 # For each device the stock ROCKNIX image is downloaded and ONLY its SYSTEM squashfs is replaced with a bare-bones Debian arm64 that
 # starts the RG OS menu (white screen only as a fallback). The partition table, bootloader area, kernel and device tree(s) are left
@@ -14,6 +15,7 @@
 # Run as root on Debian/Ubuntu (WSL2 is fine). A device is ALWAYS required; running it with no argument only prints this help:
 #   ./build.sh rg34xxsp            SD card image for the RG34XXSP        -> out/rg34xxsp-rgos.img
 #   ./build.sh rg35xxh             SD card image for the RG35XX H        -> out/rg35xxh-rgos.img
+#   ./build.sh rg35xxsp            SD card image for the RG35XX SP       -> out/rg35xxsp-rgos.img
 #   ./build.sh rg-rotate           SD card image for the RG Rotate       -> out/rg-rotate-rgos.img
 #   ./build.sh all                 every device above, one after the other
 #   ./build.sh <device|all> update offline update tar                    -> out/rgos-update-<device>-<id>.tar
@@ -22,7 +24,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ALL_DEVICES=(rg-rotate rg34xxsp rg35xxh)
+ALL_DEVICES=(rg-rotate rg34xxsp rg35xxh rg35xxsp)
 
 usage() {
   cat <<EOF
@@ -30,6 +32,7 @@ usage: sudo ./build.sh <device> [image|update]
 
   device   rg34xxsp   Anbernic RG34XXSP (Allwinner H700, ROCKNIX-H700 base image)
            rg35xxh    Anbernic RG35XX H (Allwinner H700, ROCKNIX-H700 base image)
+           rg35xxsp   Anbernic RG35XX SP (Allwinner H700, ROCKNIX-H700 base image)
            rg-rotate  Anbernic RG Rotate (Unisoc T618, ROCKNIX-T618 base image)
            all        build every device above
   image    full SD card image (default)  -> out/<device>-rgos.img
@@ -37,7 +40,8 @@ usage: sudo ./build.sh <device> [image|update]
 
 A device is required: ./build.sh with no argument does nothing but print this text.
 Options (environment): RG34XXSP: H700_RAM=DDR4|DDR3 (default DDR4, must match the console's RAM),
-  RG34XXSP_DTB=sun50i-h700-anbernic-rg34xx-sp[-v2-panel], RG35XXH_DTB=sun50i-h700-anbernic-rg35xx-h[-rev6-panel], ROCKNIX_H700_VERSION=<release tag>; any device: ROCKNIX_URL=<image .img.gz>.
+  RG34XXSP_DTB=sun50i-h700-anbernic-rg34xx-sp[-v2-panel], RG35XXH_DTB=sun50i-h700-anbernic-rg35xx-h[-rev6-panel],
+  RG35XXSP_DTB=sun50i-h700-anbernic-rg35xx-sp[-rev6-panel], ROCKNIX_H700_VERSION=<release tag>; any device: ROCKNIX_URL=<image .img.gz>.
 EOF
 }
 
@@ -47,6 +51,7 @@ MODE="${2:-image}"; [[ "$MODE" == "build" ]] && MODE=image      # "build" is acc
 case "$DEVICE_ARG" in
   rg34xxsp|rg34xx-sp)  DEVICE_ARG=rg34xxsp ;;
   rg35xxh|rg35xx-h)    DEVICE_ARG=rg35xxh ;;
+  rg35xxsp|rg35xx-sp)  DEVICE_ARG=rg35xxsp ;;
   rg-rotate|rgrotate)  DEVICE_ARG=rg-rotate ;;
   all)                 ;;
   "")                  usage; exit 1 ;;
@@ -111,6 +116,21 @@ case "$DEVICE" in
     RG35XXH_DTB="${RG35XXH_DTB:-sun50i-h700-anbernic-rg35xx-h}"
     [[ "$RG35XXH_DTB" =~ ^sun50i-h700-anbernic-rg35xx-h(-rev6-panel)?$ ]] || { echo "RG35XXH_DTB must be sun50i-h700-anbernic-rg35xx-h or sun50i-h700-anbernic-rg35xx-h-rev6-panel" >&2; exit 1; }
     H700_DTB="$RG35XXH_DTB"
+    ;;
+  rg35xxsp)
+    DEVICE_DESC="Anbernic RG35XX SP (Allwinner H700)"
+    PTABLE=dos
+    # Same stock ROCKNIX H700 image as the RG34XXSP / RG35XX H (it carries every H700 console's device tree). The RG35XX SP is a 1 GiB
+    # LPDDR4 clamshell with a 640x480 screen, so DDR4 is the default; H700_RAM=DDR3 only if your unit really needs it. Some units
+    # have a different (rev6) panel: if the screen shows garbage with the default dtb, rebuild with
+    # RG35XXSP_DTB=sun50i-h700-anbernic-rg35xx-sp-rev6-panel. If a dtb name is not in the stock image the build stops and lists the ones that are.
+    H700_RAM="${H700_RAM:-DDR4}"
+    [[ "$H700_RAM" == "DDR4" || "$H700_RAM" == "DDR3" ]] || { echo "H700_RAM must be DDR4 or DDR3" >&2; exit 1; }
+    ROCKNIX_H700_VERSION="${ROCKNIX_H700_VERSION:-20261001}"
+    BASE_URL="https://github.com/ROCKNIX/distribution/releases/download/${ROCKNIX_H700_VERSION}/ROCKNIX-H700.aarch64-${ROCKNIX_H700_VERSION}-${H700_RAM}.img.gz"
+    RG35XXSP_DTB="${RG35XXSP_DTB:-sun50i-h700-anbernic-rg35xx-sp}"
+    [[ "$RG35XXSP_DTB" =~ ^sun50i-h700-anbernic-rg35xx-sp(-rev6-panel)?$ ]] || { echo "RG35XXSP_DTB must be sun50i-h700-anbernic-rg35xx-sp or sun50i-h700-anbernic-rg35xx-sp-rev6-panel" >&2; exit 1; }
+    H700_DTB="$RG35XXSP_DTB"
     ;;
 esac
 echo "==> Device: $DEVICE_DESC  (mode: $MODE)"
@@ -178,7 +198,7 @@ echo "==> Stock extlinux config (left untouched):"
 cat "$WORK/mnt"/extlinux/extlinux.conf 2>/dev/null || cat "$WORK/mnt"/extlinux.conf 2>/dev/null || echo "(none found)"
 
 # H700: boot the right device tree. dtb.img is what extlinux.conf (FDT /dtb.img) loads; device_trees/ holds one dtb per console.
-if [[ "$DEVICE" == "rg34xxsp" || "$DEVICE" == "rg35xxh" ]]; then
+if [[ "$DEVICE" == "rg34xxsp" || "$DEVICE" == "rg35xxh" || "$DEVICE" == "rg35xxsp" ]]; then
   DTB_SRC="$WORK/mnt/device_trees/$H700_DTB.dtb"
   [[ -f "$DTB_SRC" ]] || { echo "!! $H700_DTB.dtb is not in the stock image's device_trees/ ($(ls "$WORK/mnt/device_trees" 2>/dev/null | tr '\n' ' '))"; exit 1; }
   echo "==> dtb.img <- device_trees/$H700_DTB.dtb"
@@ -278,7 +298,7 @@ ls "$ROOTFS"/usr/libexec/bluetooth/bluetoothd "$ROOTFS"/usr/lib/bluetooth/blueto
 echo "$DEVICE" > "$ROOTFS/etc/rgos-device"
 # RG34XXSP only: analog sticks. The input hub publishes ABS_X/Y/RX/RY of the stock joypad device (input-rg34xxsp.json, read by rgos-input
 # because it is named after /etc/rgos-device) and RetroArch gets the matching axis binds (retroarch-rg34xxsp.cfg, appended by rgos-launch).
-# Other devices get neither file, so their input is exactly what it was.
+# Other devices get neither file, so their input is exactly what it was (the RG35XX SP has no sticks: D-pad and buttons only).
 if [[ "$DEVICE" == "rg34xxsp" || "$DEVICE" == "rg35xxh" ]]; then
   mkdir -p "$ROOTFS/etc/rgos"
   echo '{"analog": true}' > "$ROOTFS/etc/rgos/input-$DEVICE.json"
@@ -291,9 +311,11 @@ fi
 # music / splash added to the ROMS partition (music/, splash/splash.mjpg) is picked up as well.
 if [[ -d "$HERE/splash" ]]; then
   mkdir -p "$ROOTFS/etc/rgos/splash"
+  SPLASH_DEV="$DEVICE"; [[ "$DEVICE" == "rg35xxsp" ]] && SPLASH_DEV=rg35xxh   # the RG35XX SP has the RG35XX H's 640x480 screen: same video, installed under its own name
   for f in "$HERE"/splash/*; do
-    case "$(basename "$f")" in splash-*) [[ "$(basename "$f")" == splash-"$DEVICE".* ]] || continue ;; esac   # only this device's video
-    cp "$f" "$ROOTFS/etc/rgos/splash/"
+    b="$(basename "$f")"
+    case "$b" in splash-*) [[ "$b" == splash-"$SPLASH_DEV".* ]] || continue; b="splash-$DEVICE.${b#splash-"$SPLASH_DEV".}" ;; esac   # only this device's video
+    cp "$f" "$ROOTFS/etc/rgos/splash/$b"
   done
 else
   echo "!! $HERE/splash missing: no startup splash in the image"
@@ -557,7 +579,7 @@ if [[ "$MODE" == "update" ]]; then
   # points at /rgos-initrd.cpio. UPDATE_EXTLINUX=1 sudo -E ./build.sh update
   [[ "${UPDATE_EXTLINUX:-0}" == "1" ]] && cp "$EXT" "$WORK/upd/extlinux.conf"
   # RG34XXSP: dtb.img is only included on request (UPDATE_DTB=1): the card may carry a hand-picked one (v2 panel) that must survive updates
-  [[ ( "$DEVICE" == "rg34xxsp" || "$DEVICE" == "rg35xxh" ) && "${UPDATE_DTB:-0}" == "1" ]] && cp "$WORK/mnt/dtb.img" "$WORK/upd/dtb.img"
+  [[ ( "$DEVICE" == "rg34xxsp" || "$DEVICE" == "rg35xxh" || "$DEVICE" == "rg35xxsp" ) && "${UPDATE_DTB:-0}" == "1" ]] && cp "$WORK/mnt/dtb.img" "$WORK/upd/dtb.img"
 fi
 
 sync
@@ -604,5 +626,5 @@ echo "RG OS logs are copied to rgos-logs.txt on the card's FAT partition at 8, 2
 if [[ "$DEVICE" == "rg-rotate" ]]; then
   echo "Flash the SPL once (cd spl-flasher && ./flash-spl.sh), then write the image to the SD card."
 else
-  echo "Write the image to the SD card (the H700 boots straight from it; no SPL flashing). dtb.img = $H700_DTB.dtb; to change it, rebuild with RG34XXSP_DTB=... / RG35XXH_DTB=... (device_trees/ is not on the card)."
+  echo "Write the image to the SD card (the H700 boots straight from it; no SPL flashing). dtb.img = $H700_DTB.dtb; to change it, rebuild with RG34XXSP_DTB=... / RG35XXH_DTB=... / RG35XXSP_DTB=... (device_trees/ is not on the card)."
 fi

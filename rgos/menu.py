@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RG OS menu - original frontend for the Anbernic RG Rotate, RG34XXSP and RG35XX H.
+"""RG OS menu - original frontend for the Anbernic RG Rotate, RG34XXSP, RG35XX H and RG35XX SP.
 
 Lists the native Linux ports in <ROMS>/roms/ports/ (the .sh launchers) and on selection writes the script path to
 /run/rgos/launch and exits with code 10 so the session loop can run it.
@@ -79,10 +79,11 @@ def _device():
 #   rg-rotate  square (1:1) screen, 720x720
 #   rg34xxsp   3:2 screen, 720x480 (the layout every screen below was first written for)
 #   rg35xxh    4:3 screen (640x480 panel), 720x540 canvas (DY = 60: one more row than the RG34XXSP)
+#   rg35xxsp   same 640x480 panel and canvas as the rg35xxh
 # DY is the height gained over the 720x480 layout (0 on the RG34XXSP); every screen below spends it on more rows / taller
 # panels instead of leaving blank space.
 DEVICE_ID = os.environ.get("RGOS_DEVICE") or _device() or "rg-rotate"
-CANVAS = {"rg-rotate": (720, 720), "rg34xxsp": (720, 480), "rg35xxh": (720, 540)}
+CANVAS = {"rg-rotate": (720, 720), "rg34xxsp": (720, 480), "rg35xxh": (720, 540), "rg35xxsp": (720, 540)}
 W, H = CANVAS.get(DEVICE_ID, CANVAS["rg-rotate"])
 DY = H - 480
 DX = 0                                         # horizontal layout offset (unused: the width is unchanged)

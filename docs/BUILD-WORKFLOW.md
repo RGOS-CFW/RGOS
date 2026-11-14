@@ -1,12 +1,12 @@
 # Build RGOS in GitHub Actions
 
-The workflow at `.github/workflows/build-rgos.yml` manually builds either a flashable disk image (`.img`) or an on-device update package (`.tar`) for the **Anbernic RG34XXSP** and the **Anbernic RG Rotate** (`build.sh`: a Debian arm64 rootfs on each device's stock ROCKNIX image).
+The workflow at `.github/workflows/build-rgos.yml` manually builds either a flashable disk image (`.img`) or an on-device update package (`.tar`) for the **Anbernic RG34XXSP**, **RG35XX H**, **RG35XX SP** and **RG Rotate** (`build.sh`: a Debian arm64 rootfs on each device's stock ROCKNIX image).
 
 ## Run it
 
 1. Push this repository to GitHub with the workflow file included.
 2. Open **Actions → Build RGOS image or update → Run workflow**.
-3. Choose the `device` (`rg34xxsp`, `rg35xxh`, `rg-rotate` or `all`) and `img` or `update-tar`.
+3. Choose the `device` (`rg34xxsp`, `rg35xxh`, `rg35xxsp`, `rg-rotate` or `all`) and `img` or `update-tar`.
    - `img`: artifact `rgos-<device>-<id>-img` containing `<device>-rgos.img.gz` (gunzip it, then flash). The run checks that partition 1 still carries the stock `ROCKNIX` label, `extlinux.conf` has `rdinit=/rgos-init`, and then the device-specific part: RG Rotate = partition 3 is `uboot` (GPT); RG34XXSP = MBR image with `dtb.img` present.
    - `update-tar`: `rgos-update-<device>-<id>.tar` (manifest device `rg-rotate` or `rg34xxsp`, SHA-256 checked). Tick *update_extlinux* to include `extlinux.conf`.
 4. Optionally provide a build ID, turn off *build_psx* (skips the slow emulated PlayStation core build), turn off *build_gc* (skips the RG Rotate-only GameCube core, see `docs/GAMECUBE.md`) or override *rocknix_url* (not with `device=all`: each device has its own stock image).
@@ -26,6 +26,8 @@ The build is large and can take hours. GitHub-hosted runners have limited free d
 
 ## Building locally
 
-`./build.sh <rg34xxsp|rg-rotate|all> [image|update]` from the repository root, using `sudo` when it is not already root. **A device is required**: `sudo ./build.sh` on its own only prints the usage text and does nothing. Output goes to `out/` (`rg34xxsp-rgos.img`, `rg-rotate-rgos.img`); each device has its own work directory under `work/<device>/`. `all` builds the devices one after the other and needs roughly twice the disk space.
+`./build.sh <rg34xxsp|rg35xxh|rg35xxsp|rg-rotate|all> [image|update]` from the repository root, using `sudo` when it is not already root. **A device is required**: `sudo ./build.sh` on its own only prints the usage text and does nothing. Output goes to `out/` (`rg34xxsp-rgos.img`, `rg-rotate-rgos.img`); each device has its own work directory under `work/<device>/`. `all` builds the devices one after the other and needs roughly twice the disk space.
 
 RG34XXSP specifics (see the header of `build.sh`): the base is the stock ROCKNIX H700 image (`ROCKNIX-H700.aarch64-<release>-DDR4.img.gz` from the ROCKNIX releases; `H700_RAM=DDR3` / `ROCKNIX_H700_VERSION=<tag>` / `ROCKNIX_URL=<url>` change it). The image has an MBR, so there is no `uboot` partition and no SPL to flash; the build copies `device_trees/sun50i-h700-anbernic-rg34xx-sp.dtb` to `dtb.img` (`RG34XXSP_DTB=sun50i-h700-anbernic-rg34xx-sp-v2-panel` for the v2 panel) and then removes `device_trees/`, so `dtb.img` is the only device tree on the RGOS partition. The ROMS partition is created on first boot as partition 3.
+
+RG35XX SP specifics: same stock ROCKNIX H700 image as the RG34XXSP and RG35XX H. The build copies `device_trees/sun50i-h700-anbernic-rg35xx-sp.dtb` to `dtb.img` (`RG35XXSP_DTB=sun50i-h700-anbernic-rg35xx-sp-rev6-panel` if the screen shows garbage; if the dtb name is not in the stock image the build stops and lists the ones that are). The screen is 640x480, so it uses the RG35XX H's 720x540 menu layout and startup video. It has no analog sticks, so unlike the RG34XXSP and RG35XX H no stick input or axis binds are installed.

@@ -6,15 +6,16 @@ RG OS is an open source Linux emulation distribution for retro handhelds built o
 |---|---|---|---|---|
 | Anbernic RG34XXSP | `rg34xxsp` | Allwinner H700 | ROCKNIX-H700 (DDR4) | MBR |
 | Anbernic RG35XX H | `rg35xxh` | Allwinner H700 | ROCKNIX-H700 (DDR4) | MBR |
+| Anbernic RG35XX SP | `rg35xxsp` | Allwinner H700 | ROCKNIX-H700 (DDR4) | MBR |
 | Anbernic RG Rotate | `rg-rotate` | Unisoc T618 | ROCKNIX-T618 | GPT (`uboot` partition) |
 
 ## Build
 
     sudo ./build.sh rg34xxsp        # out/rg34xxsp-rgos.img
     sudo ./build.sh rg35xxh         # out/rg35xxh-rgos.img
+    sudo ./build.sh rg35xxsp        # out/rg35xxsp-rgos.img
     sudo ./build.sh rg-rotate       # out/rg-rotate-rgos.img
     sudo ./build.sh all             # both
-    sudo ./build.sh rg34xxsp update # offline update tar (see docs/UPDATES.md)
 
 `sudo ./build.sh` with no device only prints the usage text; nothing is downloaded, mounted or written.
 
