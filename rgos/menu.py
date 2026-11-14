@@ -675,7 +675,7 @@ RECENT_MAX = 20
 
 # Launchers (Settings > Launcher): the look of the home screen. "rgos" is the classic tile grid, "xmb" a PlayStation-style cross media bar
 # (categories side by side, the items of the selected one listed below it). The choice is kept in state.json ("launcher").
-LAUNCHERS = [("rgos", "RG OS", "Classic tile launcher"), ("xmb", "XMB", "PlayStation-style cross media bar")]
+LAUNCHERS = [("rgos", "RG OS", "Classic tile launcher"), ("xmb", "RG XMB", "PlayStation-style cross media bar")]
 DEFAULT_LAUNCHER = LAUNCHERS[0][0]
 
 
