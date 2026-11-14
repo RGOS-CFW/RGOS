@@ -318,7 +318,7 @@ esac
 # music / splash added to the ROMS partition (music/, splash/splash.mjpg) is picked up as well.
 if [[ -d "$HERE/splash" ]]; then
   mkdir -p "$ROOTFS/etc/rgos/splash"
-  SPLASH_DEV="$DEVICE"; [[ "$DEVICE" == "rg35xxsp" ]] && SPLASH_DEV=rg35xxh   # the RG35XX SP has the RG35XX H's 640x480 screen: same video, installed under its own name
+  SPLASH_DEV="$DEVICE"; [[ "$DEVICE" == "rg35xxsp" && ! -f "$HERE/splash/splash-rg35xxsp.mjpg" ]] && SPLASH_DEV=rg35xxh   # the RG35XX SP ships its own splash-rg35xxsp.*; without it, fall back to the RG35XX H's (same 640x480 screen) installed under the SP's name
   for f in "$HERE"/splash/*; do
     b="$(basename "$f")"
     case "$b" in splash-*) [[ "$b" == splash-"$SPLASH_DEV".* ]] || continue; b="splash-$DEVICE.${b#splash-"$SPLASH_DEV".}" ;; esac   # only this device's video
