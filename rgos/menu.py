@@ -494,8 +494,9 @@ class CFont:
         except TypeError:                      # unhashable argument: just render it
             return self._f.render(text, aa, color, *bg)
         if surf is None:
-            if len(self._r) > 600:
-                self._r.clear()
+            if len(self._r) > 900:             # evict the oldest third rather than everything (a full clear re-rendered every label on one frame)
+                for k in list(self._r)[:300]:
+                    del self._r[k]
             surf = self._r[key] = self._f.render(text, aa, color, *bg)
         return surf
 
@@ -832,15 +833,16 @@ _XBG = {}                                      # cached background gradient
 _XBG_RAW = [None]                              # the same gradient as raw RGB bytes: colour lookups without locking a surface
 _XSILK = {}                                    # silk geometry that does not change from frame to frame (see xmb_bg)
 _XFRAME = [None, -1.0]                         # the last rendered background frame and the time it was drawn
-XMB_BG_INTERVAL = 1.0 / 30.0                   # the background is redrawn at most this often (it moves slowly; menu motion can run at 60 fps)
+XMB_BG_INTERVAL = 1.0 / 30.0                   # the silk is redrawn at most this often (it moves slowly; menu motion can run at 60 fps)
+XMB_BG_MOVING_MAX = 0.5                        # ... and while the menu is moving it is kept for up to this long (a redraw frame would be a stutter)
 
 
 def xmb_icon(kind, size, color, alpha=1.0):
     """The icon `kind` as a size x size surface tinted `color` and faded by `alpha` (the shapes are drawn once, then scaled + cached;
     the tinted result is cached too, with the colour and fade rounded to steps of 4/255 that the eye cannot tell apart)."""
-    ck = tuple(min(255, (int(v) + 2) & ~3) for v in color[:3])
+    ck = tuple(min(255, (int(v) + 4) & ~7) for v in color[:3])     # steps of 8: during motion the colour / fade change every frame, so coarse steps keep the cache hot
     a8 = int(alpha * 255) if alpha < 0.99 else 255
-    aq = 255 if a8 >= 255 else max(0, a8) & ~3
+    aq = 255 if a8 >= 250 else max(0, a8) & ~7
     key = (kind, size, ck, aq)
     t = _XIT.get(key)
     if t is not None:
@@ -857,10 +859,29 @@ def xmb_icon(kind, size, color, alpha=1.0):
     t.fill(ck + (255,), special_flags=pygame.BLEND_RGBA_MULT)
     if aq < 255:
         t.set_alpha(aq)
-    if len(_XIT) > 600:
-        _XIT.clear()
+    if len(_XIT) > 900:                        # drop the oldest third, never everything at once (a full clear made every icon miss on the same frame: a visible hitch)
+        for k in list(_XIT)[:300]:
+            del _XIT[k]
     _XIT[key] = t
     return t
+
+
+def _xq(col):
+    """A colour rounded to steps of 8 per channel. Labels are cached per exact colour, and in motion their colour changes every frame."""
+    return tuple(min(255, (int(v) + 4) & ~7) for v in col[:3])
+
+
+def _smooth_damp(pos, vel, target, dt, omega=22.0):
+    """One step of a critically damped spring (exact for any dt, no overshoot): eases in and out and keeps its velocity when the target
+    moves, so held or repeated presses glide on instead of restarting the ease each time. Returns (pos, vel)."""
+    e = math.exp(-omega * dt)
+    err = pos - target
+    tmp = (vel + omega * err) * dt
+    vel = (vel - omega * tmp) * e
+    pos = target + (err + tmp) * e
+    if abs(pos - target) < 0.002 and abs(vel) < 0.02:
+        return float(target), 0.0
+    return pos, vel
 
 
 # PS3-style silk. Each bundle is a sheet of fine strands that sweeps across the screen, fans out and pinches together where it \"twists\":
@@ -908,9 +929,11 @@ def _xmb_silk_build(g):
     return xs, wig, bundles
 
 
-def xmb_bg(c, t):
+def xmb_bg(c, t, moving=False):
     """The XMB background: a diagonal gradient in the theme colours (dark top-left, glowing bottom-right), a sweeping sheet of silk
-    strands that slowly shimmers and twists, and a little twinkling dust."""
+    strands that slowly shimmers and twists, and a little twinkling dust.
+    The silk is by far the costliest part of a frame, so it is redrawn at most 30 times a second, and while the menu is moving
+    (`moving`) the last silk frame is kept for up to XMB_BG_MOVING_MAX seconds: every frame then costs the same, so the motion stays even."""
     key = (XMB_TOP, XMB_LOW, XMB_SILK, W, H)
     g = _XBG.get(key)
     if g is None:
@@ -938,9 +961,20 @@ def xmb_bg(c, t):
                 _XMB_SPARKS.append((r.uniform(0, W), (r.uniform(0.10, 0.98) if i % 3 else r.uniform(0.40, 0.85)) * H,
                                     r.uniform(3, 12), r.uniform(0, 6.28), 2 if r.random() < 0.8 else 3))
     fr = _XFRAME
-    if fr[0] is not None and 0.0 <= t - fr[1] < XMB_BG_INTERVAL:   # drawn a moment ago: reuse it (menu animation can run at 60 fps)
-        c.blit(fr[0], (0, 0))
-        return
+    age = t - fr[1]
+    if fr[0] is not None and 0.0 <= age < (XMB_BG_MOVING_MAX if moving else XMB_BG_INTERVAL):
+        f = fr[0]                              # silk drawn a moment ago: reuse it
+    else:
+        f = _xmb_silk_draw(g, t)
+    c.blit(f, (0, 0))
+    for x0, y0, spd, ph, sz in _XMB_SPARKS:                        # twinkling dust: cheap, so it is drawn fresh every frame and keeps drifting smoothly
+        x, y = (x0 + t * spd) % W, y0 + 4 * math.sin(t * 0.4 + ph)
+        pygame.draw.rect(c, xmb_tint(x, y, 0.22 + 0.55 * (0.5 + 0.5 * math.sin(t * 1.6 + ph))), (int(x), int(y), sz, sz))
+
+
+def _xmb_silk_draw(g, t):
+    """Render the silk over the gradient `g` into the cached frame (the expensive part of the background) and return it."""
+    fr = _XFRAME
     if fr[0] is None:
         fr[0] = g.copy()
     else:
@@ -966,10 +1000,7 @@ def xmb_bg(c, t):
         for sf, sck, ssk, col in strands:
             pygame.draw.aalines(f, col, False, [(x, yc + h * sf + hs * sck + hc * ssk) for x, yc, h, hs, hc in rows])
         pygame.draw.lines(f, edge_col, False, upper, 2)        # lit upper edge
-    for x0, y0, spd, ph, sz in _XMB_SPARKS:                    # twinkling dust
-        x, y = (x0 + t * spd) % W, y0 + 4 * math.sin(t * 0.4 + ph)
-        pygame.draw.rect(f, xmb_tint(x, y, 0.22 + 0.55 * (0.5 + 0.5 * math.sin(t * 1.6 + ph))), (int(x), int(y), sz, sz))
-    c.blit(f, (0, 0))
+    return f
 
 
 def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade):
@@ -979,18 +1010,19 @@ def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade):
     sp, gap = 56 + max(0, H - 480) // 10, 16
     for i, (cid, cname) in enumerate(XMB_CATS):
         d = i - cx_f
-        x = int(ax + d * sp_x + max(-1.0, min(1.0, d)) * 24)
+        x = int(round(ax + d * sp_x + max(-1.0, min(1.0, d)) * 24))
         if x < -60 or x > W + 60:
             continue
         t = max(0.0, 1.0 - abs(d))
-        size = int(small + (big - small) * t)
+        t = t * t * (3.0 - 2.0 * t)                          # smoothstep: the icon grows and brightens without a hard start or stop
+        size = int(round((small + (big - small) * t) / 4.0)) * 4   # whole steps of 4 px: every size is scaled once and cached (no per-frame rescaling)
         if t > 0.05:
             pygame.draw.circle(c, xmb_tint(x, bar_y, 0.09 * t), (x, bar_y), int(size * 0.62))
         c.blit(xmb_icon(cid, size, _mix(DIM, TEXT, t), 0.5 + 0.5 * t), (x - size // 2, bar_y - size // 2))
         if t > 0.3:
-            lab = f_row.render(cname, True, _mix(BG, TEXT, t))
+            lab = f_row.render(cname, True, _xq(_mix(BG, TEXT, t)))
             c.blit(lab, (x - lab.get_width() // 2, bar_y + big // 2 + 8))
-    colx = int(ax + (cat_i - cx_f) * sp_x)
+    colx = int(round(ax + (cat_i - cx_f) * sp_x))
     y0 = bar_y + big // 2 + 8 + 26 + sp // 2 + 6
     for i, it in enumerate(items):
         d = i - vy
@@ -1000,22 +1032,24 @@ def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade):
         if y > H - 40:
             continue
         sel_t = max(0.0, 1.0 - abs(d))
-        al = (1.0 + min(0.0, d)) * fade                      # items above the selection fade out under the label
+        sel_t = sel_t * sel_t * (3.0 - 2.0 * sel_t)
+        al = (1.0 + min(0.0, d)) * fade * fade * (3.0 - 2.0 * fade)   # items above the selection fade out under the label; the fade-in is eased
         if d > 0:
             al *= max(0.0, min(1.0, (H - 44 - y) / 30.0))   # ... and the ones below near the hint line
         if al <= 0.02:
             continue
         al *= 0.80 + 0.20 * sel_t
-        isz = int(34 + 14 * sel_t)
+        isz = int(round((34 + 14 * sel_t) / 2.0)) * 2
+        yi = int(round(y))
         if sel_t > 0.05:
-            pygame.draw.circle(c, xmb_tint(colx, y, 0.08 * sel_t * al), (colx, int(y)), int(isz * 0.62))
-        c.blit(xmb_icon(it["icon"], isz, _mix(DIM, TEXT, sel_t), al), (colx - isz // 2, int(y) - isz // 2))
+            pygame.draw.circle(c, xmb_tint(colx, y, 0.08 * sel_t * al), (colx, yi), int(isz * 0.62))
+        c.blit(xmb_icon(it["icon"], isz, _mix(DIM, TEXT, sel_t), al), (colx - isz // 2, yi - isz // 2))
         tx = colx + 40
-        lab = f_row.render(fit(f_row, it["label"], W - tx - 20), True, _mix(BG, _mix(DIM, TEXT, 0.40 + 0.60 * sel_t), al))
-        c.blit(lab, (tx, int(y) - lab.get_height() // 2 - int(10 * sel_t)))
+        lab = f_row.render(fit(f_row, it["label"], W - tx - 20), True, _xq(_mix(BG, _mix(DIM, TEXT, 0.40 + 0.60 * sel_t), al)))
+        c.blit(lab, (tx, yi - lab.get_height() // 2 - int(round(10 * sel_t))))
         if sel_t > 0.2 and it.get("sub"):
-            sub = f_small.render(fit(f_small, it["sub"], W - tx - 20), True, _mix(BG, DIM, al * sel_t))
-            c.blit(sub, (tx, int(y) + 3))
+            sub = f_small.render(fit(f_small, it["sub"], W - tx - 20), True, _xq(_mix(BG, DIM, al * sel_t)))
+            c.blit(sub, (tx, yi + 3))
 
 
 _XDD = [None, None]                            # key and finished panel of the last dropdown frame
@@ -1830,7 +1864,9 @@ def main():
         list, which was done every frame). The button handler passes fresh=True so that an action always uses the current list."""
         key, now = (theme_id, launcher_id, id(all_games), id(vsys)), time.monotonic()
         hit = _xic.get(cat)
-        if not fresh and hit is not None and hit[1] == key and now - hit[0] < 0.25:
+        # Rebuilt at most once a second, and not at all while the user is navigating (the Settings list reads Wi-Fi / SSH / Bluetooth
+        # status, which is a hitch in the middle of a scroll); the list that is already built is only a moment old.
+        if not fresh and hit is not None and hit[1] == key and (now - hit[0] < 1.0 or now - last_act < 0.6):
             return hit[2]
         items = _xic[cat] = (now, key, _xmb_items(cat))
         return items[2]
@@ -1841,6 +1877,7 @@ def main():
     set_idx, tool_idx, kb = 0, 0, None
     dd = None                                  # Settings dropdown (Theme / Launcher): None (closed) or {"kind", "sel": index, "orig": id to restore on cancel}
     xmb_cat, xmb_sel, xmb_cx, xmb_vy, xmb_fade = XMB_START, {}, float(XMB_START), 0.0, 1.0     # XMB: category, item per category, animated positions
+    xmb_cv, xmb_vv = 0.0, 0.0                  # their velocities (the positions follow their targets as critically damped springs)
     xmb_ret = [False]                          # True while a screen opened from the XMB is showing: B goes back to the XMB, not to the parent list
     pending_acts = []                          # buttons queued by the program itself (e.g. "A" after jumping from the XMB to a Settings row)
     sysname = {sy[0]: sy[4] for sy in SYSTEMS}
@@ -2074,13 +2111,16 @@ def main():
                     idx_by[key] = min(idx, max(0, n - 1))
             elif view == "home" and launcher_id == "xmb":      # XMB: left/right = category, up/down = item, A = open
                 cat = XMB_CATS[xmb_cat][0]
-                items = xmb_items(cat, True)
+                nav = a in ("left", "right", "l", "r", "up", "down")
+                items = xmb_items(cat, not nav)    # moving only needs the list length: use the built list (rebuilding it per press, and per auto-repeat, was a hitch)
+                if not nav:
+                    _xic.clear()                   # an action may change what the rows say: rebuild them for the next frame
                 cur = min(xmb_sel.get(cat, 0), len(items) - 1)
                 if a in ("left", "right", "l", "r"):
                     new = max(0, min(len(XMB_CATS) - 1, xmb_cat + (1 if a in ("right", "r") else -1)))
                     if new != xmb_cat:
                         xmb_cat, xmb_fade = new, 0.0
-                        xmb_vy = float(xmb_sel.get(XMB_CATS[new][0], 0))
+                        xmb_vy, xmb_vv = float(xmb_sel.get(XMB_CATS[new][0], 0)), 0.0
                 elif a in ("up", "down"):
                     xmb_sel[cat] = max(0, min(len(items) - 1, cur + (1 if a == "down" else -1)))
                 elif a == "y" and items and items[cur]["act"] and items[cur]["act"][0] == "setting" and SETTINGS_ROWS[items[cur]["act"][1]] == "splash":
@@ -2452,7 +2492,7 @@ def main():
         anim_moving = anim_tick()
         XMB_UI[0] = launcher_id == "xmb"
         if launcher_id == "xmb":                               # XMB look: wave background on every screen, no title bar
-            xmb_bg(canvas, time.time())
+            xmb_bg(canvas, time.time(), anim_moving or time.monotonic() - last_act < 0.35)   # hold the silk still while the menu moves (even frame times)
         else:
             canvas.fill(BG)
             pygame.draw.rect(canvas, PANEL, (0, 0, W, 64))
@@ -2513,11 +2553,11 @@ def main():
             xcat = XMB_CATS[xmb_cat][0]
             xitems = xmb_items(xcat)
             xmb_sel[xcat] = max(0, min(xmb_sel.get(xcat, 0), len(xitems) - 1))
-            xk = 1.0 - math.exp(-_anim_clock[1] * 14.0)                     # ease the bar and the list toward their targets
-            xmb_cx += (xmb_cat - xmb_cx) * xk
-            xmb_vy += (xmb_sel[xcat] - xmb_vy) * xk
-            xmb_fade = min(1.0, xmb_fade + _anim_clock[1] * 6.0)
-            if abs(xmb_cat - xmb_cx) > 0.01 or abs(xmb_sel[xcat] - xmb_vy) > 0.01 or xmb_fade < 1.0:
+            xdt = _anim_clock[1]                                            # the bar and the list glide to their targets on critically damped springs
+            xmb_cx, xmb_cv = _smooth_damp(xmb_cx, xmb_cv, xmb_cat, xdt)
+            xmb_vy, xmb_vv = _smooth_damp(xmb_vy, xmb_vv, xmb_sel[xcat], xdt)
+            xmb_fade = min(1.0, xmb_fade + xdt * 6.0)
+            if xmb_cx != xmb_cat or xmb_vy != xmb_sel[xcat] or xmb_fade < 1.0:
                 _anim_clock[2] = True                                       # keep the frame rate up while it moves
             draw_xmb_home(canvas, f_row, f_small, xmb_cx, xmb_cat, xitems, xmb_vy, xmb_fade)
             hint = "Left/Right Category   Up/Down Item   A Open   X Rescan"
@@ -3057,7 +3097,9 @@ def main():
         # nothing pressed for 3 s on a plain list screen and no popup showing: 15 fps is plenty (saves CPU and battery)
         idle = (view in IDLE_VIEWS and not forced and time.monotonic() - last_act > 3.0
                 and time.time() >= max(vol_show_until, bri_show_until))
-        clock.tick(60 if anim_moving else (15 if idle else 30))   # 60 fps only while a button animation is moving
+        # 60 fps only while a button animation is moving; on the XMB also for a moment after any press, so the first frame of a move is not
+        # held back by a 30 fps wait (the "moving" flag is only known after that frame has been drawn)
+        clock.tick(60 if anim_moving or (launcher_id == "xmb" and time.monotonic() - last_act < 0.5) else (15 if idle else 30))
 
     try:
         if pygame.mixer.get_init():
