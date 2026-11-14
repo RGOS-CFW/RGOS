@@ -3,15 +3,16 @@
 
 Reads the raw button devices (gpio-keys etc.), translates every key to a canonical code (the codes retroarch.cfg and
 gamecontrollerdb.txt are written for) and re-publishes them as one uinput device, "RG OS Gamepad". Buttons and the D-pad
-only, unless the device config turns "analog" on (RG34XXSP: two sticks).
+only, unless the device config turns "analog" on (RG34XXSP, RG35XX H: two sticks).
 
   * "sources": which input devices to merge: ["gpio-keys-joypad"] or "auto" (default: every event device that has pad buttons, D-pad keys or a hat; power/volume/lid/
     touch devices are skipped). A list of name substrings picks devices by hand.
   * known BTN_* codes pass through, ABS_HAT0X/Y become the D-pad, anything else comes from the table the menu's
     Settings > Map buttons wizard saved in /var/lib/rgos/button-map.json (or "keymap" {"<code>": "<canonical code>"} in input.json).
   /etc/rgos/input-<device>.json (device = /etc/rgos-device) is merged over input.json.
-  * "analog": true (RG34XXSP and RG35XX H; the image ships it in input-rg34xxsp.json) also publishes the two analog sticks: ABS_X/ABS_Y (left)
-    and ABS_RX/ABS_RY (right) of the source device are scaled to -32767..32767 and forwarded. Off everywhere else.
+  * "analog": true (RG34XXSP and RG35XX H; the image ships it in input-<device>.json) also publishes the two analog sticks: ABS_X/ABS_Y (left)
+    and ABS_RX/ABS_RY (right) of the source device are scaled to -32767..32767 and forwarded. Off everywhere else; the RG35XX SP (no sticks)
+    ships input-rg35xxsp.json with "analog": false, so it publishes no axes and the Map buttons wizard asks for no sticks.
     The stick step of the menu's wizard stores a centre and the two travel limits per axis ("sticks" in button-map.json);
     with it the centre reads 0 and the full travel reaches +-32767. Without it the source's declared range is used.
 

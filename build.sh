@@ -296,17 +296,24 @@ for f in usr/sbin/dropbear usr/bin/dropbearkey usr/lib/openssh/sftp-server usr/b
 done
 ls "$ROOTFS"/usr/libexec/bluetooth/bluetoothd "$ROOTFS"/usr/lib/bluetooth/bluetoothd >/dev/null 2>&1 || echo "!! bluetoothd is missing from the image"
 echo "$DEVICE" > "$ROOTFS/etc/rgos-device"
-# RG34XXSP only: analog sticks. The input hub publishes ABS_X/Y/RX/RY of the stock joypad device (input-rg34xxsp.json, read by rgos-input
-# because it is named after /etc/rgos-device) and RetroArch gets the matching axis binds (retroarch-rg34xxsp.cfg, appended by rgos-launch).
-# Other devices get neither file, so their input is exactly what it was (the RG35XX SP has no sticks: D-pad and buttons only).
-if [[ "$DEVICE" == "rg34xxsp" || "$DEVICE" == "rg35xxh" ]]; then
-  mkdir -p "$ROOTFS/etc/rgos"
-  echo '{"analog": true}' > "$ROOTFS/etc/rgos/input-$DEVICE.json"
-  # the RG35XX H shares the RG34XXSP's axis binds (same ROCKNIX H700 joypad: left = axes 0/1, right = 2/3)
-  RA_CFG="$HERE/config/retroarch-$DEVICE.cfg"; [[ -f "$RA_CFG" ]] || RA_CFG="$HERE/config/retroarch-rg34xxsp.cfg"
-  [[ -f "$RA_CFG" ]] || { echo "!! $RA_CFG missing"; exit 1; }
-  cp "$RA_CFG" "$ROOTFS/etc/rgos/retroarch-$DEVICE.cfg"
-fi
+# H700 consoles get a per-device input config (input-<device>.json, read by rgos-input because it is named after /etc/rgos-device) and a
+# per-device RetroArch config (retroarch-<device>.cfg, appended by rgos-launch). Other devices get neither file, so their input is exactly
+# what it was.
+#   rg34xxsp, rg35xxh  analog sticks: the hub publishes ABS_X/Y/RX/RY of the stock joypad device and RetroArch gets the axis binds
+#                      (the RG35XX H falls back to the RG34XXSP's file: same ROCKNIX H700 joypad, left = axes 0/1, right = 2/3)
+#   rg35xxsp           NO sticks: "analog": false, and its own retroarch-rg35xxsp.cfg (stick axes and L3/R3 unbound, no L2/R2 hotkeys).
+#                      It never falls back to the RG34XXSP's file, which carries stick binds.
+case "$DEVICE" in
+  rg34xxsp|rg35xxh|rg35xxsp)
+    mkdir -p "$ROOTFS/etc/rgos"
+    if [[ "$DEVICE" == "rg35xxsp" ]]; then ANALOG=false; else ANALOG=true; fi
+    echo "{\"analog\": $ANALOG}" > "$ROOTFS/etc/rgos/input-$DEVICE.json"
+    RA_CFG="$HERE/config/retroarch-$DEVICE.cfg"
+    [[ -f "$RA_CFG" || "$DEVICE" == "rg35xxsp" ]] || RA_CFG="$HERE/config/retroarch-rg34xxsp.cfg"
+    [[ -f "$RA_CFG" ]] || { echo "!! $RA_CFG missing"; exit 1; }
+    cp "$RA_CFG" "$ROOTFS/etc/rgos/retroarch-$DEVICE.cfg"
+    ;;
+esac
 # Startup splash (video + sound, sized for the device's canvas: splash-<device>.mjpg) and bundled launcher music. menu.py looks in /etc/rgos/splash and /opt/rgos/music;
 # music / splash added to the ROMS partition (music/, splash/splash.mjpg) is picked up as well.
 if [[ -d "$HERE/splash" ]]; then

@@ -19,7 +19,7 @@ Plain `unittest`, standard library only: no pygame, device or root needed (`menu
 | `test_keymap.py` | `rgos-input` `load_keymap`: a non-object keymap is ignored and one bad button-map entry keeps the good ones. |
 | `test_sshctl.py` | `sshctl.read_password`: a UTF-8 BOM / CRLF in `ssh-password.txt` is not part of the root password. |
 | `test_hwctl.py` | `hwctl`: rumble GPIO selection (pin 0 is valid) and `load_conf` (a shipped config that is not an object is ignored, user overrides are merged) and `_audio_init_lines` (a non-list `init` is ignored, blank lines give no command). |
-| `test_devices.py` | Every device in `build.sh` is wired into the menu canvas table, the CI workflow, the README and the update-tar docs; the RG35XX SP reuses the RG35XX H's 640x480 layout and gets no analog config. |
+| `test_devices.py` | Every device in `build.sh` is wired into the menu canvas table, the CI workflow, the README and the update-tar docs; the RG35XX SP reuses the RG35XX H's 640x480 layout, has its own `retroarch-rg35xxsp.cfg` (no stick axes / L3 / R3, no hotkeys on missing buttons, no clashes), the build installs `analog: false` for it and never falls back to the RG34XXSP's stick config, and `rgos-launch` appends the SP file on the SP. |
 | `test_launch.py` | `rgos-launch` `pick_core`: a state.json that is not the expected shape (list, null, `"emulators": "a"`, ...) falls back to the system default core instead of crashing. |
 
 `helpers.py` loads the real `menu.py` and `rgos-input` for the tests.
