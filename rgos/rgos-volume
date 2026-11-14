@@ -7,7 +7,10 @@
   The keys are read from EVERY input device that has them, including the RG OS input hub (which forwards them from the
   gpio-keys device it grabs), so it does not matter which device the hardware puts them on.
 * The level is written to /run/rgos/volume as "<percent> <stamp>" (the launcher shows its volume popup from that file) and
-  shown inside a running RetroArch as an on-screen message.
+  shown inside a running RetroArch as an on-screen message. The in-game indicator is owned by this daemon (class Announcer),
+  not by the launcher: it appears whenever a volume key is pressed, whether or not menu.py is running. RetroArch keeps each
+  message up for ~3 s and holds at most 8, so Announcer sends the first change at once and then coalesces key-repeat bursts
+  into a single message with the settled value (see Announcer).
 
 Overrides (/var/lib/rgos/hw.json, optional):  {"audio": {"card": 0, "controls": ["Speaker", "Headphone"], "step": 5}}
   card      ALSA card number (default: the first card that is not HDMI)
@@ -25,6 +28,9 @@ VOLUME_FILE = os.environ.get("RGOS_VOLUME_FILE", os.path.join(RUN_DIR, "volume")
 STATE_FILE = os.environ.get("RGOS_VOLUME_STATE", "/var/lib/rgos/volume.json")
 USER_CONF = "/var/lib/rgos/hw.json"
 DEFAULT_PCT = 70
+MSG_HOLD = 3.0          # RetroArch shows one SHOW_MSG for ~180 frames and queues the rest (queue length 8, extra ones are dropped)
+MSG_QUIET = 0.35        # a burst of key repeats counts as finished after this long without a change
+BAR_CELLS = 20
 EVFMT = struct.Struct("llHHi")
 EV_KEY = 1
 KEY_MUTE, KEY_VOLUMEDOWN, KEY_VOLUMEUP = 113, 114, 115
@@ -135,20 +141,71 @@ def publish(pct, mute):
         log("cannot write %s: %r" % (VOLUME_FILE, e))
 
 
-def apply(mixer, st, announce=True):
+def bar_text(pct, mute):
+    """'VOLUME [##########----------] 50%' / 'VOLUME [MUTED]'. Plain ASCII so any RetroArch font draws it."""
+    if mute:
+        return "VOLUME [MUTED]"
+    n = max(0, min(BAR_CELLS, (pct * BAR_CELLS + 50) // 100))
+    return "VOLUME [%s%s] %d%%" % ("#" * n, "-" * (BAR_CELLS - n), pct)
+
+
+class Announcer:
+    """The in-game volume indicator (a RetroArch on-screen message), independent of the launcher menu.
+
+    RetroArch shows one SHOW_MSG for about 3 s, queues the following ones behind it and silently drops them once 8 are
+    waiting. Sending one per key-repeat event (~25 a second while a button is held) therefore filled the queue: the
+    indicator lagged or never showed. Announcer sends
+
+      * the first change at once (nothing was sent in the last MSG_HOLD seconds), then
+      * ONE message with the latest value when the burst ends (MSG_QUIET without a change), and
+      * at most one every MSG_HOLD seconds while a button stays held,
+
+    so every press produces an indicator and it ends on the value that is really set.
+    """
+
+    def __init__(self, send, clock=time.monotonic):
+        self.send, self.clock = send, clock
+        self.latest = None                  # (pct, mute) not yet shown, or None
+        self.last_sent = None
+        self.last_change = 0.0
+
+    def _emit(self, now):
+        pct, mute = self.latest
+        self.latest, self.last_sent = None, now
+        try:
+            self.send(bar_text(pct, mute))
+        except Exception as e:
+            log("in-game indicator failed: %r" % e)
+
+    def note(self, pct, mute):
+        """Call on every volume change."""
+        now = self.clock()
+        self.latest, self.last_change = (pct, mute), now
+        if self.last_sent is None or now - self.last_sent >= MSG_HOLD:
+            self._emit(now)
+
+    def poll(self):
+        """Call regularly; sends the settled value once the burst is over. Returns seconds until it wants to be called again."""
+        if self.latest is None:
+            return None
+        now = self.clock()
+        if now - self.last_change >= MSG_QUIET or (self.last_sent is not None and now - self.last_sent >= MSG_HOLD):
+            self._emit(now)
+            return None
+        return max(0.02, MSG_QUIET - (now - self.last_change))
+
+
+def apply(mixer, st, announcer=None):
     mixer.set_percent(st.pct)
     mixer.set_mute(st.mute)
     st.save()
     publish(st.pct, st.mute)
-    if announce:
-        try:
-            mixer.hwctl.retroarch_msg("Volume: muted" if st.mute else "Volume: %d%%" % st.pct)
-        except Exception:
-            pass
+    if announcer is not None:
+        announcer.note(st.pct, st.mute)
     log("volume %d%%%s" % (st.pct, " (muted)" if st.mute else ""))
 
 
-def change(mixer, st, key):
+def change(mixer, st, key, announcer=None):
     if key == KEY_MUTE:
         st.mute = not st.mute
     elif key == KEY_VOLUMEUP:
@@ -156,7 +213,7 @@ def change(mixer, st, key):
         st.pct = min(100, st.pct + mixer.step)
     elif key == KEY_VOLUMEDOWN:
         st.pct = max(0, st.pct - mixer.step)
-    apply(mixer, st)
+    apply(mixer, st, announcer)
 
 
 # ---------------------------------------------------------------- input devices that carry the volume keys
@@ -200,17 +257,19 @@ def daemon():
             break
         time.sleep(0.5)
         mixer.setup()
-    apply(mixer, st, announce=False)
+    apply(mixer, st)
+    ann = Announcer(mixer.hwctl.retroarch_msg)
     fds, last_scan = {}, 0.0
     while True:
         if time.time() - last_scan > 3.0:
             last_scan = time.time()
             fds.update(scan(set(fds)))
+        wait = ann.poll()
         if not fds:
-            time.sleep(1.0)
+            time.sleep(1.0 if wait is None else wait)
             continue
         try:
-            ready, _, _ = select.select(list(fds.values()), [], [], 1.0)
+            ready, _, _ = select.select(list(fds.values()), [], [], 1.0 if wait is None else wait)
         except (OSError, ValueError):
             ready = []
         for fd in ready:
@@ -229,17 +288,18 @@ def daemon():
                 if typ == EV_KEY and val in (1, 2) and code in (KEY_VOLUMEUP, KEY_VOLUMEDOWN, KEY_MUTE):
                     if code == KEY_MUTE and val == 2:         # no auto-repeat for mute
                         continue
-                    change(mixer, st, code)
+                    change(mixer, st, code, ann)
 
 
 def main(argv):
     if len(argv) > 1 and argv[1] in ("up", "down", "mute", "set"):
         mixer, st = Mixer(), State()
+        ann = Announcer(mixer.hwctl.retroarch_msg)
         if argv[1] == "set" and len(argv) > 2 and argv[2].isdigit():
             st.pct, st.mute = max(0, min(100, int(argv[2]))), False
-            apply(mixer, st)
+            apply(mixer, st, ann)
         else:
-            change(mixer, st, {"up": KEY_VOLUMEUP, "down": KEY_VOLUMEDOWN, "mute": KEY_MUTE}.get(argv[1], 0))
+            change(mixer, st, {"up": KEY_VOLUMEUP, "down": KEY_VOLUMEDOWN, "mute": KEY_MUTE}.get(argv[1], 0), ann)
         return 0
     daemon()
     return 0

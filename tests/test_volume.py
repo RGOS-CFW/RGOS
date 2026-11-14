@@ -42,5 +42,63 @@ class MixerCardTests(unittest.TestCase):
         self.assertEqual(self.mixer({}).card, 3)
 
 
+class FakeClock:
+    def __init__(self):
+        self.t = 100.0
+
+    def __call__(self):
+        return self.t
+
+
+class AnnouncerTests(unittest.TestCase):
+    def setUp(self):
+        self.vol = load_volume()
+        self.clock, self.sent = FakeClock(), []
+        self.ann = self.vol.Announcer(self.sent.append, self.clock)
+
+    def advance(self, s):
+        self.clock.t += s
+        self.ann.poll()
+
+    def test_first_change_shows_at_once(self):
+        self.ann.note(75, False)
+        self.assertEqual(self.sent, ["VOLUME [###############-----] 75%"])
+
+    def test_held_button_does_not_flood_retroarch(self):
+        for pct in range(5, 101, 5):                  # 20 key repeats, 40 ms apart
+            self.ann.note(pct, False)
+            self.advance(0.04)
+        self.assertEqual(len(self.sent), 1)           # only the leading message so far
+        self.advance(0.4)                             # released: the settled value follows, once
+        self.assertEqual(len(self.sent), 2)
+        self.assertTrue(self.sent[-1].endswith("100%"))
+        self.advance(5)
+        self.assertEqual(len(self.sent), 2)
+
+    def test_hold_longer_than_a_message_updates_every_few_seconds(self):
+        for i in range(200):                          # 8 s of repeats
+            self.ann.note(i % 100, False)
+            self.advance(0.04)
+        self.assertTrue(2 <= len(self.sent) <= 4, self.sent)
+
+    def test_press_after_the_message_expired_shows_at_once(self):
+        self.ann.note(50, False)
+        self.advance(4)
+        self.ann.note(55, False)
+        self.assertEqual(len(self.sent), 2)
+
+    def test_mute_and_limits(self):
+        self.ann.note(0, True)
+        self.assertEqual(self.sent[-1], "VOLUME [MUTED]")
+        self.assertEqual(self.vol.bar_text(100, False), "VOLUME [" + "#" * 20 + "] 100%")
+        self.assertEqual(self.vol.bar_text(0, False), "VOLUME [" + "-" * 20 + "] 0%")
+
+    def test_a_failing_send_is_survived(self):
+        def boom(_):
+            raise OSError("no socket")
+        ann = self.vol.Announcer(boom, self.clock)
+        ann.note(40, False)                           # must not raise: the volume itself is already set
+
+
 if __name__ == "__main__":
     unittest.main()

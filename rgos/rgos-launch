@@ -151,10 +151,22 @@ def joypad_driver():
     return "linuxraw"
 
 
-def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None):
+OSD_FONTS = ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+
+
+def osd_font():
+    """A TrueType font for RetroArch's on-screen messages (the volume indicator), '' if none is installed. Without one
+    RetroArch falls back to its tiny built-in font, so only a font that really exists is passed on."""
+    return next((p for p in OSD_FONTS if os.path.isfile(p)), "")
+
+
+def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, font=""):
     """Text of the per-launch appendconfig. Folders are per system and live on the ROMS card so saves survive updates."""
     q = lambda p: '"%s"' % p
     lines = ['audio_device = %s' % q(audio_device)]
+    if font:
+        lines.append('video_font_path = %s' % q(font))
     if joy_driver:
         lines.append('input_joypad_driver = %s' % q(joy_driver))
     if joy_index is not None:
@@ -361,7 +373,7 @@ def launch_retroarch(sid, core, core_path, content):
     idx, drv = hub_index(pads), joypad_driver()
     log("pads: %s; hub pad: %s; joypad driver: %s" % (pads or "none", ("js%d" % idx) if idx is not None else "NOT FOUND", drv))
     with open(cfg_run, "w") as f:
-        f.write(run_config(sid, ROMS_ROOT, alsa_device(), idx, drv))
+        f.write(run_config(sid, ROMS_ROOT, alsa_device(), idx, drv, osd_font()))
     cmd = build_command(core_path, content, ROMS_ROOT, cfg_run)
     env = dict(os.environ)
     env.update({"HOME": "/root", "XDG_RUNTIME_DIR": RUN_DIR, "SDL_VIDEODRIVER": "dummy",   # SDL2 only reads input; RetroArch owns KMS
