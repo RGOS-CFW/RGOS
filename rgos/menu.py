@@ -1305,7 +1305,7 @@ def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk
             tsize -= 2
         tf = _flow_font(tsize)
         tt = tf.render(fit(tf, g["title"], W - 40), True, TEXT)
-        star = f_row.render("\u2605", True, ACCENT) if (g.get("fav") and arrows) else None
+        star = f_row.render("\u2605" if arrows else "*", True, ACCENT) if g.get("fav") else None
         tw = tt.get_width() + (star.get_width() + 10 if star else 0)
         tx = (W - tw) // 2
         c.blit(tt, (tx, title_cy - tt.get_height() // 2))
