@@ -21,7 +21,7 @@ class MixerCardTests(unittest.TestCase):
     def mixer(self, audio_conf):
         vol = load_volume()
         fake_hw = mock.MagicMock(name="hwctl")
-        fake_hw.audio_card.return_value = 3               # what auto-detection would pick
+        fake_hw.audio_card.return_value = 3
         fake_hw.audio_enable.return_value = []
         with mock.patch.dict(sys.modules, {"hwctl": fake_hw}), \
                 mock.patch.object(vol, "read_json", return_value={"audio": audio_conf}), \
@@ -30,7 +30,7 @@ class MixerCardTests(unittest.TestCase):
             return vol.Mixer()
 
     def test_card_zero_is_honoured(self):
-        self.assertEqual(self.mixer({"card": 0}).card, 0)       # used to fall back to auto-detection
+        self.assertEqual(self.mixer({"card": 0}).card, 0)
         self.assertEqual(self.mixer({"card": "0"}).card, 0)
 
     def test_other_card_numbers_are_honoured(self):
@@ -65,18 +65,18 @@ class AnnouncerTests(unittest.TestCase):
         self.assertEqual(self.sent, ["VOLUME [###############-----] 75%"])
 
     def test_held_button_does_not_flood_retroarch(self):
-        for pct in range(5, 101, 5):                  # 20 key repeats, 40 ms apart
+        for pct in range(5, 101, 5):
             self.ann.note(pct, False)
             self.advance(0.04)
-        self.assertEqual(len(self.sent), 1)           # only the leading message so far
-        self.advance(0.4)                             # released: the settled value follows, once
+        self.assertEqual(len(self.sent), 1)
+        self.advance(0.4)
         self.assertEqual(len(self.sent), 2)
         self.assertTrue(self.sent[-1].endswith("100%"))
         self.advance(5)
         self.assertEqual(len(self.sent), 2)
 
     def test_hold_longer_than_a_message_updates_every_few_seconds(self):
-        for i in range(200):                          # 8 s of repeats
+        for i in range(200):
             self.ann.note(i % 100, False)
             self.advance(0.04)
         self.assertTrue(2 <= len(self.sent) <= 4, self.sent)
@@ -97,7 +97,7 @@ class AnnouncerTests(unittest.TestCase):
         def boom(_):
             raise OSError("no socket")
         ann = self.vol.Announcer(boom, self.clock)
-        ann.note(40, False)                           # must not raise: the volume itself is already set
+        ann.note(40, False)
 
 
 if __name__ == "__main__":

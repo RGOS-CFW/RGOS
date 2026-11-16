@@ -23,7 +23,7 @@ class ReadPasswordTests(unittest.TestCase):
         for raw in (b"hunter2", b"hunter2\n", b"hunter2\r\n", b"  hunter2  \nignored\n"):
             self.assertEqual(self.read(raw), "hunter2", raw)
 
-    def test_utf8_bom_is_not_part_of_the_password(self):    # Windows Notepad adds one; it used to end up in the hash
+    def test_utf8_bom_is_not_part_of_the_password(self):
         self.assertEqual(self.read(b"\xef\xbb\xbfhunter2\r\n"), "hunter2")
 
     def test_non_ascii_password_survives(self):

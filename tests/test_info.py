@@ -26,7 +26,7 @@ class HelperTests(unittest.TestCase):
         with mock.patch.object(menu, "rd_file", files({"/proc/meminfo": meminfo})):
             self.assertEqual(menu._mem_text(), "1000 / 2000 MB free")
         with mock.patch.object(menu, "rd_file", files({"/proc/meminfo": "MemTotal: 1024000 kB\nMemFree: 512000 kB\n"})):
-            self.assertEqual(menu._mem_text(), "500 / 1000 MB free")           # older kernels have no MemAvailable
+            self.assertEqual(menu._mem_text(), "500 / 1000 MB free")
         with mock.patch.object(menu, "rd_file", files({})):
             self.assertEqual(menu._mem_text(), "n/a")
 
@@ -41,7 +41,7 @@ class HelperTests(unittest.TestCase):
         zones = ["/sys/class/thermal/thermal_zone0/temp", "/sys/class/thermal/thermal_zone1/temp"]
         with mock.patch.object(menu.glob, "glob", return_value=zones), \
                 mock.patch.object(menu, "rd_file", files({zones[0]: "garbage", zones[1]: "48500\n"})):
-            self.assertEqual(menu._temp_text(), "48 C")                         # 48.5 rounds to even; the point is the zone fallback
+            self.assertEqual(menu._temp_text(), "48 C")
         with mock.patch.object(menu.glob, "glob", return_value=[]):
             self.assertEqual(menu._temp_text(), "n/a")
 
@@ -84,7 +84,6 @@ class SettingsInfoTests(unittest.TestCase):
             self.assertIn(want, labels)
 
     def test_there_are_more_rows_than_one_screen_shows(self):
-        # the page is only worth scrolling if the list can outgrow the panel (about 7 rows on the smallest screen)
         self.assertGreater(len(self.rows()), 10)
 
     def test_missing_hardware_reads_n_a_instead_of_failing(self):

@@ -13,7 +13,7 @@ from tests import helpers
 
 menu = helpers.load_menu()
 BM = menu.ButtonMap
-AXES = (0, 1, 3, 4)                    # ABS_X, ABS_Y, ABS_RX, ABS_RY
+AXES = (0, 1, 3, 4)
 RANGE = (-32768, 32767)
 
 
@@ -39,12 +39,11 @@ class WizardCase(unittest.TestCase):
         for p in (mock.patch.object(menu, "time", self.clock), mock.patch.object(BM, "GAP", 0.0)):
             p.start()
             self.addCleanup(p.stop)
-        self.n = 0                                       # press counter (the hub numbers presses)
-        self.rest = {a: 0 for a in AXES}                 # where the sticks rest
-        self.over = {}                                   # axes currently held somewhere else
+        self.n = 0
+        self.rest = {a: 0 for a in AXES}
+        self.over = {}
         self.has_sticks = False
 
-    # ---- fake hub --------------------------------------------------------------------------------------------------
     def hub_sticks(self, present=True):
         """Switch the hub's analog output on/off (it only publishes sticks.raw on devices with sticks)."""
         self.has_sticks = present
@@ -73,11 +72,10 @@ class WizardCase(unittest.TestCase):
         self.clock.t += 0.6
         wiz.update()
 
-    # ---- driving the wizard ----------------------------------------------------------------------------------------
     def start(self, sticks=False):
         self.hub_sticks(sticks)
         wiz = BM()
-        update = wiz.update                              # the real hub keeps rewriting sticks.raw, so do the same before every update
+        update = wiz.update
         wiz.update = lambda: (self.flush(), update())[1]
         self.clock.t += 1.5
         wiz.update()
@@ -132,16 +130,16 @@ class ButtonStepTests(WizardCase):
         self.assertEqual(wiz.state, "done")
         keys = self.saved()["keys"]
         self.assertEqual(len(keys), 12)
-        self.assertEqual(sorted(keys.values())[:2], [0x130, 0x131])           # B and A are among the canonical codes
-        self.assertEqual(keys["pad|1:%d:0" % 0x201], 0x131)                   # the first press became A
-        self.assertIn("MENU", wiz.msg)                                        # skipped optional buttons are reported
+        self.assertEqual(sorted(keys.values())[:2], [0x130, 0x131])
+        self.assertEqual(keys["pad|1:%d:0" % 0x201], 0x131)
+        self.assertIn("MENU", wiz.msg)
         self.assertNotIn("sticks", self.saved())
 
     def test_same_physical_button_cannot_be_used_twice(self):
         wiz = self.start()
-        self.press(wiz, 0x300)                                                # A
+        self.press(wiz, 0x300)
         self.assertEqual(wiz.step, 1)
-        self.press(wiz, 0x300)                                                # same key for B: ignored
+        self.press(wiz, 0x300)
         self.assertEqual(wiz.step, 1)
         self.press(wiz, 0x301)
         self.assertEqual(wiz.step, 2)
@@ -150,7 +148,7 @@ class ButtonStepTests(WizardCase):
         self.hub_sticks(False)
         os.makedirs(self.run_dir, exist_ok=True)
         wiz = BM()
-        with open(wiz.rawf, "w") as f:                                        # e.g. the button that opened the wizard
+        with open(wiz.rawf, "w") as f:
             f.write("5\tpad\t1\t304\t0\n")
         self.clock.t += 1.5
         wiz.update()
@@ -185,20 +183,20 @@ class ButtonStepTests(WizardCase):
 class RetryTests(WizardCase):
     def test_failed_step_is_retried_without_losing_progress(self):
         wiz = self.start()
-        for i in range(5):                                                    # A B X Y L mapped
+        for i in range(5):
             self.press(wiz, 0x300 + i)
-        self.clock.t += BM.TIMEOUT + 1                                        # R never pressed
+        self.clock.t += BM.TIMEOUT + 1
         wiz.update()
         self.assertEqual(wiz.state, "fail")
         self.assertIn("R", wiz.msg)
         self.assertTrue(wiz.can_resume())
-        self.assertFalse(os.path.exists(wiz.flag))                            # hub probe switched off while failed
+        self.assertFalse(os.path.exists(wiz.flag))
 
         wiz.resume()
         self.assertTrue(os.path.exists(wiz.flag))
         self.clock.t += 1.5
         wiz.update()
-        self.assertEqual((wiz.state, wiz.step), ("prompt", 5))                # asks R again, not A
+        self.assertEqual((wiz.state, wiz.step), ("prompt", 5))
         self.assertEqual(len(wiz.keys), 5)
 
         self.run_buttons(wiz, skip=("MENU", "L2", "R2"))
@@ -223,7 +221,7 @@ class RetryTests(WizardCase):
     def test_cannot_resume_when_not_failed(self):
         wiz = self.start()
         self.assertFalse(wiz.can_resume())
-        wiz.resume()                                                          # harmless no-op
+        wiz.resume()
         self.assertEqual(wiz.state, "prompt")
 
     def test_failure_screen_explains_nothing_is_lost(self):
@@ -263,15 +261,14 @@ class StickStepTests(WizardCase):
         code, seen = 0x200, []
         while wiz.state == "prompt":
             seen.append(wiz.PROMPTS[wiz.step][0])
-            if wiz.PROMPTS[wiz.step][1] in (0x138, 0x139, 0x13c):             # L2 / R2 / MENU not present
+            if wiz.PROMPTS[wiz.step][1] in (0x138, 0x139, 0x13c):
                 self.clock.t += BM.OPT_TIMEOUT + 0.1
                 wiz.update()
             else:
                 code += 1
                 self.press(wiz, code)
         self.assertEqual(len(seen), 17)
-        self.assertEqual(wiz.state, "scenter")                                 # then the stick step starts
-        # finish quickly: leave the sticks alone for both
+        self.assertEqual(wiz.state, "scenter")
         self.tick(wiz, BM.STICK_IDLE * 3 + 10)
         self.assertEqual(wiz.state, "done")
         values = list(self.saved()["keys"].values())
@@ -294,12 +291,12 @@ class StickStepTests(WizardCase):
         return wiz
 
     def test_calibration_measures_centre_and_travel_of_both_sticks(self):
-        wiz = self._to_sticks({0: 120, 1: -90, 3: 40, 4: 60})                  # sticks rest slightly off centre
+        wiz = self._to_sticks({0: 120, 1: -90, 3: 40, 4: 60})
         self.tick(wiz, BM.CENTER_TIME + 0.5)
         self.assertEqual(wiz.state, "sroll")
         self.assertEqual(wiz.center, {0: 120, 1: -90, 3: 40, 4: 60})
         self.roll(wiz, (0, 1), (120, -90), 30000, 26000)
-        self.tick(wiz, 4)                                                      # let go: no more growth, so the stick completes
+        self.tick(wiz, 4)
         self.assertEqual((wiz.state, wiz.cstick), ("sroll", 1))
         self.roll(wiz, (3, 4), (40, 60), 28000, 28000)
         self.tick(wiz, 4)
@@ -329,17 +326,17 @@ class StickStepTests(WizardCase):
     def test_side_that_was_never_pushed_keeps_the_declared_range(self):
         wiz = self._to_sticks()
         self.tick(wiz, BM.CENTER_TIME + 0.5)
-        end = self.clock.t + 1.0                                               # push right (+X) then down (+Y) only
+        end = self.clock.t + 1.0
         while self.clock.t < end:
             self.clock.t += 0.02
             frac = (self.clock.t - (end - 1.0))
             self.write_sticks(a0=int(20000 * min(frac * 2, 1)), a1=int(20000 * max(0, min((frac - 0.5) * 2, 1))))
             wiz.update()
-        self.tick(wiz, 4)                                                      # holds still: 3 s without growth finishes it
+        self.tick(wiz, 4)
         self.assertEqual((wiz.state, wiz.cstick), ("sroll", 1))
         c, lo, hi = wiz.cal[0]
-        self.assertEqual(lo, RANGE[0])                                         # never pushed left: declared minimum
-        self.assertAlmostEqual(hi, 20000, delta=400)                           # measured on the side that was used
+        self.assertEqual(lo, RANGE[0])
+        self.assertAlmostEqual(hi, 20000, delta=400)
 
     def test_stick_view_reports_position_and_reached_edges(self):
         wiz = self._to_sticks()
@@ -351,8 +348,8 @@ class StickStepTests(WizardCase):
         wiz.update()
         name, x, y, reached = wiz.stick_view()
         self.assertGreater(x, 0.9)
-        self.assertIn((0, 1), reached)                                         # X axis, positive edge
-        self.assertIsNone(BM().stick_view())                                   # no stick step running: nothing to draw
+        self.assertIn((0, 1), reached)
+        self.assertIsNone(BM().stick_view())
 
     def test_old_sticks_file_is_removed_when_a_wizard_starts(self):
         stale = os.path.join(self.run_dir, "sticks.raw")

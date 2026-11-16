@@ -31,7 +31,6 @@ def run(cmd, timeout=20):
         return 127, str(e)
 
 
-# ---------------------------------------------------------------- password hash (SHA-512 crypt, "$6$"); Python 3.13 has no crypt module
 def sha512_crypt(password, salt, rounds=5000):
     pw, salt = password.encode(), salt.encode()[:16]
     H, n = hashlib.sha512, len(pw)
@@ -65,7 +64,6 @@ def sha512_crypt(password, salt, rounds=5000):
     return "$6$%s$%s" % (salt.decode(), out)
 
 
-# ---------------------------------------------------------------- settings
 def enabled():
     try:
         with open(CONF) as f:
@@ -100,7 +98,6 @@ def info():
             "password": "custom (ssh-password.txt)" if custom_password_file() else "rgos"}
 
 
-# ---------------------------------------------------------------- start / stop
 def read_password(path):
     """First line of ssh-password.txt, or None if unreadable. utf-8-sig: Notepad on the FAT boot partition writes a BOM,
     which strip() keeps and which would become part of the password."""

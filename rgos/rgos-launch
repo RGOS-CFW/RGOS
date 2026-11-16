@@ -28,13 +28,12 @@ CORE_DIRS = os.environ.get("RGOS_CORE_DIRS", "/usr/lib/libretro:/usr/lib/aarch64
 TTY = os.environ.get("RGOS_TTY", "/dev/tty1")
 SYS_INPUT = os.environ.get("RGOS_SYS_INPUT", "/sys/class/input")
 BOOT_DIR = os.environ.get("RGOS_BOOT_DIR", "/boot")
-HUB_NAME = "RG OS Gamepad"             # the input hub's virtual pad (rgos-input); the raw gpio-keys pad is grabbed by the hub and dead
-EARLY_FAIL_S = 6.0                     # a non-zero exit sooner than this is shown on the console
+HUB_NAME = "RG OS Gamepad"
+EARLY_FAIL_S = 6.0
 SYS_ROOT = os.environ.get("RGOS_SYSFS", "/sys")
-GAME_FLAG = os.path.join(RUN_DIR, "ingame")      # exists while RetroArch runs: background daemons (wifictl) stop polling
-HEAVY_SYSTEMS = frozenset(("psx", "gc", "n64", "dreamcast", "saturn", "psp"))   # systems that get the performance governor by default
+GAME_FLAG = os.path.join(RUN_DIR, "ingame")
+HEAVY_SYSTEMS = frozenset(("psx", "gc", "n64", "dreamcast", "saturn", "psp"))
 
-# Used only if the menu module cannot be imported (e.g. no pygame): what this build installs and supports.
 FALLBACK_DEFAULT = {"gba": "mgba", "gb": "gambatte", "gbc": "gambatte", "nes": "nestopia"}
 FALLBACK_COMPAT = {"gba": ("mgba",), "gb": ("gambatte", "mgba"), "gbc": ("gambatte", "mgba"), "nes": ("nestopia", "fceumm")}
 
@@ -74,16 +73,16 @@ def menu_api():
     """(default_core, compatible_cores) from the menu module so there is one table of truth; fallback tables otherwise."""
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        import menu                                   # same module rgos-session runs; importing does not start the UI
+        import menu
         return menu.default_core, menu.compatible_cores
-    except Exception as e:                            # pygame missing, syntax error in an edited menu.py, ...
+    except Exception as e:
         log("menu module not usable (%s); using built-in core tables" % e)
         return (lambda sid: FALLBACK_DEFAULT.get(sid, "")), (lambda sid, cores=None: [c for c in FALLBACK_COMPAT.get(sid, ()) if core_file(c)])
 
 
 def pick_core(sid, state, default_core, compatible_cores):
     """The user's choice for this system if installed, else the system default if installed, else the first compatible core."""
-    emus = state.get("emulators") if isinstance(state, dict) else None      # a hand-edited / damaged state.json can hold any JSON
+    emus = state.get("emulators") if isinstance(state, dict) else None
     wanted = emus.get(sid) if isinstance(emus, dict) else None
     if not isinstance(wanted, str) or not wanted:
         wanted = default_core(sid)
@@ -177,7 +176,7 @@ def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, fo
     if sid:
         lines += ['savefile_directory = %s' % q(os.path.join(roms_root, "saves", sid)),
                   'savestate_directory = %s' % q(os.path.join(roms_root, "states", sid))]
-    else:                                             # RetroArch menu session without content
+    else:
         lines += ['savefile_directory = %s' % q(os.path.join(roms_root, "saves")),
                   'savestate_directory = %s' % q(os.path.join(roms_root, "states"))]
     return "\n".join(lines) + "\n"
@@ -376,7 +375,7 @@ def launch_retroarch(sid, core, core_path, content):
         f.write(run_config(sid, ROMS_ROOT, alsa_device(), idx, drv, osd_font()))
     cmd = build_command(core_path, content, ROMS_ROOT, cfg_run)
     env = dict(os.environ)
-    env.update({"HOME": "/root", "XDG_RUNTIME_DIR": RUN_DIR, "SDL_VIDEODRIVER": "dummy",   # SDL2 only reads input; RetroArch owns KMS
+    env.update({"HOME": "/root", "XDG_RUNTIME_DIR": RUN_DIR, "SDL_VIDEODRIVER": "dummy",
                 "MESA_SHADER_CACHE_DIR": "/tmp/mesa-cache", "SDL_AUDIODRIVER": "dummy"})
     if not os.environ.get("RGOS_NO_HW"):
         os.makedirs("/tmp/retroarch", exist_ok=True)
@@ -425,7 +424,7 @@ def main(argv):
                    "Looked for cores in: %s" % ", ".join(CORE_DIRS))
         return 0
     log("%s: system=%s core=%s" % (target, sid, core))
-    default_core = compatible_cores = None            # they point into menu.py; release it before the game starts
+    default_core = compatible_cores = None
     unload_menu()
     if core == "dolphin":
         ensure_dolphin_sys(ROMS_ROOT)

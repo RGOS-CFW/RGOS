@@ -14,7 +14,7 @@ def patch(text, initrd):
     out, i = [], 0
     kern = re.compile(r"^(\s*)(linux|kernel)(\s+\S.*)$", re.I)
     block_has_append = False
-    pending = None            # (indent, upper?) of a kernel line whose block has no APPEND yet
+    pending = None
 
     def flush_missing_append():
         nonlocal pending
@@ -29,7 +29,7 @@ def patch(text, initrd):
             flush_missing_append()
             block_has_append = False
         if re.match(r"^initrd\b", low):
-            continue                                   # replaced below
+            continue
         m = kern.match(ln)
         if m:
             up = m.group(2).isupper()

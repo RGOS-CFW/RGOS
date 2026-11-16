@@ -31,11 +31,11 @@ Exit status: 10 = update installed, reboot now; 0 = nothing to do, or the update
 import hashlib, json, os, posixpath, re, shutil, subprocess, sys, tarfile, time
 
 BOOT_FILES = ("device_trees/ums512-rg-rotate.dtb", "dtb.img", "KERNEL", "KERNEL.md5", "rgos-initrd.cpio", "SYSTEM", "SYSTEM.md5",
-              "extlinux/extlinux.conf")    # also the order they are replaced in (extlinux.conf last, SYSTEM.md5 right after SYSTEM)
+              "extlinux/extlinux.conf")
 ID_FILE = "rgos-update.id"
 UPD_DIR = "update"
 FORMAT = 1
-MARGIN = 2 << 20                       # free space kept on the boot partition on top of the staged files
+MARGIN = 2 << 20
 ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 TAR_RE = re.compile(r"\.(tar|tar\.gz|tgz)$", re.I)
 RUN = os.environ.get("RGOS_UPDATE_RUN", "/run/rgos/update")
@@ -76,7 +76,6 @@ def sh(args, timeout=30):
         return 127, "%s" % e
 
 
-# ---------------------------------------------------------------- finding partitions
 
 def _natural(s):
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]
@@ -128,7 +127,6 @@ def mount_dev(dev, mnt, ro):
 
 
 def is_boot(d):
-    # build.sh accepts extlinux/extlinux.conf or a bare extlinux.conf in the root, so the updater must too
     return (os.path.isfile(os.path.join(d, "SYSTEM")) and os.path.isfile(os.path.join(d, "rgos-initrd.cpio"))
             and (os.path.isfile(os.path.join(d, "extlinux", "extlinux.conf")) or os.path.isfile(os.path.join(d, "extlinux.conf"))))
 
@@ -188,19 +186,18 @@ def find_update(parts):
     return None
 
 
-# ---------------------------------------------------------------- the update itself
 
 def sane(name, head):
     """Cheap magic-number check so a wrong file is never installed as system / kernel / initramfs / device tree."""
     if name == "SYSTEM":
-        return head[:4] == b"hsqs"                                  # squashfs, little endian
+        return head[:4] == b"hsqs"
     if name == "KERNEL":
         return head[56:60] == b"ARM\x64" or head[:2] in (b"\x1f\x8b", b"MZ")
     if name.endswith(".dtb") or name == "dtb.img":
         return head[:4] == b"\xd0\x0d\xfe\xed"
     if name == "rgos-initrd.cpio":
         return head[:6] in (b"070701", b"070702") or head[:2] == b"\x1f\x8b"
-    return b"\0" not in head           # *.md5 and extlinux.conf are plain text
+    return b"\0" not in head
 
 
 def read_tar(path):
@@ -309,7 +306,7 @@ def apply_tar(tar, bootdir):
     _cleanup(bootdir)
     need = sum(m.size for m in payload.values()) + MARGIN
     free = lambda: (lambda st: st.f_bavail * st.f_frsize)(os.statvfs(bootdir))
-    if free() < need:                   # only then give up the previous update's .prev backups
+    if free() < need:
         for name in BOOT_FILES:
             try:
                 os.remove(os.path.join(bootdir, name + ".prev"))
@@ -334,17 +331,17 @@ def apply_tar(tar, bootdir):
         old_id = open(idp).read()
     except OSError:
         old_id = None
-    done = []                               # (destination, had_old) for every file already switched over
+    done = []
     try:
         for name in payload:
             dst = os.path.join(bootdir, name)
             had = os.path.isfile(dst)
             if had:
                 try:
-                    os.remove(dst + ".prev")        # the build before this one; the running system is never a .prev
+                    os.remove(dst + ".prev")
                 except OSError:
                     pass
-                os.replace(dst, dst + ".prev")      # a rename: the running system keeps its open file
+                os.replace(dst, dst + ".prev")
             done.append((dst, had))
             os.replace(dst + ".new", dst)
         with open(idp + ".new", "w") as f:
@@ -359,7 +356,7 @@ def apply_tar(tar, bootdir):
         for dst, had in reversed(done):
             try:
                 if had:
-                    os.replace(dst + ".prev", dst)  # puts the old file back over the new one
+                    os.replace(dst + ".prev", dst)
                 elif os.path.exists(dst):
                     os.remove(dst)
             except OSError as re_:
@@ -379,7 +376,6 @@ def apply_tar(tar, bootdir):
     return "installed", uid
 
 
-# ---------------------------------------------------------------- commands
 
 def _mark(tar, suffix):
     try:
@@ -400,7 +396,7 @@ def cmd_apply(tar, bootdir):
 
 def cmd_boot():
     parts = []
-    for _ in range(20):                 # the card may still be probing
+    for _ in range(20):
         parts = partitions()
         if parts:
             break

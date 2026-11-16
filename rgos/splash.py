@@ -17,7 +17,7 @@ import json, os, time
 
 SOI = b"\xff\xd8\xff"
 DEFAULT_FPS = 24
-MODES = ("on", "silent", "off")            # Settings > Startup splash: video + sound, video only, nothing
+MODES = ("on", "silent", "off")
 
 
 def split_mjpeg(data):
@@ -57,7 +57,7 @@ def read_conf(path):
             conf = json.load(f)
     except Exception:
         pass
-    if not isinstance(conf, dict):                  # valid JSON that is not an object ([], null, 5, ...)
+    if not isinstance(conf, dict):
         conf = {}
     try:
         fps = float(conf.get("fps", DEFAULT_FPS))

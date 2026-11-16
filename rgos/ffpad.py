@@ -64,17 +64,17 @@ class _EffectUnion(ctypes.Union):
                 ("rumble", _Rumble)]
 
 
-class FFEffect(ctypes.Structure):          # struct ff_effect
+class FFEffect(ctypes.Structure):
     _fields_ = [("type", ctypes.c_uint16), ("id", ctypes.c_int16), ("direction", ctypes.c_uint16),
                 ("trigger", _Trigger), ("replay", _Replay), ("u", _EffectUnion)]
 
 
-class UploadReq(ctypes.Structure):         # struct uinput_ff_upload
+class UploadReq(ctypes.Structure):
     _fields_ = [("request_id", ctypes.c_uint32), ("retval", ctypes.c_int32),
                 ("effect", FFEffect), ("old", FFEffect)]
 
 
-class EraseReq(ctypes.Structure):          # struct uinput_ff_erase
+class EraseReq(ctypes.Structure):
     _fields_ = [("request_id", ctypes.c_uint32), ("retval", ctypes.c_int32),
                 ("effect_id", ctypes.c_uint32)]
 
@@ -95,8 +95,8 @@ class FFHandler:
 
     def __init__(self, ufd, motor, threshold=0.15, max_ms=3000, clock=time.monotonic):
         self.ufd, self.motor, self.threshold, self.max_s, self.clock = ufd, motor, threshold, max_ms / 1000.0, clock
-        self.effects = {}          # id -> (level 0..1, length in s or 0 = until stopped)
-        self.playing = {}          # id -> deadline (monotonic) or None
+        self.effects = {}
+        self.playing = {}
         self.motor_on = False
 
     def fileno(self):
@@ -116,7 +116,7 @@ class FFHandler:
             self.effects[e.id] = (self.level(e.u.rumble.strong_magnitude, e.u.rumble.weak_magnitude), e.replay.length / 1000.0)
             up.retval = 0
         else:
-            up.retval = -22                     # EINVAL: only rumble is supported
+            up.retval = -22
         fcntl.ioctl(self.ufd, UI_END_FF_UPLOAD, buf, True)
 
     def _erase(self, req_id):

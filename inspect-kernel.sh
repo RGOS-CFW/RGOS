@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Prints what's needed to see how the ROCKNIX kernel boots: extlinux.conf, boot partition listing,
-# the kernel's built-in initramfs file list, and its /init script.
-# Usage: sudo bash inspect-kernel.sh [image]     (default: out/rg-rotate-rgos.img)
 set -euo pipefail
 IMG="${1:-out/rg-rotate-rgos.img}"
 [[ $EUID -eq 0 ]] || { echo "Run with sudo"; exit 1; }

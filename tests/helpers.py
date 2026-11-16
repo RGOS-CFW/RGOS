@@ -43,7 +43,7 @@ def load_menu():
         spec.loader.exec_module(mod)
     finally:
         sys.path.remove(RGOS)
-        for n, old in saved.items():             # leave no mocks behind for other imports
+        for n, old in saved.items():
             if old is None:
                 sys.modules.pop(n, None)
             else:
@@ -59,7 +59,7 @@ def fresh_wizard_env(menu):
     os.makedirs(run)
     menu.RUN_DIR = run
     menu.BTN_MAP = os.path.join(tmp, "button-map.json")
-    menu.set_swap_ab = lambda on: None           # the wizard resets A/B swap and restarts the hub when it saves: not in tests
+    menu.set_swap_ab = lambda on: None
     menu.restart_hub = lambda: None
     return run, menu.BTN_MAP
 

@@ -28,13 +28,13 @@ VOLUME_FILE = os.environ.get("RGOS_VOLUME_FILE", os.path.join(RUN_DIR, "volume")
 STATE_FILE = os.environ.get("RGOS_VOLUME_STATE", "/var/lib/rgos/volume.json")
 USER_CONF = "/var/lib/rgos/hw.json"
 DEFAULT_PCT = 70
-MSG_HOLD = 3.0          # RetroArch shows one SHOW_MSG for ~180 frames and queues the rest (queue length 8, extra ones are dropped)
-MSG_QUIET = 0.35        # a burst of key repeats counts as finished after this long without a change
+MSG_HOLD = 3.0
+MSG_QUIET = 0.35
 BAR_CELLS = 20
 EVFMT = struct.Struct("llHHi")
 EV_KEY = 1
 KEY_MUTE, KEY_VOLUMEDOWN, KEY_VOLUMEUP = 113, 114, 115
-EVIOCGBIT_KEY = 0x80604521                       # _IOC(_IOC_READ, 'E', 0x20 + EV_KEY, 96)
+EVIOCGBIT_KEY = 0x80604521
 PREFER = ("master", "speaker", "spk", "headphone", "playback", "pcm", "digital", "dac", "lineout", "line out")
 SKIP = re.compile(r"capture|mic|adc|input|\bin\b|sidetone|boost|agc|alc", re.I)
 
@@ -68,7 +68,7 @@ class Mixer:
             conf = {}
         try:
             step = int(conf.get("step", 5) or 5)
-        except (TypeError, ValueError):                  # e.g. "step": "big" in hw.json must not kill the daemon
+        except (TypeError, ValueError):
             step = 5
         self.step = max(1, min(25, step))
         self.card = None
@@ -80,7 +80,7 @@ class Mixer:
     def setup(self):
         """(Re)discover the card and controls. The sound card can appear a few seconds after boot: callers retry."""
         hw = self.hwctl
-        want = "" if self.want_card is None else str(self.want_card).strip()     # card 0 is a valid card: don't use `or`
+        want = "" if self.want_card is None else str(self.want_card).strip()
         self.card = int(want) if want.isdigit() else hw.audio_card()
         names = re.findall(r"Simple mixer control '([^']+)',0", run(["amixer", "-c", str(self.card), "scontrols"]))
         vol = [n for n in names if "pvolume" in run(["amixer", "-c", str(self.card), "sget", n]).lower()]
@@ -91,7 +91,7 @@ class Mixer:
             self.controls = outs or [n for n in vol if not SKIP.search(n)][:1]
         self.controls.sort(key=lambda n: next((i for i, p in enumerate(PREFER) if p in n.lower()), len(PREFER)))
         try:
-            self.switches = hw.audio_enable(self.card)           # un-mute speaker / amp / headphone switches
+            self.switches = hw.audio_enable(self.card)
         except Exception as e:
             self.switches = []
             log("audio_enable failed: %r" % e)
@@ -106,7 +106,6 @@ class Mixer:
             run(["amixer", "-c", str(self.card), "-q", "sset", n, "%d%%" % pct])
 
     def set_mute(self, mute):
-        # only touch the output switches; "unmute" on them is also what audio_enable does at boot
         for n in self.switches:
             run(["amixer", "-c", str(self.card), "-q", "sset", n, "mute" if mute else "unmute"])
 
@@ -165,7 +164,7 @@ class Announcer:
 
     def __init__(self, send, clock=time.monotonic):
         self.send, self.clock = send, clock
-        self.latest = None                  # (pct, mute) not yet shown, or None
+        self.latest = None
         self.last_sent = None
         self.last_change = 0.0
 
@@ -216,7 +215,6 @@ def change(mixer, st, key, announcer=None):
     apply(mixer, st, announcer)
 
 
-# ---------------------------------------------------------------- input devices that carry the volume keys
 def has_volume_keys(path):
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
@@ -251,7 +249,6 @@ def scan(have):
 def daemon():
     mixer = Mixer()
     st = State()
-    # the codec can show up late: retry the discovery for a while if nothing usable was found
     for _ in range(20):
         if mixer.controls or mixer.switches:
             break
@@ -277,7 +274,7 @@ def daemon():
                 data = os.read(fd, EVFMT.size * 32)
             except BlockingIOError:
                 continue
-            except OSError:                                   # device went away (unplugged / re-created)
+            except OSError:
                 for p, f in list(fds.items()):
                     if f == fd:
                         os.close(fd)
@@ -286,7 +283,7 @@ def daemon():
             for off in range(0, len(data) - EVFMT.size + 1, EVFMT.size):
                 _s, _u, typ, code, val = EVFMT.unpack_from(data, off)
                 if typ == EV_KEY and val in (1, 2) and code in (KEY_VOLUMEUP, KEY_VOLUMEDOWN, KEY_MUTE):
-                    if code == KEY_MUTE and val == 2:         # no auto-repeat for mute
+                    if code == KEY_MUTE and val == 2:
                         continue
                     change(mixer, st, code, ann)
 

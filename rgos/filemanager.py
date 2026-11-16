@@ -19,7 +19,7 @@ def human_size(n):
     """1536 -> '1.5 KB'."""
     n = float(n)
     for unit in ("B", "KB", "MB", "GB"):
-        if round(n, 1) < 1024 or unit == "GB":      # compare the rounded value, or 1048575 shows as "1024.0 KB"
+        if round(n, 1) < 1024 or unit == "GB":
             return ("%d %s" % (n, unit)) if unit == "B" else ("%.1f %s" % (n, unit))
         n /= 1024.0
 
@@ -82,8 +82,6 @@ def list_dir(path):
 
 def tree_size(path):
     """Total bytes below path without following symlinks into other trees."""
-    # A symlink is an item in its own right. Do not follow it when estimating
-    # a folder's size: it may point outside the ROM storage or at a huge tree.
     try:
         if os.path.islink(path):
             return os.lstat(path).st_size
@@ -94,8 +92,6 @@ def tree_size(path):
 
     total = 0
     for base, dirs, files in os.walk(path, followlinks=False):
-        # os.walk lists symlinked directories in dirs even when it will not
-        # descend into them. Count the link itself, not the target's contents.
         kept_dirs = []
         for name in dirs:
             p = os.path.join(base, name)
@@ -142,7 +138,7 @@ def move_item(src, dst_folder):
     if not os.path.islink(src) and os.path.isdir(src) and inside(dst_folder, src):
         raise OSError("Cannot move a folder into itself")
     if os.path.realpath(os.path.dirname(src)) == os.path.realpath(dst_folder):
-        return src                                  # already there
+        return src
     dst = os.path.join(dst_folder, unique_name(dst_folder, os.path.basename(src)))
     shutil.move(src, dst)
     return dst
@@ -159,21 +155,20 @@ class FileManager:
     """Browser state. cwd None = the list of storage roots; otherwise a folder inside one of the roots."""
 
     def __init__(self, roots, labels=None, protected=None):
-        self.roots = [r for r in roots if r and os.path.isdir(r)]     # shown in this order
-        self.labels = dict(labels or {})                              # root path -> name shown in the storage list
-        # root path -> lower-case top-level names under it that may not be deleted, renamed or moved
+        self.roots = [r for r in roots if r and os.path.isdir(r)]
+        self.labels = dict(labels or {})
         self.protected = {r: {n.casefold() for n in names} for r, names in (protected or {}).items()}
         self.cwd = None
         self.entries = []
         self.idx = 0
-        self.marked = set()          # paths ticked with Y
-        self.clip = []               # paths copied/cut, waiting for Paste
+        self.marked = set()
+        self.clip = []
         self.clip_cut = False
         self.msg = ""
-        self.busy = ""               # text shown while the worker thread runs ("" = idle)
+        self.busy = ""
         self._lock = threading.Lock()
         self.refresh()
-        if len(self.roots) == 1:     # one card only: start inside it
+        if len(self.roots) == 1:
             self.enter(self.roots[0])
 
     def label_of(self, root):
@@ -184,13 +179,12 @@ class FileManager:
         rp = os.path.realpath(path)
         for root, names in self.protected.items():
             rel = os.path.relpath(rp, os.path.realpath(root))
-            if rel == "." or rel == ".." or rel.startswith(".." + os.sep):   # the root itself / outside it (a name like "..x" is inside)
+            if rel == "." or rel == ".." or rel.startswith(".." + os.sep):
                 continue
             if rel.split(os.sep)[0].casefold() in names:
                 return True
         return False
 
-    # ---- navigation
     def refresh(self, keep=None):
         if self.cwd is None:
             self.entries = [{"name": self.label_of(r), "path": r, "dir": True, "size": 0, "root": True}
@@ -231,7 +225,7 @@ class FileManager:
         if self.at_top():
             return False
         if any(os.path.realpath(self.cwd) == os.path.realpath(r) for r in self.roots):
-            self.cwd, self.idx = None, 0                  # back to the storage list
+            self.cwd, self.idx = None, 0
             self.marked.clear()
             self.refresh()
             return True
@@ -258,7 +252,6 @@ class FileManager:
                 return self.label_of(r) + ("" if rel == "." else "/" + rel)
         return self.cwd
 
-    # ---- selection
     def toggle_mark(self):
         e = self.current()
         if e and not e.get("root"):
@@ -272,7 +265,6 @@ class FileManager:
         e = self.current()
         return [e] if e and not e.get("root") else []
 
-    # ---- clipboard
     def copy(self):
         t = self.targets()
         if t:
@@ -291,12 +283,11 @@ class FileManager:
     def can_paste(self):
         return bool(self.clip) and self.cwd is not None and not self.busy
 
-    # ---- operations (paste/delete run on a worker thread; the rest are instant)
     def _run(self, text, fn):
         def job():
             try:
                 done_msg = fn()
-            except Exception as ex:                     # disk full, read-only card, permissions, ...
+            except Exception as ex:
                 done_msg = "Failed: %s" % (getattr(ex, "strerror", None) or ex)
             with self._lock:
                 self.msg, self.busy = done_msg, ""
@@ -332,9 +323,9 @@ class FileManager:
         def fn():
             n = skipped = 0
             for p in t:
-                if os.path.realpath(p) in roots:        # never delete a whole card
+                if os.path.realpath(p) in roots:
                     continue
-                if self.is_protected(p):                # boot files on the RGOS partition
+                if self.is_protected(p):
                     skipped += 1
                     continue
                 delete_item(p)
@@ -359,7 +350,7 @@ class FileManager:
         if new_name == e["name"]:
             return True
         dst = os.path.join(os.path.dirname(e["path"]), new_name)
-        if os.path.lexists(dst) and not same_entry(e["path"], dst):     # on FAT/exFAT "a.nes" -> "A.nes" is the same entry
+        if os.path.lexists(dst) and not same_entry(e["path"], dst):
             self.msg = "'%s' already exists" % new_name
             return False
         try:

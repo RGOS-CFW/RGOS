@@ -16,8 +16,8 @@ import hashlib, json, os, re, shutil, signal, subprocess, sys, threading, time
 CONF_FILE = os.environ.get("RGOS_WIFI_CONF", "/var/lib/rgos/wifi.json")
 SYS_CONF = os.environ.get("RGOS_WIFI_SYS", "/etc/rgos/wifi.json")
 RUN_DIR = os.environ.get("RGOS_RUN", "/run/rgos")
-GAME_FLAG = os.path.join(RUN_DIR, "ingame")         # exists while a game runs (rgos-launch): no polling, no forks
-SLEEP_FLAG = os.path.join(RUN_DIR, "sleeping")     # exists while the device sleeps (written by rgos-hw)
+GAME_FLAG = os.path.join(RUN_DIR, "ingame")
+SLEEP_FLAG = os.path.join(RUN_DIR, "sleeping")
 STATUS_FILE = os.path.join(RUN_DIR, "wifi.status")
 WPA_CONF = os.path.join(RUN_DIR, "wpa_supplicant.conf")
 CTRL_DIR = os.environ.get("RGOS_WPA_CTRL", "/run/wpa_supplicant")
@@ -32,7 +32,6 @@ SYS_DEFAULTS = {"country": "", "iface": "auto", "firmware_dir": "/media/roms/fir
                             "unisocwcn", "uwe5622_bsp_sdio", "aic8800_bsp", "aic8800_fdrv", "mt7921s", "mt7921e", "ath10k_sdio"]}
 
 
-# ---------------------------------------------------------------- saved networks
 def _read_json(path, default):
     try:
         with open(path) as f:
@@ -55,7 +54,7 @@ def load_conf():
     raw = d.get("networks", [])
     nets = [dict(n, prio=_int(n.get("prio", 0))) for n in (raw if isinstance(raw, list) else [])
             if isinstance(n, dict) and isinstance(n.get("ssid"), str) and n["ssid"]]
-    prio = max([_int(d.get("prio", 0))] + [n["prio"] for n in nets])      # a new network must outrank every saved one
+    prio = max([_int(d.get("prio", 0))] + [n["prio"] for n in nets])
     return {"enabled": bool(d.get("enabled", True)), "prio": prio, "networks": nets,
             "country": str(d.get("country", ""))}
 
@@ -149,7 +148,6 @@ def write_wpa_conf(conf=None):
         return False
 
 
-# ---------------------------------------------------------------- scan results
 def unescape_ssid(s):
     """wpa_cli prints SSIDs with \\xNN escapes for non-printable bytes."""
     out, i, b = bytearray(), 0, s.encode("utf-8", "surrogateescape")
@@ -174,7 +172,7 @@ def parse_scan(text):
             continue
         ssid = unescape_ssid(p[4])
         if not ssid.strip("\0 "):
-            continue                                         # hidden network: no name in the beacon
+            continue
         try:
             rssi = int(p[2])
         except ValueError:
@@ -191,7 +189,6 @@ def bars(rssi):
     return 0 if rssi is None else 4 if rssi >= -55 else 3 if rssi >= -65 else 2 if rssi >= -75 else 1
 
 
-# ---------------------------------------------------------------- talking to the system
 def run(cmd, timeout=8):
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, errors="replace")
@@ -311,7 +308,6 @@ class Scanner:
         return out
 
 
-# ---------------------------------------------------------------- the daemon
 def log(msg):
     print("%s rgos-wifi: %s" % (time.strftime("%H:%M:%S"), msg), flush=True)
 
@@ -328,7 +324,6 @@ def write_status(d):
         pass
 
 
-# module file names that belong to a Wi-Fi chip or its bus glue, whatever folder the kernel package put them in
 WIFI_PAT = re.compile(r"(cfg80211|mac80211|libarc4|sprd|uwe|sc23|unisoc|wcn|marlin|sdiohal|rtw|rtl8|8[0-9]{3}[a-z]{1,2}\b|brcm|bcmdhd|cywdhd|aic8|"
                       r"ssv|xr8|xradio|mt76|mt79|ath[0-9k]|iwl|wlan|wifi|wl_|r8[0-9]{3}|esp8|hi38)", re.I)
 
@@ -361,7 +356,7 @@ def load_modules(cfg):
     failed = []
     for m in dict.fromkeys(names):
         rc, out = run(["modprobe", m], timeout=20)
-        if rc != 0 and any(n == m for n, _p in found):             # only report modules that really exist
+        if rc != 0 and any(n == m for n, _p in found):
             failed.append("%s: %s" % (m, (out or "").strip().replace("\n", " ")[:100]))
     log("tried %d modules (%d look wireless); %d failed to load" % (len(dict.fromkeys(names)), len(found), len(failed)))
     for f in failed[:12]:
@@ -444,7 +439,7 @@ class Daemon:
     def start_wpa(self, iface):
         write_wpa_conf()
         try:
-            os.remove(os.path.join(CTRL_DIR, iface))                  # stale socket from a killed supplicant
+            os.remove(os.path.join(CTRL_DIR, iface))
         except OSError:
             pass
         log("starting wpa_supplicant on %s" % iface)
@@ -460,7 +455,7 @@ class Daemon:
         iface = find_iface()
         if not iface:
             self.children_stop()
-            if time.time() - iface_seen[0] > 20:                      # drivers can appear late: retry every 20 s
+            if time.time() - iface_seen[0] > 20:
                 iface_seen[0] = time.time()
                 self.tries += 1
                 run(["rfkill", "unblock", "wifi"])
@@ -468,23 +463,23 @@ class Daemon:
                 if self.tries == 2 and not find_iface():
                     log("still no adapter: trying insmod on the wireless modules directly")
                     brute_force_insmod(found)
-                time.sleep(3)                                          # give a freshly loaded driver time to register its interface
+                time.sleep(3)
                 if self.tries in (1, 3) and not find_iface():
                     diag("attempt %d, no wireless interface" % self.tries)
             write_status({"state": "no-adapter"})
             return
-        if os.path.exists(SLEEP_FLAG):                                # device asleep (rgos-hw): radio stays down, no scanning
+        if os.path.exists(SLEEP_FLAG):
             self.children_stop()
             run(["ip", "link", "set", iface, "down"])
             write_status({"state": "off", "iface": iface})
-            self.last_state = ""                                      # reconnect (and log it) after waking
+            self.last_state = ""
             return
         if not conf["enabled"]:
             self.children_stop()
             run(["ip", "link", "set", iface, "down"])
             write_status({"state": "off", "iface": iface})
             return
-        if self.last_state != "connected":                            # steady state: skip two forks every cycle
+        if self.last_state != "connected":
             run(["rfkill", "unblock", "wifi"])
             run(["ip", "link", "set", iface, "up"])
         if self.wpa is None or self.wpa.poll() is not None:
@@ -501,7 +496,7 @@ class Daemon:
         else:
             state = "disconnected"
         if state == "connected" and self.last_state != "connected" and self.dhcp and self.dhcp.poll() is None:
-            self.dhcp.send_signal(signal.SIGUSR1)                      # new link: renew / discover now
+            self.dhcp.send_signal(signal.SIGUSR1)
         if state != self.last_state:
             log("%s %s %s" % (state, kv.get("ssid", ""), ip))
             self.last_state = state
@@ -514,16 +509,15 @@ class Daemon:
         log("daemon start")
         while not self.stop:
             ingame = os.path.exists(GAME_FLAG) and not os.path.exists(SLEEP_FLAG) and self.last_state != ""
-            if not ingame:                                             # in a game wpa_supplicant/udhcpc keep the link up on their own
+            if not ingame:
                 try:
                     self.step(seen)
-                except Exception as e:                                 # never die: a broken adapter must not stop the device
+                except Exception as e:
                     log("error: %r" % (e,))
             time.sleep(5 if ingame else (6 if self.last_state == "connected" else 2))
         self.children_stop()
 
 
-# ---------------------------------------------------------------- command line
 def cli(argv):
     cmd = argv[0] if argv else ""
     if cmd == "daemon":

@@ -24,7 +24,7 @@ class LoadKeymapTests(unittest.TestCase):
             json.dump(data, f)
 
     def test_keymap_that_is_not_an_object_is_ignored(self):
-        for bad in ([1], "x", 5, True):                          # used to raise AttributeError and stop the hub
+        for bad in ([1], "x", 5, True):
             self.assertEqual(hub.load_keymap({"keymap": bad}), {}, bad)
 
     def test_input_json_keymap_skips_bad_entries(self):
@@ -40,7 +40,7 @@ class LoadKeymapTests(unittest.TestCase):
         self.assertEqual(hub.load_keymap({}), {("a", 1, 2, 0): 304, ("c", 1, 4, 0): 306})
 
     def test_out_of_range_number_in_the_wizard_map_is_just_a_bad_entry(self):
-        with open(hub.BTNMAP, "w") as f:                          # json.load turns 1e999 into inf; int(inf) raises OverflowError
+        with open(hub.BTNMAP, "w") as f:
             f.write('{"keys": {"a|1:2:0": 304, "b|1:3:0": 1e999, "c|1:4:0": 306}}')
         self.assertEqual(hub.load_keymap({}), {("a", 1, 2, 0): 304, ("c", 1, 4, 0): 306})
 

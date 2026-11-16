@@ -35,7 +35,7 @@ class PickCoreTests(unittest.TestCase):
 
     def test_state_that_is_not_the_expected_shape_falls_back_to_the_default(self):
         for bad in ([], None, "x", 5, {"emulators": []}, {"emulators": "a"}, {"emulators": {"snes": ["bsnes"]}},
-                    {"emulators": {"snes": 7}}):                # used to raise AttributeError (or pass a non-string core on)
+                    {"emulators": {"snes": 7}}):
             self.assertEqual(self.pick(bad), "snes9x", bad)
 
 

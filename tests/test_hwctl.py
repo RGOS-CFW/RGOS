@@ -7,7 +7,7 @@ import unittest
 from tests import helpers
 
 sys.path.insert(0, helpers.RGOS)
-import hwctl  # noqa: E402
+import hwctl
 
 
 def fake_gpio(n):
@@ -40,7 +40,7 @@ class LoadConfTests(unittest.TestCase):
 
     def test_shipped_config_that_is_not_an_object_gives_none(self):
         user = self.write("hw.json", {"audio": {"card": 1}})
-        for bad in ([1, 2], "x", 5, None):              # used to raise TypeError when a user hw.json existed
+        for bad in ([1, 2], "x", 5, None):
             self.assertIsNone(hwctl.load_conf(self.write("hw-x.json", bad), user), bad)
 
     def test_user_overrides_are_merged(self):
@@ -65,7 +65,7 @@ class AudioInitLinesTests(unittest.TestCase):
         self.assertEqual(got, [["sset", "Speaker Switch", "on"], ["cset", "name=Speaker Mux", "1"]])
 
     def test_init_that_is_not_a_list_is_ignored(self):
-        for bad in ("sset 'Speaker Switch' on", 5, {"a": "b"}, True):   # a string used to become one command per character
+        for bad in ("sset 'Speaker Switch' on", 5, {"a": "b"}, True):
             self.assertEqual(self.lines("", {"audio": {"init": bad}}), [], bad)
 
     def test_blank_or_unparseable_lines_give_no_command(self):

@@ -36,11 +36,11 @@ def fit_rect(src, dst):
     dw, dh = dst
     if sw <= 0 or sh <= 0 or dw <= 0 or dh <= 0:
         return (0, 0, max(dw, 0), max(dh, 0))
-    if abs(dw * sh - dh * sw) * 200 <= dw * sh:      # within 0.5 %: fill the screen (854x480 canvas on a 1280x720 panel)
+    if abs(dw * sh - dh * sw) * 200 <= dw * sh:
         return (0, 0, dw, dh)
-    if dw * sh >= dh * sw:            # screen is wider than the source: bars left/right
+    if dw * sh >= dh * sw:
         h, w = dh, max(1, dh * sw // sh)
-    else:                             # screen is narrower: bars top/bottom
+    else:
         w, h = dw, max(1, dw * sh // sw)
     return ((dw - w) // 2, (dh - h) // 2, w, h)
 
@@ -57,12 +57,11 @@ class FbOut:
         self.bpp = v[6]
         if self.bpp not in (16, 24, 32):
             raise RuntimeError("unsupported framebuffer depth %d" % self.bpp)
-        # try to get a second page for double buffering
         self.pages = 1
         if os.environ.get("RGOS_FB_DBUF", "1") != "0":
             try:
                 vv = self._raw_var()
-                struct.pack_into("<2I", vv, 8, self.xres, self.yres * 2)       # xres_virtual, yres_virtual
+                struct.pack_into("<2I", vv, 8, self.xres, self.yres * 2)
                 fcntl.ioctl(self.fd, FBIOPUT_VSCREENINFO, vv)
                 if self._get_var()[3] >= self.yres * 2:
                     self.pages = 2
@@ -77,13 +76,10 @@ class FbOut:
         smem_len = struct.unpack_from("<I", f, 24)[0]
         self.line = struct.unpack_from("<I", f, 48)[0]
         self.mm = mmap.mmap(self.fd, smem_len)
-        # The TSP's BSP driver (rotated panel, G2D copy) shows data that arrives through write() but did NOT show what was
-        # stored through the mmap (log: menu running, screen stuck on the red write()-painted marker). So write() by default;
-        # RGOS_FB_MMAP=1 goes back to mmap.
         self.use_write = os.environ.get("RGOS_FB_MMAP", "0") != "1"
         self.bytes_pp = self.bpp // 8
         if self.pages == 2 and self.line * self.yres * 2 > smem_len:
-            self.pages = 1                                  # driver accepted the size but has no memory for it
+            self.pages = 1
         mask = lambda o, l: ((1 << l) - 1) << o
         masks = (mask(ro, rl), mask(go, gl), mask(bo, bl), mask(to, tl) if tl else 0)
         self.surf = pygame.Surface((self.xres, self.yres), 0, self.bpp, masks)
@@ -95,7 +91,6 @@ class FbOut:
         self.info = "fb %dx%d %dbpp x%d page%s rot%d" % (self.xres, self.yres, self.bpp, self.pages,
                                                          "s" if self.pages > 1 else "", self.rotate)
 
-    # -- ioctl helpers ------------------------------------------------------------------------------------------
     def _raw_var(self):
         v = bytearray(160)
         fcntl.ioctl(self.fd, FBIOGET_VSCREENINFO, v)
@@ -110,7 +105,7 @@ class FbOut:
             try:
                 vv = self._raw_var()
                 struct.pack_into("<2I", vv, 16, 0, 0)
-                fcntl.ioctl(self.fd, FBIOPAN_DISPLAY, vv)       # some BSP drivers only refresh the panel on a pan
+                fcntl.ioctl(self.fd, FBIOPAN_DISPLAY, vv)
             except OSError:
                 pass
             if self.vsync:
@@ -121,7 +116,7 @@ class FbOut:
             return
         try:
             vv = self._raw_var()
-            struct.pack_into("<2I", vv, 16, 0, page * self.yres)      # xoffset, yoffset
+            struct.pack_into("<2I", vv, 16, 0, page * self.yres)
             fcntl.ioctl(self.fd, FBIOPAN_DISPLAY, vv)
             if self.vsync:
                 try:
@@ -129,9 +124,8 @@ class FbOut:
                 except OSError:
                     self.vsync = False
         except OSError:
-            self.pages = 1                                  # pan not supported after all: single buffer from now on
+            self.pages = 1
 
-    # -- drawing ------------------------------------------------------------------------------------------------
     def _put(self, off, data):
         if self.use_write:
             try:
@@ -140,7 +134,7 @@ class FbOut:
                     n += os.pwrite(self.fd, data[n:], off + n)
                 return
             except OSError:
-                self.use_write = False                        # driver refuses write(): fall back to mmap
+                self.use_write = False
         self.mm[off:off + len(data)] = data
 
     def clear(self):
@@ -168,7 +162,6 @@ class FbOut:
         return self.cache
 
     def present(self, canvas):
-        # unchanged frame -> nothing to do (adler32 of 1.4 MB takes ~1 ms)
         h = zlib.adler32(canvas.get_buffer().raw)
         if h == self.last:
             return
@@ -176,7 +169,7 @@ class FbOut:
         self.surf.blit(self._scaled(canvas), (0, 0))
         raw = self.surf.get_buffer().raw
         pitch, rowlen = self.surf.get_pitch(), self.xres * self.bytes_pp
-        back = (1 - self.page) if self.pages > 1 else 0          # draw into the page that is not on screen
+        back = (1 - self.page) if self.pages > 1 else 0
         base = back * self.yres * self.line + self.xoff * self.bytes_pp
         if self.pages < 2:
             base += self.yoff * self.line

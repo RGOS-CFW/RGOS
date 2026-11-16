@@ -35,7 +35,7 @@ class ApplyPowerTests(unittest.TestCase):
     def test_enabled_powers_on(self):
         self.assertEqual(self.power_calls({"enabled": True}), [["bluetoothctl", "power", "on"]])
 
-    def test_disabled_powers_off(self):                       # used to do nothing, so BlueZ's AutoEnable turned it back on
+    def test_disabled_powers_off(self):
         self.assertEqual(self.power_calls({"enabled": False}), [["bluetoothctl", "power", "off"]])
 
     def test_no_settings_file_defaults_to_on(self):

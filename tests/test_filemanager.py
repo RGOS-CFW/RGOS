@@ -27,7 +27,7 @@ class ProtectedTests(unittest.TestCase):
 
     def test_protected_names_and_things_inside_them(self):
         self.assertTrue(self.fm.is_protected(os.path.join(self.root, "SYSTEM")))
-        self.assertTrue(self.fm.is_protected(os.path.join(self.root, "system", "x")))      # case-insensitive
+        self.assertTrue(self.fm.is_protected(os.path.join(self.root, "system", "x")))
 
     def test_protected_name_that_starts_with_two_dots(self):
         self.assertTrue(self.fm.is_protected(os.path.join(self.root, "..SYSTEM")))
@@ -83,7 +83,7 @@ class HumanSizeTests(unittest.TestCase):
                          ["0 B", "1023 B", "1.0 KB", "1.5 KB", "1.0 MB", "5.0 GB"])
 
     def test_a_size_that_rounds_up_moves_to_the_next_unit(self):
-        h = filemanager.human_size                      # used to show "1024.0 KB" / "1024.0 MB"
+        h = filemanager.human_size
         self.assertEqual(h(1024 ** 2 - 1), "1.0 MB")
         self.assertEqual(h(1024 ** 3 - 1), "1.0 GB")
         self.assertEqual(h(1024 ** 2 - 1024), "1023.0 KB")

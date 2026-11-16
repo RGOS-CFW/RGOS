@@ -36,7 +36,6 @@ def run(cmd, timeout=10, inp=None):
         return 127, str(e)
 
 
-# ---------------------------------------------------------------- on/off setting
 def enabled():
     try:
         with open(CONF) as f:
@@ -61,7 +60,6 @@ def apply_power():
     run(["bluetoothctl", "power", "on" if enabled() else "off"])
 
 
-# ---------------------------------------------------------------- pairings kept across reboots
 def restore_pairings():
     if not os.path.exists(PAIRINGS):
         return
@@ -87,7 +85,6 @@ def save_pairings():
         return False
 
 
-# ---------------------------------------------------------------- boot bring-up
 def module_names():
     names = list(MODULES)
     for root, _d, files in os.walk("/lib/modules"):
@@ -111,7 +108,7 @@ def start():
     for m in module_names():
         run(["modprobe", m], timeout=20)
     run(["rfkill", "unblock", "bluetooth"])
-    for _ in range(30):                                            # the controller can take a while to appear
+    for _ in range(30):
         if adapter():
             break
         time.sleep(1)
@@ -156,7 +153,6 @@ def start():
     return 0
 
 
-# ---------------------------------------------------------------- what the menu uses
 def parse_info(text):
     """`bluetoothctl info A\\ninfo B ...` output -> {mac: {name, paired, connected, trusted, rssi}}"""
     out, cur = {}, None
@@ -192,7 +188,7 @@ def devices():
         if not d:
             continue
         if not d["paired"] and (not d["name"] or d["name"].replace("-", ":").upper() == mac):
-            continue                                              # anonymous BLE advertisement
+            continue
         rows.append(dict(d, mac=mac))
     rows.sort(key=lambda d: (not d["paired"], not d["connected"], -(d["rssi"] if d["rssi"] is not None else -200)))
     return rows[:16]
@@ -201,7 +197,7 @@ def devices():
 def powered():
     rc, out = run(["bluetoothctl", "show"], timeout=5)
     if rc != 0 or "Controller" not in out:
-        return None                                               # no adapter / bluetoothd not running
+        return None
     return bool(re.search(r"Powered:\s*yes", out))
 
 

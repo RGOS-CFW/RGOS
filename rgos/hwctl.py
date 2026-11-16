@@ -37,7 +37,7 @@ def load_conf(path=None, user=USER_CONF):
             conf = json.load(f)
     except (OSError, ValueError):
         return None
-    if not isinstance(conf, dict):                  # valid JSON that is not an object: no usable hardware config
+    if not isinstance(conf, dict):
         return None
     try:
         with open(user) as f:
@@ -77,7 +77,6 @@ def write_run(path, text):
         pass
 
 
-# ------------------------------------------------------------------------------------------------ backlight
 
 class LowPower:
     """Turn everything down while the device sleeps and put it back exactly as it was afterwards.
@@ -93,7 +92,7 @@ class LowPower:
     Every write is best-effort: a missing knob is skipped, never an error."""
     DEFAULTS = {"enabled": True, "radios_off": True, "leds_off": True, "cpu_min": True, "offline_cpus": True,
                 "devfreq_min": True}
-    ORDER = ("offline", "cpu", "devfreq", "led", "radio")        # order of restoring (extra cores back first)
+    ORDER = ("offline", "cpu", "devfreq", "led", "radio")
 
     def __init__(self, conf=None, sys_root="/sys", run_dir="/run/rgos"):
         self.c = dict(self.DEFAULTS)
@@ -104,9 +103,8 @@ class LowPower:
         self.flag = os.path.join(run_dir, "sleeping")
         self.saved_file = os.path.join(run_dir, "lowpower.json")
         self.saved = {k: [] for k in self.ORDER}
-        self.stage = 0                                     # 0 awake, 1 radios + LEDs off, 2 fully turned down
+        self.stage = 0
 
-    # ---- helpers
     def _p(self, *parts):
         return os.path.join(self.sys, *parts)
 
@@ -123,13 +121,12 @@ class LowPower:
     def _persist(self):
         write_run(self.saved_file, json.dumps({"stage": self.stage, "saved": self.saved}))
 
-    # ---- stages
     def _light(self):
         if self.c["radios_off"]:
             for d in sorted(glob.glob(self._p("class/rfkill/rfkill*"))):
                 if rd(os.path.join(d, "type")) in ("wlan", "bluetooth"):
                     self._set("radio", os.path.join(d, "soft"), 1)
-            write_run(self.flag, "1")                      # tells the Wi-Fi daemon to keep the radio down
+            write_run(self.flag, "1")
         if self.c["leds_off"]:
             for d in sorted(glob.glob(self._p("class/leds/*"))):
                 if rd(os.path.join(d, "brightness")) not in ("", "0"):
@@ -147,12 +144,12 @@ class LowPower:
             for d in sorted(glob.glob(self._p("class/devfreq/*"))):
                 if "powersave" in rd(os.path.join(d, "available_governors")).split():
                     self._set("devfreq", os.path.join(d, "governor"), "powersave")
-        if self.c["offline_cpus"]:                         # last: the cores' cpufreq knobs vanish once they are offline
+        if self.c["offline_cpus"]:
             def cpu_no(d):
                 tail = os.path.basename(d)[3:]
                 return int(tail) if tail.isdigit() else -1
             for d in sorted(glob.glob(self._p("devices/system/cpu/cpu[0-9]*")), key=cpu_no):
-                if cpu_no(d) >= 1:                         # cpu0 can never go offline
+                if cpu_no(d) >= 1:
                     self._set("offline", os.path.join(d, "online"), 0)
 
     def enter(self, full=False):
@@ -216,7 +213,7 @@ class Backlight:
         self.sys_root = sys_root
         self.kind = self.node = None
         self.max = 255
-        self.cur = None            # last raw value we wrote (dispdbg cannot be read back reliably)
+        self.cur = None
         want = c.get("backend", "auto")
         if c.get("path"):
             self._use_sysfs(c["path"])
@@ -280,7 +277,6 @@ class Backlight:
         return ok
 
 
-# ------------------------------------------------------------------------------------------------ battery
 class Battery:
     """First power_supply of type Battery (conf["battery"]["supply"] = a name picks one). read() -> dict or None."""
 
@@ -309,7 +305,7 @@ class Battery:
             return None
         cap, est = rd(os.path.join(self.node, "capacity")), False
         pct = int(cap) if cap.lstrip("-").isdigit() else None
-        if pct is None:                       # no gauge percentage: estimate from the cell voltage (rough, linear)
+        if pct is None:
             uv = rd(os.path.join(self.node, "voltage_now"))
             if uv.isdigit():
                 v = int(uv) / 1e6
@@ -319,12 +315,10 @@ class Battery:
         pct = max(0, min(100, pct))
         status = rd(os.path.join(self.node, "status"), "Unknown")
         st = status.lower()
-        # "plugged" = on external power (also true for Full / Not charging); only an explicit Discharging counts as running on battery
         return {"pct": pct, "status": status, "estimated": est, "charging": st == "charging",
                 "plugged": st in ("charging", "full", "not charging"), "discharging": st == "discharging"}
 
 
-# ------------------------------------------------------------------------------------------------ audio
 def _run(args, timeout=5):
     try:
         return subprocess.run(args, capture_output=True, text=True, timeout=timeout).stdout
@@ -373,8 +367,6 @@ def audio_enable(card, extra=()):
 
 AUDIO_DIR = "/etc/rgos/audio"
 
-# Vendor codecs (Unisoc) expose their output enables as plain BOOLEAN controls ("Speaker Switch", "HPL Switch", "Inter PA Switch", ...)
-# that the ALSA *simple* mixer often does not list, so audio_enable() never sees them. audio_enable_raw() walks `amixer contents` instead.
 RAW_ON_RE = re.compile(r"speaker|spk|ear|headphone|headset|\bhp[lr]?\b|line ?out|\bpa\b|\bamp\b|\bdac\b|playback|output|\bout\b", re.I)
 RAW_SKIP_RE = re.compile(r"capture|record|mic|adc|\bin\b|input|loop|bypass|sidetone|test|debug|voice|call|\bbt\b|bluetooth|\bfm\b|mute all", re.I)
 
@@ -418,7 +410,7 @@ def _audio_init_lines(path, user_conf):
     try:
         with open(user_conf) as f:
             extra = (json.load(f).get("audio") or {}).get("init") or []
-        if isinstance(extra, list):                 # a bare string would otherwise be split into one command per character
+        if isinstance(extra, list):
             lines += [x for x in extra if isinstance(x, str)]
     except (OSError, ValueError, AttributeError):
         pass
@@ -447,9 +439,6 @@ def audio_prepare(card, audio_dir=AUDIO_DIR, user_conf=USER_CONF, run=None):
     for args in _audio_init_lines(os.path.join(audio_dir, "init.txt"), user_conf):
         run(["amixer", "-c", str(card), "-q"] + args)
         log.append("amixer %s" % " ".join(args))
-    # Unisoc T618 (RG Rotate): the AGDSP VBC profile selector is what makes the DSP-mediated path produce sound at all; at its default
-    # value playback is silent (beebono/rg-rotate-linux DEVICE-BRINGUP.md: "DSP VBC Profile Select = 961216512"). A restored stock
-    # asound.state normally carries it; set it here when the control exists so a missing / incomplete state file is not fatal.
     try:
         if "DSP VBC Profile Select" in (run(["amixer", "-c", str(card), "controls"]) or ""):
             run(["amixer", "-c", str(card), "-q", "cset", "name=DSP VBC Profile Select", "961216512"])
@@ -464,7 +453,6 @@ def audio_prepare(card, audio_dir=AUDIO_DIR, user_conf=USER_CONF, run=None):
     return log
 
 
-# ------------------------------------------------------------------------------------------------ vibration motor
 class Motor:
     """On/off vibration motor. Modes (conf["rumble"]["mode"], default auto):
       gpio    conf["rumble"]["gpio"] = global GPIO number (A133: PH3 = 7*32+3 = 227), "active_low" optional; sysfs gpio
@@ -483,7 +471,7 @@ class Motor:
         timed = os.path.join(sys_root, "class/timed_output/vibrator/enable")
         leds = [p for p in glob.glob(os.path.join(sys_root, "class/leds/*"))
                 if re.search(r"vibr|motor|rumble", os.path.basename(p), re.I) and os.path.exists(p + "/brightness")]
-        if want in ("auto", "gpio") and gpio is not None and gpio is not False and gpio != "":   # GPIO 0 is a valid pin (0 == False)
+        if want in ("auto", "gpio") and gpio is not None and gpio is not False and gpio != "":
             self.mode, self.path = "gpio", int(gpio)
             self._gpio_prepare()
         elif want in ("auto", "timed") and os.path.exists(timed):
@@ -500,7 +488,6 @@ class Motor:
         d = os.path.join(self.gpio_root, "gpio%d" % self.path)
         if not os.path.exists(d):
             wr(os.path.join(self.gpio_root, "export"), self.path)
-        # direction "high"/"low" sets the initial level atomically, so the motor never twitches on export
         wr(os.path.join(d, "direction"), "high" if self.active_low else "low")
 
     @property
@@ -512,7 +499,7 @@ class Motor:
         if self.mode == "gpio":
             wr(os.path.join(self.gpio_root, "gpio%d" % self.path, "value"), 1 if on != self.active_low else 0)
         elif self.mode == "timed":
-            wr(self.path, 5000 if on else 0)     # the hub switches it off itself; 5 s is only a safety net
+            wr(self.path, 5000 if on else 0)
         elif self.mode == "led":
             wr(self.path, 1 if on else 0)
         self.state = on
@@ -529,7 +516,6 @@ class Motor:
         return "none" if self.mode == "none" else "%s %s" % (self.mode, self.path)
 
 
-# ------------------------------------------------------------------------------------------------ in-game message
 def retroarch_msg(text, port=55355):
     """On-screen message inside a running RetroArch (network_cmd_enable); harmless when it is not running."""
     import socket

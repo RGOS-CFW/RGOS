@@ -30,13 +30,13 @@ class RescanTest(unittest.TestCase):
         with mock.patch.object(menu, "scan_roms", slow):
             t0 = time.monotonic()
             self.assertTrue(rs.start())
-            self.assertLess(time.monotonic() - t0, 0.5)    # the scan is still waiting on the gate
+            self.assertLess(time.monotonic() - t0, 0.5)
             self.assertTrue(rs.busy)
-            self.assertIsNone(rs.take())                   # not finished yet
+            self.assertIsNone(rs.take())
             gate.set()
             self.assertEqual(wait_for(rs), [{"title": "A"}])
         self.assertFalse(rs.busy)
-        self.assertIsNone(rs.take())                       # delivered exactly once
+        self.assertIsNone(rs.take())
 
     def test_second_start_is_ignored_while_scanning(self):
         gate = threading.Event()
@@ -60,11 +60,11 @@ class RescanTest(unittest.TestCase):
             rs.start()
             end = time.monotonic() + 2
             while rs.busy and time.monotonic() < end:
-                self.assertIsNone(rs.take())               # None = nothing to swap in (the old list stays)
+                self.assertIsNone(rs.take())
                 time.sleep(0.005)
         self.assertFalse(rs.busy)
         with mock.patch.object(menu, "scan_roms", return_value=[]):
-            self.assertTrue(rs.start())                    # and a new scan can start again
+            self.assertTrue(rs.start())
             self.assertEqual(wait_for(rs), [])
 
 

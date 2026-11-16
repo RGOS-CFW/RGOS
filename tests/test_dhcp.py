@@ -16,7 +16,7 @@ class BoundTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.dir, True)
         self.log = os.path.join(self.dir, "ip.log")
         fake = os.path.join(self.dir, "ip")
-        with open(fake, "w") as f:                       # records every `ip` call instead of touching the network
+        with open(fake, "w") as f:
             f.write('#!/bin/sh\necho "$*" >> "%s"\n' % self.log)
         os.chmod(fake, 0o755)
 
@@ -33,7 +33,7 @@ class BoundTests(unittest.TestCase):
         add = next(i for i, c in enumerate(calls) if c.startswith("addr add 192.168.1.50/24"))
         flush = next(i for i, c in enumerate(calls) if c.startswith("route flush"))
         default = next(i for i, c in enumerate(calls) if c.startswith("route add default via 192.168.1.1"))
-        self.assertLess(flush, add)                      # a flush after "addr add" deletes the subnet route the gateway needs
+        self.assertLess(flush, add)
         self.assertLess(add, default)
 
     def test_dns_and_search_domain_are_written(self):

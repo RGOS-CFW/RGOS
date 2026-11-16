@@ -17,7 +17,7 @@ import sys
 import tarfile
 
 BOOT_FILES = ("device_trees/ums512-rg-rotate.dtb", "dtb.img", "KERNEL", "KERNEL.md5", "rgos-initrd.cpio", "SYSTEM", "SYSTEM.md5",
-              "extlinux/extlinux.conf")          # keep in sync with rgos/rgos-update
+              "extlinux/extlinux.conf")
 
 
 def sha256(path):
@@ -50,7 +50,7 @@ def main(argv):
         ti = tarfile.TarInfo("manifest.json")
         ti.size, ti.mode = len(data), 0o644
         tf.addfile(ti, io.BytesIO(data))
-        for name in BOOT_FILES:                  # same order the device replaces them in
+        for name in BOOT_FILES:
             if name in files:
                 ti = tf.gettarinfo(files[name], "boot/" + name)
                 ti.uid = ti.gid = 0

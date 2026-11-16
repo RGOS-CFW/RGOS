@@ -38,7 +38,7 @@ class LoadConfTests(unittest.TestCase):
     def test_bad_network_prio_does_not_break_the_wpa_config(self):
         conf = self.load({"networks": [{"ssid": "a", "prio": "hi"}, {"ssid": "b", "prio": 2}]})
         self.assertEqual([n["prio"] for n in conf["networks"]], [0, 2])
-        text = wifictl.make_wpa_conf(conf)                      # used to raise TypeError when sorting
+        text = wifictl.make_wpa_conf(conf)
         self.assertIn("priority=2", text)
 
     def test_new_network_outranks_saved_ones(self):

@@ -1,10 +1,4 @@
 #!/bin/busybox sh
-# RG OS initramfs /init. Replaces ROCKNIX's own init (the one that shows "NEVER TOUCH boot=..." and waits 60 s).
-# The kernel starts this through rdinit=/rgos-init (set in extlinux.conf by build.sh), so ROCKNIX's built-in /init never runs.
-#
-# Job: find the FAT boot partition that holds SYSTEM, loop-mount SYSTEM (the Debian squashfs) on /sysroot, move the
-# /flash mount into it and switch_root to /usr/sbin/rgos-init. Nothing is printed unless something goes wrong, there is
-# no countdown, and a missing partition is retried instead of giving up.
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 /bin/busybox --install -s /bin 2>/dev/null
 
@@ -16,11 +10,9 @@ mount -t devtmpfs devtmpfs /dev 2>/dev/null
 klog() { echo "rgos-initramfs: $*" > /dev/kmsg 2>/dev/null; }
 say()  { klog "$*"; echo "RG OS: $*"; }
 
-# boot= from the kernel command line (boot=LABEL=RGOS; build.sh renames the stock ROCKNIX label to RGOS); only a hint, we fall back to a scan
 WANT=""
 for a in $(cat /proc/cmdline); do case "$a" in boot=*) WANT=${a#boot=} ;; esac; done
 
-# mount $1 on /flash and succeed only if it is a FAT partition that carries SYSTEM
 try_dev() {
   [ -b "$1" ] || return 1
   mount -t vfat -o rw,noatime "$1" /flash 2>/dev/null || mount -t vfat -o ro "$1" /flash 2>/dev/null || return 1
@@ -38,7 +30,6 @@ find_boot() {
   return 1
 }
 
-# the SD card can appear a moment after the kernel starts us; poll quickly, say something only if it takes long
 n=0
 until find_boot; do
   n=$((n + 1))
@@ -47,11 +38,6 @@ until find_boot; do
 done
 klog "boot partition found after $n tries (boot=$WANT)"
 
-# Boot trace for a PC: written to the FAT partition as rgos-initramfs.txt, so a card that fails to boot leaves evidence of how far it
-# got. File present  -> U-Boot/extlinux/kernel did start this initramfs; read it to see which step failed.
-# File missing       -> the initrd never ran (U-Boot did not load it, the kernel ignored it, or rdinit failed): copy
-#                       extlinux/extlinux.conf.stock over extlinux/extlinux.conf to boot ROCKNIX's own init instead.
-# rgos-bootinfo.txt / rgos-logs.txt (written later by the Debian side) missing while this file exists -> the failure is after switch_root.
 TRACE=/flash/rgos-initramfs.txt
 trace() { echo "[$(cut -d' ' -f1 /proc/uptime 2>/dev/null)] $*" >> "$TRACE" 2>/dev/null; }
 { echo "RG OS initramfs trace"; echo "cmdline: $(cat /proc/cmdline)"; echo "kernel: $(uname -r 2>/dev/null)"

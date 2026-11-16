@@ -25,10 +25,10 @@ import fcntl, json, os, re, subprocess, sys, time
 CONF_FILES = [os.environ.get("RGOS_SDCARD_CONF", "/etc/rgos/sdcard.json"), "/var/lib/rgos/sdcard.json"]
 DEFAULTS = {"enabled": True,
             "mountpoint": "/media/roms2",
-            "fs": ["exfat", "vfat", "ext4", "ntfs"],     # filesystems that may be mounted, best first is not implied: the largest partition wins
-            "min_mb": 8,                                 # smaller partitions (boot/EFI stubs) are ignored
-            "create_folders": True,                      # make roms/<system>/ on a card that has none yet
-            "readonly": False}                           # mount card 2 read-only
+            "fs": ["exfat", "vfat", "ext4", "ntfs"],
+            "min_mb": 8,
+            "create_folders": True,
+            "readonly": False}
 STATUS_FILE = os.environ.get("RGOS_SDCARD_STATUS", "/run/rgos/sdcard2.json")
 LOCK_FILE = os.environ.get("RGOS_SDCARD_LOCK", "/run/rgos/sdcard.lock")
 LOG_FILE = os.environ.get("RGOS_SDCARD_LOG", "/var/log/rgos-sdcard.log")
@@ -37,9 +37,8 @@ SYS_BLOCK = "/sys/block"
 SYS_DEV_BLOCK = "/sys/dev/block"
 DEV_DIR = "/dev"
 PRIMARY_MOUNT = "/media/roms"
-SYSTEM_MOUNTS = ("/", "/boot", PRIMARY_MOUNT)     # whatever disk backs these is card 1
-SKIP_LABELS = ("RGBOOT", "RGOS", "ROCKNIX", "rgos-root")             # partitions of an RG OS system card are never game storage
-# Folder names under roms/ (kept in step with menu.SYSTEMS and rgos-session)
+SYSTEM_MOUNTS = ("/", "/boot", PRIMARY_MOUNT)
+SKIP_LABELS = ("RGBOOT", "RGOS", "ROCKNIX", "rgos-root")
 SYSTEM_DIRS = ("gba", "nes", "snes", "gb", "gbc", "genesis", "mastersystem", "gamegear", "sg1000", "segacd", "sega32x", "segapico", "atari2600", "atari5200", "atari7800", "psx", "ngp", "ngpc", "ws", "wsc", "arcade", "neogeo", "ports")
 MOUNT_TYPES = {"exfat": ("exfat",), "vfat": ("vfat",), "ext4": ("ext4",), "ntfs": ("ntfs3", "ntfs")}
 MOUNT_OPTS = {"exfat": "noatime,umask=000", "vfat": "noatime,umask=000", "ext4": "noatime", "ntfs3": "noatime,umask=000", "ntfs": "noatime,umask=000"}
@@ -75,7 +74,6 @@ def load_conf():
         except (OSError, ValueError):
             pass
 
-    # Validate user-editable values before they reach discovery/mount commands.
     for key in ("enabled", "create_folders", "readonly"):
         if not isinstance(conf.get(key), bool):
             conf[key] = DEFAULTS[key]
@@ -91,8 +89,6 @@ def load_conf():
     if isinstance(min_mb, bool) or not isinstance(min_mb, int) or not 1 <= min_mb <= 1024:
         conf["min_mb"] = DEFAULTS["min_mb"]
 
-    # Normalize BEFORE checking the prefix: '/media/../mnt' must not escape
-    # the permitted mount tree just because the unnormalized text starts there.
     mp = conf.get("mountpoint")
     if not isinstance(mp, str) or not mp.startswith("/") or "\x00" in mp:
         mp = DEFAULTS["mountpoint"]
@@ -105,7 +101,6 @@ def load_conf():
     return conf
 
 
-# ---------------------------------------------------------------- what is mounted
 
 def mounts():
     """[(source, mountpoint, fstype, options)] from /proc/mounts (octal escapes such as \\040 decoded)."""
@@ -159,7 +154,6 @@ def boot_disk(table=None):
     return "mmcblk0"
 
 
-# ---------------------------------------------------------------- finding the card
 
 def _num(name):
     return int(re.sub(r"\D", "", name) or 0)
@@ -233,13 +227,12 @@ def pick_partition(disk, conf):
     return best[1] if best else None
 
 
-# ---------------------------------------------------------------- mounting
 
 def mount_dev(dev, fstype, mountpoint, readonly=False):
     """Mount dev on mountpoint. Returns (ok, read_only). Falls back to a read-only mount if read-write fails."""
     os.makedirs(mountpoint, exist_ok=True)
     for mod in {"exfat": "exfat", "vfat": "vfat", "ntfs": "ntfs3"}.get(fstype, "").split():
-        sh(["modprobe", mod], 10)                      # harmless when built in or already loaded
+        sh(["modprobe", mod], 10)
     for ro in ([True] if readonly else [False, True]):
         for t in MOUNT_TYPES[fstype]:
             opts = MOUNT_OPTS[t] + (",ro" if ro else "")
@@ -252,7 +245,7 @@ def mount_dev(dev, fstype, mountpoint, readonly=False):
 
 def umount(mountpoint):
     rc, out = sh(["umount", mountpoint], 15)
-    if rc != 0:                                        # busy (a game is running from it) or already half gone: detach lazily
+    if rc != 0:
         sh(["umount", "-l", mountpoint], 15)
 
 
@@ -313,7 +306,7 @@ def sync():
             if want:
                 break
     if mounted and want and os.path.basename(mounted[0]) == os.path.basename(want["dev"]):
-        pass                                           # already right
+        pass
     else:
         if mounted:
             log("unmounting %s (%s): %s" % (mp, mounted[0], "card removed or changed" if want else "no card 2"))
@@ -340,13 +333,12 @@ def sync():
     else:
         write_status(None)
         try:
-            os.rmdir(mp)                               # an empty mount point of a card that is gone; harmless if it fails
+            os.rmdir(mp)
         except OSError:
             pass
     return want
 
 
-# ---------------------------------------------------------------- for the menu
 
 def load_status_file():
     try:
@@ -382,7 +374,6 @@ def usage(mountpoint):
         return None
 
 
-# ---------------------------------------------------------------- command line
 
 def cli(argv):
     cmd = argv[0] if argv else "sync"
@@ -403,14 +394,14 @@ def cli(argv):
     try:
         os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
         lock = open(LOCK_FILE, "w")
-        fcntl.flock(lock, fcntl.LOCK_EX)               # udev can fire several events at once; one sync at a time
+        fcntl.flock(lock, fcntl.LOCK_EX)
     except OSError:
         lock = None
     if "--settle" in argv:
-        sh(["udevadm", "settle", "--timeout=5"], 8)    # let the card's partitions appear before looking
+        sh(["udevadm", "settle", "--timeout=5"], 8)
     try:
         sync()
-    except Exception as e:                             # a card problem must never break the boot or the menu
+    except Exception as e:
         log("sync failed: %r" % (e,))
     return 0
 

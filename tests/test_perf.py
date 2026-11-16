@@ -45,7 +45,7 @@ class GovernorTests(unittest.TestCase):
         self.assertEqual(self.launch.perf_governor("gba"), "performance")
         write(os.path.join(self.boot, "rgos-governor.txt"), "default\n")
         self.assertEqual(self.launch.perf_governor("psx"), "")
-        write(os.path.join(self.boot, "rgos-governor.txt"), "../../etc\n")   # junk is ignored, the per-system default applies
+        write(os.path.join(self.boot, "rgos-governor.txt"), "../../etc\n")
         self.assertEqual(self.launch.perf_governor("psx"), "performance")
 
     def test_set_and_restore_cpu_and_gpu(self):
@@ -91,7 +91,7 @@ class SwitchesTests(unittest.TestCase):
         self.assertTrue(os.path.exists(self.launch.GAME_FLAG))
         self.launch.set_game_flag(False)
         self.assertFalse(os.path.exists(self.launch.GAME_FLAG))
-        self.launch.set_game_flag(False)               # removing twice must not raise
+        self.launch.set_game_flag(False)
 
     def test_unload_menu_drops_menu_and_pygame(self):
         import sys

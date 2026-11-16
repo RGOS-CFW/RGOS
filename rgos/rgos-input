@@ -30,65 +30,56 @@ STATUS = "/run/rgos/inputhub.status"
 RAW_NAME, HUB_NAME = "gpio-keys-joypad", "RG OS Gamepad"
 
 EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
-EVFMT = struct.Struct("llHHi")                # struct input_event, 64-bit
-AMAX = 32767                                  # fallback range of a hat axis whose limits cannot be read
-RULES = "/run/udev/rules.d/91-rgos-hub.rules"  # generated: hides every grabbed source from SDL/RetroArch (only the hub's pad should show up)
-BTNMAP = "/var/lib/rgos/button-map.json"       # written by the menu's Settings > Map buttons wizard
-SWAPAB = "/var/lib/rgos/swap-ab"               # flag file (menu: Settings > Swap A / B buttons): the hub exchanges A and B
+EVFMT = struct.Struct("llHHi")
+AMAX = 32767
+RULES = "/run/udev/rules.d/91-rgos-hub.rules"
+BTNMAP = "/var/lib/rgos/button-map.json"
+SWAPAB = "/var/lib/rgos/swap-ab"
 KEYS_PROBE, KEYS_RAW = "/run/rgos/keys.probe", "/run/rgos/keys.raw"
-STICKS_RAW = "/run/rgos/sticks.raw"            # while the wizard probes: the live raw value and range of every stick axis (JSON), for the stick calibration step
-STICK_DEADZONE = 0.04                          # calibrated sticks: this much of the travel around the centre reads as 0 (RetroArch adds its own on top)
-# the codes the pad publishes
+STICKS_RAW = "/run/rgos/sticks.raw"
+STICK_DEADZONE = 0.04
 CANON_KEYS = [0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x138, 0x139, 0x13a, 0x13b, 0x13c, 0x13d, 0x13e,
               0x220, 0x221, 0x222, 0x223]
-# Some drivers expose the older BTN_TRIGGER/BTN_THUMB
-# codes instead of BTN_SOUTH/EAST/NORTH/WEST. Normalize those common layouts to
-# the same RG OS face/shoulder-button codes, so the TSP works without a wizard.
 AUTO_KEY_ALIASES = {
-    0x120: 0x130,  # BTN_TRIGGER -> bottom face / B
-    0x121: 0x131,  # BTN_THUMB -> right face / A
-    0x122: 0x133,  # BTN_THUMB2 -> left face / X
-    0x123: 0x134,  # BTN_TOP -> top face / Y
-    0x124: 0x136,  # BTN_TOP2 -> L
-    0x125: 0x137,  # BTN_PINKIE -> R
-    0x126: 0x138,  # BTN_BASE  -> L2   (BASE..BASE6 = L2 R2 SELECT START MODE L3)
-    0x127: 0x139,  # BTN_BASE2 -> R2
-    0x128: 0x13a,  # BTN_BASE3 -> SELECT
-    0x129: 0x13b,  # BTN_BASE4 -> START
-    0x12a: 0x13c,  # BTN_BASE5 -> MENU
-    0x12b: 0x13d,  # BTN_BASE6 -> L3
-    103: 0x220,    # KEY_UP -> D-pad up
-    108: 0x221,    # KEY_DOWN -> D-pad down
-    105: 0x222,    # KEY_LEFT -> D-pad left
-    106: 0x223,    # KEY_RIGHT -> D-pad right
-    # Keyboard-style handheld layout (what MinUI/OnionOS-type input daemons emit): only used when the code is not
-    # already claimed by a gamepad-style code on the same device.
-    57: 0x131,     # KEY_SPACE -> A
-    29: 0x130,     # KEY_LEFTCTRL -> B
-    42: 0x133,     # KEY_LEFTSHIFT -> X
-    56: 0x134,     # KEY_LEFTALT -> Y
-    18: 0x136,     # KEY_E -> L
-    20: 0x137,     # KEY_T -> R
-    15: 0x138,     # KEY_TAB -> L2
-    14: 0x139,     # KEY_BACKSPACE -> R2
-    97: 0x13a,     # KEY_RIGHTCTRL -> SELECT
-    28: 0x13b,     # KEY_ENTER -> START
-    1: 0x13c,      # KEY_ESC -> MENU
-    102: 0x13c,    # KEY_HOME -> MENU
-    139: 0x13c,    # KEY_MENU -> MENU
+    0x120: 0x130,
+    0x121: 0x131,
+    0x122: 0x133,
+    0x123: 0x134,
+    0x124: 0x136,
+    0x125: 0x137,
+    0x126: 0x138,
+    0x127: 0x139,
+    0x128: 0x13a,
+    0x129: 0x13b,
+    0x12a: 0x13c,
+    0x12b: 0x13d,
+    103: 0x220,
+    108: 0x221,
+    105: 0x222,
+    106: 0x223,
+    57: 0x131,
+    29: 0x130,
+    42: 0x133,
+    56: 0x134,
+    18: 0x136,
+    20: 0x137,
+    15: 0x138,
+    14: 0x139,
+    97: 0x13a,
+    28: 0x13b,
+    1: 0x13c,
+    102: 0x13c,
+    139: 0x13c,
 }
-# Fill order for a pad whose button codes are all unknown (no canonical code, no alias): its buttons, sorted by code, are
-# assigned to these canonical codes in turn (the usual "first button = bottom face button" convention).
 ORDERED_FILL = [0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x138, 0x139, 0x13a, 0x13b, 0x13c, 0x13d, 0x13e]
 MAP_REPORT = "/run/rgos/input-map.txt"
-EXTRA_KEYS = [114, 115]                       # KEY_VOLUMEDOWN/UP: forwarded untouched so rgos-volume still sees them when a source carries them
-HAT_KEYS = {(0x10, -1): 0x222, (0x10, 1): 0x223, (0x11, -1): 0x220, (0x11, 1): 0x221}   # ABS_HAT0X/Y -> left/right/up/down
-KBD_PAD_KEYS = {57, 29, 42, 56, 18, 20, 97, 28, 1, 102, 139, 15, 14}   # SPACE LCTRL LSHIFT LALT E T RCTRL ENTER ESC HOME MENU TAB BACKSPACE
-GAMEPAD_KEY_RANGE = range(0x100, 0x140)  # BTN_MISC..BTN_DIGI: the pad button codes
+EXTRA_KEYS = [114, 115]
+HAT_KEYS = {(0x10, -1): 0x222, (0x10, 1): 0x223, (0x11, -1): 0x220, (0x11, 1): 0x221}
+KBD_PAD_KEYS = {57, 29, 42, 56, 18, 20, 97, 28, 1, 102, 139, 15, 14}
+GAMEPAD_KEY_RANGE = range(0x100, 0x140)
 NOT_PADS = ("power", "axp", "lid", "volume", "headphone", "jack", "touch", "hall", "rgos")
 
 
-# ---------------------------------------------------------------- ioctl helpers
 def _ioc(d, t, nr, size):
     return (d << 30) | (size << 16) | (ord(t) << 8) | nr
 _IOW = lambda t, nr, size: _ioc(1, t, nr, size)
@@ -97,18 +88,18 @@ _IOWR = lambda t, nr, size: _ioc(3, t, nr, size)
 
 EVIOCGRAB = _IOW("E", 0x90, 4)
 EVIOCGNAME = _IOR("E", 0x06, 128)
-EVIOCGBIT_ABS = _IOR("E", 0x20 + 3, 8)       # which ABS codes a device has (we only look for the hat)
-EVIOCGABS = lambda a: _IOR("E", 0x40 + a, 24)  # struct input_absinfo (hat range)
-EVIOCGBIT_KEY = _IOR("E", 0x20 + EV_KEY, 96)  # KEY_MAX = 0x2ff -> 96 bytes of bitmap
+EVIOCGBIT_ABS = _IOR("E", 0x20 + 3, 8)
+EVIOCGABS = lambda a: _IOR("E", 0x40 + a, 24)
+EVIOCGBIT_KEY = _IOR("E", 0x20 + EV_KEY, 96)
 UI_DEV_CREATE, UI_DEV_DESTROY = _ioc(0, "U", 1, 0), _ioc(0, "U", 2, 0)
 UI_DEV_SETUP = _IOW("U", 3, 92)
 UI_SET_EVBIT, UI_SET_KEYBIT = _IOW("U", 100, 4), _IOW("U", 101, 4)
 UI_SET_FFBIT = _IOW("U", 107, 4)
 EV_FF, FF_RUMBLE = 0x15, 0x50
 UI_SET_ABSBIT = _IOW("U", 103, 4)
-UI_ABS_SETUP = _IOW("U", 4, 28)                # struct uinput_abs_setup: __u16 code, 2 pad bytes, struct input_absinfo (6 x __s32)
-ANALOG_AXES = (0x00, 0x01, 0x03, 0x04)         # ABS_X, ABS_Y (left stick), ABS_RX, ABS_RY (right stick): joydev axes 0..3 in this order
-ASTICK = 32767                                 # published range of every stick axis: -ASTICK..ASTICK
+UI_ABS_SETUP = _IOW("U", 4, 28)
+ANALOG_AXES = (0x00, 0x01, 0x03, 0x04)
+ASTICK = 32767
 
 
 def log(*a):
@@ -146,16 +137,14 @@ def make_uinput(codes, ff=False, axes=()):
         fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
         for c in codes:
             fcntl.ioctl(fd, UI_SET_KEYBIT, c)
-        if axes:                                # analog sticks: absolute axes, -ASTICK..ASTICK, deadzone is left to RetroArch
+        if axes:
             fcntl.ioctl(fd, UI_SET_EVBIT, EV_ABS)
             for a in axes:
                 fcntl.ioctl(fd, UI_SET_ABSBIT, a)
                 fcntl.ioctl(fd, UI_ABS_SETUP, struct.pack("<H2x6i", a, 0, -ASTICK, ASTICK, 0, 0, 0))
-        if ff:                                  # rumble: RetroArch / SDL upload FF_RUMBLE effects to this pad (see ffpad.py)
+        if ff:
             fcntl.ioctl(fd, UI_SET_EVBIT, EV_FF)
             fcntl.ioctl(fd, UI_SET_FFBIT, FF_RUMBLE)
-        # bus HOST(0x19), vendor 'HK' (0x484b) / product 0x14df / version 0x100 = joypad-vendor/product/revision of the DTB;
-        # last field = ff_effects_max
         fcntl.ioctl(fd, UI_DEV_SETUP, struct.pack("<HHHH80sI", 0x19, 0x484B, 0x14DF, 0x100, HUB_NAME.encode(), 16 if ff else 0))
         fcntl.ioctl(fd, UI_DEV_CREATE)
     except OSError:
@@ -184,7 +173,6 @@ def write_status(text):
         pass
 
 
-# ---------------------------------------------------------------- main loop
 STOP = False
 
 
@@ -220,7 +208,7 @@ def load_keymap(iconf):
     codes) and the wizard's button-map.json ({"keys": {"<name>|<type>:<code>:<sign>": canonical}})."""
     km = {}
     extra = iconf.get("keymap")
-    for k, v in (extra.items() if isinstance(extra, dict) else ()):       # a keymap that is not an object is ignored
+    for k, v in (extra.items() if isinstance(extra, dict) else ()):
         try:
             km[(None, 1, int(str(k), 0), 0)] = int(str(v), 0)
         except (ValueError, OverflowError):
@@ -231,12 +219,12 @@ def load_keymap(iconf):
         items = list(raw.items()) if isinstance(raw, dict) else []
     except Exception:
         return km
-    for k, v in items:                              # one bad entry must not throw away the good ones after it
+    for k, v in items:
         try:
             name, _, rest = str(k).rpartition("|")
             t, c, sg = rest.split(":")
             km[(name or None, int(t), int(c), int(sg))] = int(v)
-        except (TypeError, ValueError, OverflowError):    # OverflowError: a JSON number like 1e999
+        except (TypeError, ValueError, OverflowError):
             continue
     return km
 
@@ -251,7 +239,7 @@ def load_sticks():
         items = list(raw.items())
     except Exception:
         return cal
-    for k, v in items:                              # one bad entry must not throw away the good ones
+    for k, v in items:
         try:
             code = int(k)
             c, lo, hi = (float(x) for x in v)
@@ -268,10 +256,10 @@ class Translator:
         self.keymap, self.legacy = keymap or {}, legacy
         self.auto_map = bool(auto_map)
         self.astate = {}
-        self.prof = {}                              # device name -> {"keys": {code: canon}}
-        self.swap = {}                              # canonical code -> code actually published (A/B swap)
-        self.analog = False                         # publish the sticks (device config "analog": true)
-        self.stick_cal = {}                         # axis code -> (centre, low, high) measured by the wizard
+        self.prof = {}
+        self.swap = {}
+        self.analog = False
+        self.stick_cal = {}
 
     def learn(self, name, keys):
         """Profile one source from its key capability bits (`keys` = set of codes) and say what was decided."""
@@ -281,14 +269,12 @@ class Translator:
                      or c in CANON_KEYS or c in AUTO_KEY_ALIASES or c in EXTRA_KEYS}
             pad_keys = sorted(c for c in keys if c in GAMEPAD_KEY_RANGE)
             if pad_keys and not (known & set(pad_keys)):
-                # nothing recognisable among the gamepad-range buttons: assign them in code order
                 for c, canon in zip(pad_keys, ORDERED_FILL):
                     kmap[c] = canon
                 notes.append("buttons: unknown codes, assigned in order %s" % ", ".join(
                     "0x%x->0x%x" % (c, kmap[c]) for c in pad_keys[:len(ORDERED_FILL)]))
             elif known:
                 notes.append("buttons: %d recognised" % len(known))
-            # a device that has BOTH gamepad-style and keyboard-style codes keeps the gamepad ones
             if set(pad_keys) & set(CANON_KEYS):
                 kmap.update({c: None for c in keys if c in AUTO_KEY_ALIASES and c < 0x100 and c not in (103, 105, 106, 108)})
         self.prof[name] = {"keys": kmap}
@@ -299,7 +285,7 @@ class Translator:
         pk = self.prof.get(name, {}).get("keys", {})
         if t is None and code in pk:
             if pk[code] is None:
-                return []                           # shadowed keyboard-style code on a device that also has gamepad codes
+                return []
             t = pk[code]
         if t is None and self.auto_map:
             t = AUTO_KEY_ALIASES.get(code)
@@ -334,7 +320,7 @@ class Translator:
         if not self.analog or code not in ANALOG_AXES:
             return []
         cal = self.stick_cal.get(code)
-        if cal:                                     # measured centre and travel: centre = 0, each side scaled by its own travel
+        if cal:
             c, clo, chi = cal
             f = (value - c) / (chi - c) if value >= c else (value - c) / (c - clo)
             mag = abs(f)
@@ -444,16 +430,11 @@ def scan_sources(spec, have):
                 continue
             finally:
                 os.close(fd)
-            # Accept: standard pad codes; pad-range buttons with a hat or a pad-like name; and keyboard-style handhelds (the TSP's vendor input path may look like a few KEY_* codes: D-pad keys
-            # and/or the SPACE/CTRL/SHIFT/ALT/ENTER/ESC layout). A real keyboard is told apart by its many letter keys.
             gamepad_keys = keys.intersection(GAMEPAD_KEY_RANGE)
             has_hat = bool(axes.intersection({0x10, 0x11}))
             lname = name.lower()
             gamepad_name = any(word in lname for word in ("gamepad", "joypad", "controller", "gpio-keys", "trimui", "player1"))
-            letters = len(keys.intersection(range(16, 50)))          # KEY_Q..KEY_SLASH region: a real keyboard has nearly all
-            # Some TrimUI Smart Pro kernels expose the controls as a sparse keyboard
-            # device (often only D-pad + a few action keys), rather than a joystick.
-            # Requiring five keys from the legacy layout missed these devices entirely.
+            letters = len(keys.intersection(range(16, 50)))
             dpad = keys.intersection({103, 105, 106, 108})
             handheld_actions = keys.intersection(KBD_PAD_KEYS - {103, 105, 106, 108})
             sparse_handheld = len(dpad) >= 2 and bool(handheld_actions) and letters < 20
@@ -511,7 +492,7 @@ class KeyProbe:
     def __init__(self):
         self.n, self.next_check, self.on = 0, 0.0, False
         self.next_stick = 0.0
-        self.skip_axes = ()                         # analog stick axes: moving a stick must not be recorded as a button press
+        self.skip_axes = ()
 
     def feed(self, src, t, c, v):
         if t == EV_ABS and c in self.skip_axes:
@@ -578,7 +559,7 @@ def run():
         return 0
     os.makedirs("/run/rgos", exist_ok=True)
     spec = iconf.get("sources") or "auto"
-    legacy = spec == [RAW_NAME]                 # only when input.json names the raw gpio-keys-joypad device: publish its own key codes as-is
+    legacy = spec == [RAW_NAME]
     translator = Translator(load_keymap(iconf), legacy=legacy, auto_map=bool(iconf.get("auto_map_buttons", True)))
     translator.analog = bool(iconf.get("analog", False))
     if translator.analog:
@@ -593,7 +574,6 @@ def run():
     log("hub config: sources %s, legacy codes %s, keymap entries %d, auto-map %s, analog sticks %s (%d axes calibrated)" %
         (spec, legacy, len(translator.keymap), translator.auto_map, translator.analog, len(translator.stick_cal)))
 
-    # 1. the source devices (wait until at least one exists)
     srcs = {}
     while not STOP and not srcs:
         for path, name in scan_sources(spec, srcs):
@@ -613,8 +593,7 @@ def run():
              else sorted(set(CANON_KEYS + EXTRA_KEYS) | set(translator.keymap.values())))
     log("sources: %s; %d key codes" % (", ".join("%s (%s)" % (x.path, x.name) for x in srcs.values()), len(codes)))
 
-    # 2. the merged virtual pad (if this fails the source devices stay untouched)
-    ff = motor = None                           # rumble only where /etc/rgos/hw-<device>.json asks for it and a motor exists
+    ff = motor = None
     try:
         import hwctl, ffpad
         hwc = hwctl.load_conf()
@@ -655,7 +634,7 @@ def run():
     try:
         while not STOP:
             now = time.time()
-            if now >= next_scan:                  # devices that show up late (or come back) join the hub
+            if now >= next_scan:
                 next_scan = now + 3.0
                 if spec == "auto" or not srcs:
                     added = False
@@ -676,15 +655,15 @@ def run():
             if translator.analog:
                 probe_keys.sticks(srcs)
                 if probe_keys.on:
-                    wait = 0.05                   # the wizard is running: keep the live stick values fresh
+                    wait = 0.05
             if ff is not None:
                 wait = min(wait, ff.next_deadline())
             r, _, _ = select.select([x.fd for x in srcs.values()] + ([ufd] if ff is not None else []), [], [], wait)
             if ff is not None:
                 if ufd in r:
-                    ff.service()                  # answer FF uploads/erases, start/stop the motor
+                    ff.service()
                 else:
-                    ff.tick()                     # an effect may just have run out
+                    ff.tick()
             out = bytearray()
             for x in list(srcs.values()):
                 if x.fd not in r:
@@ -732,7 +711,7 @@ def run():
     finally:
         try:
             if ff is not None:
-                ff.close()                        # motor off
+                ff.close()
             for x in srcs.values():
                 x.close()
             fcntl.ioctl(ufd, UI_DEV_DESTROY)

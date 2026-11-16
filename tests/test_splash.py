@@ -28,7 +28,7 @@ class ReadConfTests(unittest.TestCase):
         return splash.read_conf(self.video)
 
     def test_json_that_is_not_an_object_gives_defaults(self):
-        for text in ("[]", "null", "5", '"fast"', "[1, 2]"):     # used to raise AttributeError
+        for text in ("[]", "null", "5", '"fast"', "[1, 2]"):
             self.assertEqual(self.conf(text), {"fps": 24.0, "sound": None}, text)
 
     def test_unparsable_json_gives_defaults(self):
@@ -36,7 +36,7 @@ class ReadConfTests(unittest.TestCase):
 
     def test_bad_values_fall_back_one_by_one(self):
         self.assertEqual(self.conf(json.dumps({"fps": "fast", "sound": 5})), {"fps": 24.0, "sound": None})
-        self.assertEqual(self.conf(json.dumps({"fps": 500}))["fps"], 24.0)      # out of range
+        self.assertEqual(self.conf(json.dumps({"fps": 500}))["fps"], 24.0)
 
     def test_good_values_are_used(self):
         wav = os.path.join(self.dir, "boot.wav")

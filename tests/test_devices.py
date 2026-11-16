@@ -39,7 +39,6 @@ class DeviceWiringTests(unittest.TestCase):
     def test_build_installs_analog_off_for_the_sp_and_never_falls_back_to_the_stick_config(self):
         b = read("build.sh")
         self.assertIn('if [[ "$DEVICE" == "rg35xxsp" ]]; then ANALOG=false; else ANALOG=true; fi', b)
-        # the fallback to the RG34XXSP's (stick) config must exclude the SP
         self.assertIn('[[ -f "$RA_CFG" || "$DEVICE" == "rg35xxsp" ]] || RA_CFG="$HERE/config/retroarch-rg34xxsp.cfg"', b)
 
 
@@ -68,17 +67,17 @@ class Rg35xxspRetroArchConfigTests(unittest.TestCase):
         self.assertEqual(self.cfg.get("input_analog_dpad_mode"), "0")
 
     def test_the_stick_config_of_the_other_h700_consoles_is_not_inherited(self):
-        self.assertIn("+0", parse_cfg("retroarch-rg34xxsp.cfg").values())       # they do have sticks; the SP file must not look like them
+        self.assertIn("+0", parse_cfg("retroarch-rg34xxsp.cfg").values())
         self.assertNotIn("+0", self.cfg.values())
 
     def test_hotkeys_only_use_buttons_the_sp_has(self):
-        missing = {"6", "7", "11", "12"}                                         # L2 R2 L3 R3
+        missing = {"6", "7", "11", "12"}
         for k, v in self.cfg.items():
             if k.startswith("input_") and (k.endswith("_btn")) and not k.startswith("input_player1_"):
                 self.assertNotIn(v, missing, k)
         combo = {k: v for k, v in self.cfg.items() if k.startswith("input_") and k.endswith("_btn") and not k.startswith("input_player1_")
                  and k != "input_enable_hotkey_btn"}
-        self.assertEqual(len(set(combo.values())), len(combo), combo)             # no two hotkeys on the same button
+        self.assertEqual(len(set(combo.values())), len(combo), combo)
 
     def test_native_640x480_video(self):
         self.assertEqual((self.cfg["video_fullscreen_x"], self.cfg["video_fullscreen_y"]), ("640", "480"))
