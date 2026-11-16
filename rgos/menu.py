@@ -1089,7 +1089,36 @@ def draw_xmb_dropdown(c, f_small, dd, opts):
 
 
 FONT_PATH = [None]
-_FLOW = {"fonts": {}, "cards": {}, "bg": (None, None), "bar": (None, None)}
+FLOW_LEVELS = (1.0, 0.88, 0.77, 0.69, 0.62, 0.55, 0.50, 0.45)
+FLOW_CACHE_CARDS = 20
+_FLOW = {"fonts": {}, "cards": {}, "bg": (None, None), "bar": (None, None), "glow": {}, "shadow": {}, "S": 0, "warm": None}
+
+
+def _lru_get(d, key):
+    v = d.pop(key, None)
+    if v is not None:
+        d[key] = v
+    return v
+
+
+def _lru_put(d, key, val, cap):
+    d[key] = val
+    while len(d) > cap:
+        d.pop(next(iter(d)))
+
+
+def flow_level_width(S, li):
+    return max(16, int(round(S * FLOW_LEVELS[li])))
+
+
+def flow_level_index(tw, S):
+    best = 0
+    for li in range(len(FLOW_LEVELS)):
+        if flow_level_width(S, li) >= tw - 0.5:
+            best = li
+        else:
+            break
+    return best
 
 
 def _flow_font(size, bold=True):
@@ -1129,10 +1158,8 @@ def _flow_base(hue, tag, abbr, S, icon=None):
     """The full-size cover (rounded gradient square, system tag top left, big initials in the middle). Built once, then scaled."""
     key = (hue, tag, abbr, S, icon)
     cards = _FLOW["cards"]
-    surf = cards.get(key)
-    if surf is None:
-        if len(cards) > 160:
-            cards.clear()
+    lv = _lru_get(cards, key)
+    if lv is None:
         r = max(8, S // 10)
         surf = pygame.Surface((S, S), pygame.SRCALPHA)
         top, bot = _flow_hsv(hue, 0.42, 0.80), _flow_hsv(hue, 0.50, 0.50)
@@ -1170,19 +1197,22 @@ def _flow_base(hue, tag, abbr, S, icon=None):
             fa = _flow_font(S * (0.32 if len(abbr) <= 3 else 0.24))
             at = fa.render(abbr, True, (242, 242, 250))
             surf.blit(at, ((S - at.get_width()) // 2, int(S * 0.55) - at.get_height() // 2))
-        cards[key] = surf
-    return key, surf
+        lv = [surf] + [None] * (len(FLOW_LEVELS) - 1)
+        _lru_put(cards, key, lv, FLOW_CACHE_CARDS)
+    return key, lv
 
 
-def _flow_scaled(key, base, w):
-    cards = _FLOW["cards"]
-    k = ("s", key, w)
-    s = cards.get(k)
-    if s is None:
-        if len(cards) > 160:
-            cards.clear()
-        s = cards[k] = pygame.transform.smoothscale(base, (w, w)) if w != base.get_width() else base
-    return s
+def _flow_build_level(lv, S, li):
+    if lv[li] is None:
+        w, base = flow_level_width(S, li), lv[0]
+        lv[li] = pygame.transform.smoothscale(base, (w, w)) if w != base.get_width() else base
+    return lv[li]
+
+
+def _flow_cover(lv, S, li):
+    while li > 0 and lv[li] is None:
+        li -= 1
+    return lv[li]
 
 
 def _flow_blur(base, k=5):
@@ -1191,32 +1221,91 @@ def _flow_blur(base, k=5):
     return pygame.transform.smoothscale(small, sz)
 
 
-def _flow_glow(w):
-    """Soft accent halo behind the centred cover (built once per size, blurred by scaling down and back up)."""
-    cards = _FLOW["cards"]
-    key = ("glow", w, tuple(ACCENT[:3]))
-    s = cards.get(key)
-    if s is None:
-        if len(cards) > 160:
-            cards.clear()
+def _flow_glow_level(S, li, build=True):
+    w = flow_level_width(S, li)
+    key = (w, tuple(ACCENT[:3]))
+    glow = _FLOW["glow"]
+    s = _lru_get(glow, key)
+    if s is None and build:
         g = max(12, w // 6)
         base = pygame.Surface((w + 2 * g, w + 2 * g), pygame.SRCALPHA)
         pygame.draw.rect(base, tuple(ACCENT[:3]) + (150,), (g, g, w, w), border_radius=max(8, w // 8))
-        s = cards[key] = _flow_blur(base)
+        s = _flow_blur(base)
+        _lru_put(glow, key, s, 24)
     return s
 
 
 def _flow_shadow(w):
-    cards = _FLOW["cards"]
-    key = ("shadow", w)
-    s = cards.get(key)
+    w = max(8, (w // 4) * 4)
+    s = _lru_get(_FLOW["shadow"], w)
     if s is None:
-        if len(cards) > 160:
-            cards.clear()
         small = pygame.Surface((20, 5), pygame.SRCALPHA)
         pygame.draw.ellipse(small, (0, 0, 0, 170), (2, 0, 16, 5))
-        s = cards[key] = pygame.transform.smoothscale(small, (max(8, int(w * 0.94)), max(6, int(w * 0.11))))
+        s = pygame.transform.smoothscale(small, (max(8, int(w * 0.94)), max(6, int(w * 0.11))))
+        _lru_put(_FLOW["shadow"], w, s, 64)
     return s
+
+
+def _flow_title(title, compact):
+    tsize = 34 if compact else 44
+    while tsize > 20 and _flow_font(tsize).size(title)[0] > W - 40:
+        tsize -= 2
+    tf = _flow_font(tsize)
+    ttxt = fit(tf, title, W - 40)
+    tt = tf.render(ttxt, True, TEXT)
+    ts = None
+    if sum(BG) < 384:
+        ts = tf.render(ttxt, True, (0, 0, 0))
+        ts.set_alpha(130)
+    return tt, ts
+
+
+def flow_warm(cards, centre, budget):
+    n, S = len(cards), _FLOW["S"]
+    if not n or S <= 0:
+        return
+    sig = (id(cards), centre % n if n >= 3 else centre, S, tuple(ACCENT[:3]))
+    if _FLOW["warm"] == sig:
+        return
+    t0 = time.perf_counter()
+    compact = H < 600
+    order, seen = [], set()
+    for dist in range(5):
+        for sgn in ((0,) if dist == 0 else (1, -1)):
+            i = centre + sgn * dist
+            if n >= 3:
+                i %= n
+            elif not 0 <= i < n:
+                continue
+            if i not in seen:
+                seen.add(i)
+                order.append((dist, i))
+    levels = []
+    for dist, i in order:
+        g = cards[i]
+        k = (g["hue"], g["tag"], g["abbr"], S, g.get("icon"))
+        fresh = k not in _FLOW["cards"]
+        lv = _flow_base(*k)[1]
+        if dist <= 2:
+            levels.append(lv)
+        if dist <= 3:
+            _flow_title(g["title"], compact)
+        if fresh and time.perf_counter() - t0 >= budget:
+            return
+    for li in (0, 1):
+        if _flow_glow_level(S, li, False) is None:
+            _flow_glow_level(S, li)
+            if time.perf_counter() - t0 >= budget:
+                return
+    rest = (4, 7)
+    for tier in (rest, [li for li in range(1, len(FLOW_LEVELS)) if li not in rest]):
+        for lv in levels:
+            for li in tier:
+                if lv[li] is None:
+                    _flow_build_level(lv, S, li)
+                    if time.perf_counter() - t0 >= budget:
+                        return
+    _FLOW["warm"] = sig
 
 
 def flow_bg(c):
@@ -1271,6 +1360,7 @@ def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk
     title_cy = sub_cy - (36 if compact else 47)
     card_bot = title_cy - (30 if compact else 45)
     S = int(min(W * 0.466, card_bot - (78 if compact else 84)))
+    _FLOW["S"] = S
     n = len(cards)
     if not n:
         t = _flow_font(26 if not compact else 22).render(empty[0], True, TEXT)
@@ -1295,14 +1385,26 @@ def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk
             scale = 1 - 0.38 * min(a, 1.0) - 0.17 * max(0.0, a - 1.0)
             off = (1 if d > 0 else -1) * S * (0.745 * min(a, 1.0) + 0.42 * max(0.0, a - 1.0)) * (abs(d) / a if a else 0)
             alpha = 255 - 55 * min(a, 1.0) - 110 * max(0.0, a - 1.0) if a < 2 else 90
-            w = max(16, int(round(S * scale / 4.0)) * 4)
-            key, base = _flow_base(g["hue"], g["tag"], g["abbr"], S, g.get("icon"))
-            surf = _flow_scaled(key, base, w)
+            tw_ = S * scale
+            w = max(16, int(round(tw_)))
+            key, lv = _flow_base(g["hue"], g["tag"], g["abbr"], S, g.get("icon"))
+            li = flow_level_index(tw_, S)
+            src = _flow_cover(lv, S, li)
+            surf = src if src.get_width() == w else pygame.transform.scale(src, (w, w))
             surf.set_alpha(int(max(0, min(255, alpha * fade))))
             ccx, ccy = W // 2 + off, card_bot - S // 2
             x0_, y0_ = int(ccx - w / 2), int(ccy - w / 2)
             if abs(d) < 0.5:
-                gs = _flow_glow(w)
+                j = li
+                gs = _flow_glow_level(S, j, False)
+                while gs is None and j > 0:
+                    j -= 1
+                    gs = _flow_glow_level(S, j, False)
+                if gs is None:
+                    j, gs = 0, _flow_glow_level(S, 0)
+                lw_ = flow_level_width(S, j)
+                if lw_ != w:
+                    gs = pygame.transform.scale(gs, (max(1, gs.get_width() * w // lw_), max(1, gs.get_height() * w // lw_)))
                 gs.set_alpha(int(255 * fade * (1 - abs(d) * 2)))
                 c.blit(gs, (x0_ - (gs.get_width() - w) // 2, y0_ - (gs.get_height() - w) // 2))
             sh = _flow_shadow(w)
@@ -1311,17 +1413,7 @@ def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk
             c.blit(surf, (x0_, y0_))
         ci = int(round(fx))
         g = cards[ci % n] if wrap_ else cards[max(0, min(n - 1, ci))]
-        tsize = 34 if compact else 44
-        while tsize > 20 and _flow_font(tsize).size(g["title"])[0] > W - 40:
-            tsize -= 2
-        tf = _flow_font(tsize)
-        ttxt = fit(tf, g["title"], W - 40)
-        tt = tf.render(ttxt, True, TEXT)
-        if sum(BG) < 384:
-            ts = tf.render(ttxt, True, (0, 0, 0))
-            ts.set_alpha(130)
-        else:
-            ts = None
+        tt, ts = _flow_title(g["title"], compact)
         star = f_row.render("\u2605" if arrows else "*", True, ACCENT) if g.get("fav") else None
         tw = tt.get_width() + (star.get_width() + 10 if star else 0)
         tx = (W - tw) // 2
@@ -2080,12 +2172,20 @@ def main():
     favorite_paths = set(load_favorites())
 
     _fbp = [None, {}]
+    _fav_c = [0.0, None, []]
 
     def favorite_games():
+        now = time.monotonic()
         if _fbp[0] is not all_games:
             _fbp[0], _fbp[1] = all_games, {g["path"]: g for g in all_games}
-        by_path = _fbp[1]
-        return [by_path[p] for p in load_favorites() if p in by_path]
+            _fav_c[0] = 0.0
+        if now - _fav_c[0] >= 0.5 or _fav_c[0] > now:
+            by_path = _fbp[1]
+            _fav_c[0], _fav_c[2] = now, [by_path[p] for p in load_favorites() if p in by_path]
+        return _fav_c[2]
+
+    def fav_changed():
+        _fav_c[0] = 0.0
 
     def settings_text():
         """Title and one-line status of every Settings row (shown in the Settings list and under the XMB's Settings category)."""
@@ -2200,16 +2300,29 @@ def main():
     FLOW_HOME = {"games": (200, "Browse your systems"), "recents": (30, "Recently played"), "favorites": (48, "Your starred games"),
                  "tools": (140, "File manager and more"), "settings": (265, "Theme, Wi-Fi, Bluetooth..."), "power": (350, "Shut down")}
 
+    _fcm = [None, None, None]
+
     def flow_cards():
         if view == "home":
-            return [{"id": hid, "title": lbl, "sub": FLOW_HOME.get(hid, (0, ""))[1], "hue": FLOW_HOME.get(hid, (0, ""))[0], "tag": "",
-                     "abbr": "", "icon": hid, "fav": False} for hid, lbl in HOME_ITEMS]
-        if view == "systems":
-            return [{"id": sy[0], "title": sy[4], "sub": "%d game%s" % (len(games_of(sy[0])), "" if len(games_of(sy[0])) == 1 else "s"),
-                     "hue": flow_hue(sy[0]), "tag": "", "abbr": sy[1], "icon": None, "fav": False} for sy in vsys]
-        gl = recent_games() if view == "recents" else favorite_games() if view == "favorites" else games_of(vsys[sys_idx][0] if vsys else "")
-        return [{"game": g, "title": g["title"], "sub": sysname.get(g["sid"], g["tag"]), "hue": flow_hue(g["sid"]), "tag": g["tag"],
-                 "abbr": flow_abbr(g["title"]), "icon": None, "fav": g["path"] in favorite_paths} for g in gl]
+            key, keep = ("home",), HOME_ITEMS
+        elif view == "systems":
+            key, keep = ("systems", id(all_games)), vsys
+        else:
+            keep = recent_games() if view == "recents" else favorite_games() if view == "favorites" else games_of(vsys[sys_idx][0] if vsys else "")
+            key = (view, id(keep), len(keep), frozenset(favorite_paths))
+        if _fcm[0] == key and _fcm[1] is keep:
+            return _fcm[2]
+        if view == "home":
+            out = [{"id": hid, "title": lbl, "sub": FLOW_HOME.get(hid, (0, ""))[1], "hue": FLOW_HOME.get(hid, (0, ""))[0], "tag": "",
+                    "abbr": "", "icon": hid, "fav": False} for hid, lbl in HOME_ITEMS]
+        elif view == "systems":
+            out = [{"id": sy[0], "title": sy[4], "sub": "%d game%s" % (len(games_of(sy[0])), "" if len(games_of(sy[0])) == 1 else "s"),
+                    "hue": flow_hue(sy[0]), "tag": "", "abbr": sy[1], "icon": None, "fav": False} for sy in vsys]
+        else:
+            out = [{"game": g, "title": g["title"], "sub": sysname.get(g["sid"], g["tag"]), "hue": flow_hue(g["sid"]), "tag": g["tag"],
+                    "abbr": flow_abbr(g["title"]), "icon": None, "fav": g["path"] in favorite_paths} for g in keep]
+        _fcm[0], _fcm[1], _fcm[2] = key, keep, out
+        return out
 
     def flow_cur_key():
         return ("g:" + (vsys[sys_idx][0] if vsys else "")) if view == "games" else view
@@ -2411,6 +2524,7 @@ def main():
                         favorite_paths.add(path)
                     if not save_favorites(favorite_paths):
                         favorite_paths = set(load_favorites())
+                    fav_changed()
                 elif a == "a" and cur_:
                     if view == "home":
                         hid = cur_["id"]
@@ -2520,6 +2634,7 @@ def main():
                         log("%s: %s" % (action, path))
                     else:
                         favorite_paths = set(load_favorites())
+                    fav_changed()
                 elif a == "a" and n:
                     code = launch(games[idx]["path"], games[idx])
             elif view == "tools":
@@ -3445,6 +3560,8 @@ def main():
             canvas.blit(f_small.render("%d%%" % bri_pct, True, TEXT), (bx + 208, by + 14))
 
         present()
+        if flow_on:
+            flow_warm(fcards, flow_t, 0.004 if anim_moving else 0.012)
         idle = (view in IDLE_VIEWS and not forced and time.monotonic() - last_act > 3.0
                 and time.time() >= max(vol_show_until, bri_show_until))
         clock.tick(60 if anim_moving or (launcher_id in ("xmb", "flow") and time.monotonic() - last_act < 0.5) else (15 if idle else 30))
