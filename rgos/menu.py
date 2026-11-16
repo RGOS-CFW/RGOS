@@ -713,7 +713,7 @@ RECENT_MAX = 20
 # Launchers (Settings > Launcher): the look of the home screen. "rgos" is the classic tile grid, "xmb" a PlayStation-style cross media bar
 # (categories side by side, the items of the selected one listed below it). The choice is kept in state.json ("launcher").
 LAUNCHERS = [("rgos", "RG OS", "Classic tile launcher"), ("xmb", "RG XMB", "PlayStation-style cross media bar"),
-             ("flow", "RG Flow", "Cover-flow game carousel with system chips")]
+             ("flow", "RG Flow", "Carousels: menu, systems, games")]
 DEFAULT_LAUNCHER = LAUNCHERS[0][0]
 
 
@@ -1171,9 +1171,9 @@ def _flow_hsv(h, s, v):
     return (int(r * 255), int(g * 255), int(b * 255))
 
 
-def _flow_base(hue, tag, abbr, S):
+def _flow_base(hue, tag, abbr, S, icon=None):
     """The full-size cover (rounded gradient square, system tag top left, big initials in the middle). Built once, then scaled."""
-    key = (hue, tag, abbr, S)
+    key = (hue, tag, abbr, S, icon)
     cards = _FLOW["cards"]
     surf = cards.get(key)
     if surf is None:
@@ -1188,17 +1188,22 @@ def _flow_base(hue, tag, abbr, S):
         pygame.draw.rect(mask, (255, 255, 255, 255), (0, 0, S, S), border_radius=r)
         surf.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
         pygame.draw.rect(surf, (255, 255, 255, 70), (0, 0, S, S), max(2, S // 130), border_radius=r)
-        ft = _flow_font(S * 0.066, False)
-        tt = ft.render(tag, True, (240, 240, 250))
-        px, py = int(S * 0.045), int(S * 0.02)
-        cw, ch = tt.get_width() + 2 * px, tt.get_height() + 2 * py
-        chip = pygame.Surface((cw, ch), pygame.SRCALPHA)
-        pygame.draw.rect(chip, (30, 25, 60, 90), (0, 0, cw, ch), border_radius=max(4, ch // 4))
-        surf.blit(chip, (int(S * 0.06), int(S * 0.06)))
-        surf.blit(tt, (int(S * 0.06) + px, int(S * 0.06) + py))
-        fa = _flow_font(S * 0.32)
-        at = fa.render(abbr, True, (242, 242, 250))
-        surf.blit(at, ((S - at.get_width()) // 2, int(S * 0.55) - at.get_height() // 2))
+        if tag:
+            ft = _flow_font(S * 0.066, False)
+            tt = ft.render(tag, True, (240, 240, 250))
+            px, py = int(S * 0.045), int(S * 0.02)
+            cw, ch = tt.get_width() + 2 * px, tt.get_height() + 2 * py
+            chip = pygame.Surface((cw, ch), pygame.SRCALPHA)
+            pygame.draw.rect(chip, (30, 25, 60, 90), (0, 0, cw, ch), border_radius=max(4, ch // 4))
+            surf.blit(chip, (int(S * 0.06), int(S * 0.06)))
+            surf.blit(tt, (int(S * 0.06) + px, int(S * 0.06) + py))
+        if icon:
+            isz = int(S * 0.5)
+            surf.blit(xmb_icon(icon, isz, (242, 242, 250)), ((S - isz) // 2, (S - isz) // 2))
+        else:
+            fa = _flow_font(S * (0.32 if len(abbr) <= 3 else 0.24))
+            at = fa.render(abbr, True, (242, 242, 250))
+            surf.blit(at, ((S - at.get_width()) // 2, int(S * 0.55) - at.get_height() // 2))
         cards[key] = surf
     return key, surf
 
@@ -1228,11 +1233,11 @@ def flow_bg(c):
     c.blit(_FLOW["bg"][1], (0, 0))
 
 
-def draw_flow_home(c, f_small, f_row, games, fx, fade, filters, fsel, sysname, favs, clk, bat, scanning):
+def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk, bat, scanning):
+    """One level of RG Flow (menu buttons, systems or games): a cover carousel. cards = dicts with title, sub, hue, tag, abbr, icon, fav."""
     compact = H < 600
     arrows = bool(FONT_PATH[0])
     flow_bg(c)
-    # header: logo, clock / battery, system chips
     fl = _flow_font(26 if not compact else 22)
     x = 20
     for ch in "RG":
@@ -1248,106 +1253,83 @@ def draw_flow_home(c, f_small, f_row, games, fx, fade, filters, fsel, sysname, f
     it = f_small.render(info, True, (230, 70, 60) if bat and bat[0] <= 15 and bat[1].lower() != "charging" and not scanning else DIM)
     c.blit(it, (x + 6, 18 + (fl.get_height() - it.get_height()) // 2))
     left_end = x + 6 + it.get_width() + 14
-    cf = f_small if (len(filters) > 4 or compact) else f_row
-    ch_h, ch_pad, ch_gap = (28, 12, 8) if compact else (34, 16, 10)
-    cw = [cf.size(lbl)[0] + 2 * ch_pad for _fid, lbl in filters]
-    lo = hi = fsel                                   # show a window of chips around the selected one that fits the free width
-    room = W - 20 - left_end - cw[fsel]
-    while True:
-        grew = False
-        for side in (1, -1):
-            j = hi + 1 if side == 1 else lo - 1
-            if 0 <= j < len(filters) and room - cw[j] - ch_gap >= 0:
-                room -= cw[j] + ch_gap
-                if side == 1:
-                    hi = j
-                else:
-                    lo = j
-                grew = True
-        if not grew:
-            break
-    cx = W - 20 - (sum(cw[lo:hi + 1]) + ch_gap * (hi - lo))
-    cy = 14 if compact else 16
-    for i in range(lo, hi + 1):
-        sel = i == fsel
-        r = (cx, cy, cw[i], ch_h)
-        pygame.draw.rect(c, _mix(BG, ACCENT, 0.75) if sel else _mix(BG, TEXT, 0.12), r, border_radius=8)
-        t = cf.render(filters[i][1], True, BG if sel else DIM)
-        c.blit(t, (cx + (cw[i] - t.get_width()) // 2, cy + (ch_h - t.get_height()) // 2))
-        cx += cw[i] + ch_gap
+    if crumb:                                          # breadcrumb chip at the top right: Games > Game Boy
+        cf = f_small if compact else f_row
+        txt = fit(cf, crumb, max(60, W - 40 - left_end - 28))
+        ct = cf.render(txt, True, BG)
+        cw_, ch_h = ct.get_width() + 28, 28 if compact else 34
+        cy_ = 14 if compact else 16
+        pygame.draw.rect(c, _mix(BG, ACCENT, 0.75), (W - 20 - cw_, cy_, cw_, ch_h), border_radius=8)
+        c.blit(ct, (W - 20 - cw_ + 14, cy_ + (ch_h - ct.get_height()) // 2))
 
-    # layout
     bar_h = 34 if compact else 38
     bar_y = H - bar_h - (12 if compact else 16)
     sub_cy = bar_y - (50 if compact else 76)
     title_cy = sub_cy - (36 if compact else 47)
     card_bot = title_cy - (30 if compact else 45)
     S = int(min(W * 0.466, card_bot - (78 if compact else 84)))
-    n = len(games)
+    n = len(cards)
     if not n:
-        t = _flow_font(26 if not compact else 22).render("No games found", True, TEXT)
+        t = _flow_font(26 if not compact else 22).render(empty[0], True, TEXT)
         c.blit(t, ((W - t.get_width()) // 2, H // 2 - 30))
-        t2 = f_small.render("Copy ROMs to the SD card, then press X to rescan", True, DIM)
+        t2 = f_small.render(empty[1], True, DIM)
         c.blit(t2, ((W - t2.get_width()) // 2, H // 2 + 8))
     else:
         wrap_ = n >= 3
         base_i = int(round(fx))
         reach = 2 if n >= 5 else 1
-        cards = []
+        vis = []
         for i in range(base_i - reach, base_i + reach + 1):
             if not wrap_ and not 0 <= i < n:
                 continue
             d = i - fx
             if abs(d) > reach + 0.6:
                 continue
-            cards.append((abs(d), i, d))
-        for _ad, i, d in sorted(cards, reverse=True):          # far cards first, the centred one last (on top)
-            g = games[i % n]
+            vis.append((abs(d), i, d))
+        for _ad, i, d in sorted(vis, reverse=True):            # far cards first, the centred one last (on top)
+            g = cards[i % n]
             a = min(abs(d), 2.0)
             scale = 1 - 0.38 * min(a, 1.0) - 0.17 * max(0.0, a - 1.0)
             off = (1 if d > 0 else -1) * S * (0.745 * min(a, 1.0) + 0.42 * max(0.0, a - 1.0)) * (abs(d) / a if a else 0)
             alpha = 255 - 55 * min(a, 1.0) - 110 * max(0.0, a - 1.0) if a < 2 else 90
             w = max(16, int(round(S * scale / 4.0)) * 4)
-            key, base = _flow_base(flow_hue(g["sid"]), g["tag"], flow_abbr(g["title"]), S)
+            key, base = _flow_base(g["hue"], g["tag"], g["abbr"], S, g.get("icon"))
             surf = _flow_scaled(key, base, w)
             surf.set_alpha(int(max(0, min(255, alpha * fade))))
             ccx, ccy = W // 2 + off, card_bot - S // 2
             c.blit(surf, (int(ccx - w / 2), int(ccy - w / 2)))
-        g = games[int(round(fx)) % n] if (wrap_ or 0 <= int(round(fx)) < n) else games[max(0, min(n - 1, int(round(fx))))]
+        ci = int(round(fx))
+        g = cards[ci % n] if wrap_ else cards[max(0, min(n - 1, ci))]
         tsize = 34 if compact else 44
-        title = g["title"]
-        while tsize > 20 and _flow_font(tsize).size(title)[0] > W - 40:
+        while tsize > 20 and _flow_font(tsize).size(g["title"])[0] > W - 40:
             tsize -= 2
         tf = _flow_font(tsize)
-        tt = tf.render(fit(tf, title, W - 40), True, TEXT)
-        star = ""
-        if g["path"] in favs:
-            star = f_row.render("\u2605", True, ACCENT) if arrows else None
+        tt = tf.render(fit(tf, g["title"], W - 40), True, TEXT)
+        star = f_row.render("\u2605", True, ACCENT) if (g.get("fav") and arrows) else None
         tw = tt.get_width() + (star.get_width() + 10 if star else 0)
         tx = (W - tw) // 2
         c.blit(tt, (tx, title_cy - tt.get_height() // 2))
         if star:
             c.blit(star, (tx + tt.get_width() + 10, title_cy - star.get_height() // 2))
-        sub = "%s   \u2022   %d / %d" % (sysname.get(g["sid"], g["tag"]), (int(round(fx)) % n) + 1, n) if arrows else \
-              "%s  -  %d / %d" % (sysname.get(g["sid"], g["tag"]), (int(round(fx)) % n) + 1, n)
-        st = f_row.render(sub, True, DIM) if not compact else f_small.render(sub, True, DIM)
+        pos = "%d / %d" % ((ci % n) + 1, n)
+        sub = ("%s   \u2022   %s" if arrows else "%s  -  %s") % (g["sub"], pos) if g["sub"] else pos
+        st = (f_small if compact else f_row).render(fit(f_small if compact else f_row, sub, W - 40), True, DIM)
         c.blit(st, ((W - st.get_width()) // 2, sub_cy - st.get_height() // 2))
 
-    # bottom hint bar
+    # bottom hint bar (hints = [(button, label), ...], spread evenly)
     if _FLOW["bar"][0] != (BG, W, bar_h):
         bs = pygame.Surface((W - 40, bar_h), pygame.SRCALPHA)
         pygame.draw.rect(bs, (0, 0, 0, 90) if sum(BG) < 384 else (255, 255, 255, 110), (0, 0, W - 40, bar_h), border_radius=bar_h // 3)
         _FLOW["bar"] = ((BG, W, bar_h), bs)
     c.blit(_FLOW["bar"][1], (20, bar_y))
     hy = bar_y + bar_h // 2
-    parts = (("\u25c0 \u25b6", "Browse", 0.14), ("\u25b2 \u25bc", "System", 0.5), ("A", "Play", 0.86)) if arrows else \
-            (("L/R", "Browse", 0.14), ("U/D", "System", 0.5), ("A", "Play", 0.86))
-    for key_, label, fxp in parts:
-        kt = f_small.render(key_, True, _mix(DIM, ACCENT, 0.6) if key_ == "A" else DIM)
+    for k_, (key_, label) in enumerate(hints):
+        key_ = key_.replace("<>", "\u25c0 \u25b6" if arrows else "L/R")
+        fxp = (k_ + 0.5) / len(hints)
+        kt = f_small.render(key_, True, _mix(DIM, ACCENT, 0.6) if key_ in ("A",) else DIM)
         lt = f_row.render(label, True, DIM) if not compact else f_small.render(label, True, DIM)
         tw = kt.get_width() + 10 + lt.get_width()
-        x0 = int(W * fxp - tw / 2)
-        x0 = max(32, min(W - 32 - tw, x0))
+        x0 = max(32, min(W - 32 - tw, int(W * fxp - tw / 2)))
         c.blit(kt, (x0, hy - kt.get_height() // 2))
         c.blit(lt, (x0 + kt.get_width() + 10, hy - lt.get_height() // 2))
 
@@ -2194,16 +2176,25 @@ def main():
     if last:                                   # start with the cursor on the system/game played last
         sys_idx = next(i for i, sy in enumerate(vsys) if sy[0] == last["sid"])
         idx_by[last["sid"]] = games_of(last["sid"]).index(last)
-    # RG Flow carousel: system filter (0 = ALL), position per filter (unwrapped, so wrapping around animates one step), animated position
-    flow_f, flow_t, flow_fx, flow_fv, flow_fade, flow_pos, flow_grid = 0, (all_games.index(last) if last else 0), 0.0, 0.0, 1.0, {}, False
-    flow_fx = float(flow_t)
+    # RG Flow: three carousels (menu buttons -> systems -> games). flow_t = target position (unwrapped, so wrapping animates one step),
+    # flow_fx = animated position, flow_pos remembers the position of every carousel, flow_key says which one is showing.
+    flow_t, flow_fx, flow_fv, flow_fade, flow_pos, flow_key, flow_grid = 0, 0.0, 0.0, 1.0, {}, None, False
+    FLOW_HOME = {"games": (200, "Browse your systems"), "recents": (30, "Recently played"), "favorites": (48, "Your starred games"),
+                 "tools": (140, "File manager and more"), "settings": (265, "Theme, Wi-Fi, Bluetooth..."), "power": (350, "Shut down")}
 
-    def flow_filters():
-        return [("", "ALL")] + [(sy[0], sy[1]) for sy in vsys]
+    def flow_cards():
+        if view == "home":
+            return [{"id": hid, "title": lbl, "sub": FLOW_HOME.get(hid, (0, ""))[1], "hue": FLOW_HOME.get(hid, (0, ""))[0], "tag": "",
+                     "abbr": "", "icon": hid, "fav": False} for hid, lbl in HOME_ITEMS]
+        if view == "systems":
+            return [{"id": sy[0], "title": sy[4], "sub": "%d game%s" % (len(games_of(sy[0])), "" if len(games_of(sy[0])) == 1 else "s"),
+                     "hue": flow_hue(sy[0]), "tag": "", "abbr": sy[1], "icon": None, "fav": False} for sy in vsys]
+        gl = recent_games() if view == "recents" else favorite_games() if view == "favorites" else games_of(vsys[sys_idx][0] if vsys else "")
+        return [{"game": g, "title": g["title"], "sub": sysname.get(g["sid"], g["tag"]), "hue": flow_hue(g["sid"]), "tag": g["tag"],
+                 "abbr": flow_abbr(g["title"]), "icon": None, "fav": g["path"] in favorite_paths} for g in gl]
 
-    def flow_list():
-        fid = flow_filters()[flow_f % (len(vsys) + 1)][0]
-        return all_games if not fid else games_of(fid)
+    def flow_cur_key():
+        return ("g:" + (vsys[sys_idx][0] if vsys else "")) if view == "games" else view
     rows, list_x, list_w, top_y, row_h = 8 + DY // 44, 20, 450 + DX, 84, 44
     PH = 352 + DY                              # height of the big panels (side card, settings panels)
     clock = pygame.time.Clock()
@@ -2378,34 +2369,48 @@ def main():
                     dd = None
             elif a == "menu":                  # MENU / home button: back to the home screen
                 if view == "home" and launcher_id == "flow":
-                    flow_grid = not flow_grid  # Flow: the carousel <-> the classic home grid (Recents, Favorites, Tools, Settings, Power)
+                    flow_t = 0                 # Flow: MENU on the main carousel jumps back to the first button
+                    flow_fade = 0.0
+                elif view in ("systems", "games", "recents", "favorites") and launcher_id == "flow":
+                    view = "home"
                 elif view in ("systems", "games", "recents", "favorites", "tools", "settings", "wifi", "bt", "ssh", "info", "files"):
                     view = "home"
                 elif view == "bmap" and bmap and bmap.state in ("done", "fail"):
                     view = "home"
             elif a == "x" and view in ("home", "systems", "games", "recents", "favorites"):
                 rescan.start()                 # runs in the background; the loop swaps the new list in when it is done
-            elif view == "home" and launcher_id == "flow" and not flow_grid:   # Flow: left/right = game, up/down = system, A = play
-                fg, fn_ = flow_list(), len(flow_list())
-                if a in ("left", "right", "l", "r") and fn_:
-                    step = (1 if a in ("right", "r") else -1) * (1 if a in ("left", "right") else 5)
+            elif launcher_id == "flow" and view in ("home", "systems", "games", "recents", "favorites"):
+                fc = flow_cards()
+                fn_ = len(fc)
+                cur_ = fc[flow_t % fn_ if fn_ >= 3 else max(0, min(fn_ - 1, flow_t))] if fn_ else None
+                if a in ("left", "right", "l", "r", "up", "down") and fn_:
+                    fwd = a in ("right", "r", "down")
+                    step = (1 if fwd else -1) * (5 if a in ("l", "r") else 1)
                     flow_t = flow_t + step if fn_ >= 3 else max(0, min(fn_ - 1, flow_t + step))
-                elif a in ("up", "down") and len(vsys):
-                    flow_pos[flow_filters()[flow_f % (len(vsys) + 1)][0]] = flow_t
-                    flow_f = (flow_f + (1 if a == "down" else -1)) % (len(vsys) + 1)
-                    flow_t = flow_pos.get(flow_filters()[flow_f][0], 0)
-                    flow_fx, flow_fv, flow_fade = float(flow_t), 0.0, 0.0
-                elif a == "y" and fn_:
-                    path = fg[flow_t % fn_ if fn_ >= 3 else flow_t]["path"]
+                elif a == "b":
+                    view = "systems" if view == "games" else "home" if view != "home" else view
+                elif a == "y" and cur_ and "game" in cur_:
+                    path = cur_["game"]["path"]
                     if path in favorite_paths:
                         favorite_paths.discard(path)
                     else:
                         favorite_paths.add(path)
                     if not save_favorites(favorite_paths):
                         favorite_paths = set(load_favorites())
-                elif a == "a" and fn_:
-                    gsel = fg[flow_t % fn_ if fn_ >= 3 else flow_t]
-                    code = launch(gsel["path"], gsel)
+                elif a == "a" and cur_:
+                    if view == "home":
+                        hid = cur_["id"]
+                        if hid == "power":
+                            code = EXIT_POWER
+                        elif hid == "games":
+                            view = "systems"
+                            sys_idx = min(sys_idx, max(0, len(vsys) - 1))
+                        else:
+                            view = hid         # recents / favorites use the games carousel, tools / settings the classic lists
+                    elif view == "systems":
+                        sys_idx, view = next(i for i, sy in enumerate(vsys) if sy[0] == cur_["id"]), "games"
+                    else:
+                        code = launch(cur_["game"]["path"], cur_["game"])
             elif view == "home" and launcher_id == "xmb":      # XMB: left/right = category, up/down = item, A = open
                 cat = XMB_CATS[xmb_cat][0]
                 nav = a in ("left", "right", "l", "r", "up", "down")
@@ -2462,10 +2467,6 @@ def main():
                 elif a in ("up", "down"):
                     candidate = ((row + (1 if a == "down" else -1)) % nrows) * HOME_COLS + col
                     home_idx = candidate if candidate < len(HOME_ITEMS) else home_idx
-                elif a == "b" and launcher_id == "flow":
-                    flow_grid = False
-                elif a == "a" and launcher_id == "flow" and HOME_ITEMS[home_idx][0] == "games":
-                    flow_grid = False          # Flow: Games is the carousel itself
                 elif a == "a":
                     view = HOME_ITEMS[home_idx][0]
                     if view == "power":
@@ -2792,7 +2793,7 @@ def main():
 
         anim_moving = anim_tick()
         XMB_UI[0] = launcher_id == "xmb"
-        flow_on = launcher_id == "flow" and view == "home" and not flow_grid
+        flow_on = launcher_id == "flow" and view in ("home", "systems", "games", "recents", "favorites")
         if flow_on:
             pass                                               # the carousel paints its own background and header below
         elif launcher_id == "xmb":                               # XMB look: wave background on every screen, no title bar
@@ -2858,10 +2859,15 @@ def main():
         canvas.blit(s, (right - s.get_width(), 24))
 
         if flow_on:
-            fl_ = flow_filters()
-            flow_f %= len(fl_)
-            fgames = flow_list()
-            fn_ = len(fgames)
+            fk_ = flow_cur_key()
+            if fk_ != flow_key:                        # another carousel: remember the old position, restore this one's
+                if flow_key is not None:
+                    flow_pos[flow_key] = flow_t
+                flow_key = fk_
+                flow_t = flow_pos.get(fk_, 0)
+                flow_fx, flow_fv, flow_fade = float(flow_t), 0.0, 0.0
+            fcards = flow_cards()
+            fn_ = len(fcards)
             if fn_ >= 3:
                 kk = (flow_t // fn_) * fn_
                 flow_t, flow_fx = flow_t - kk, flow_fx - kk
@@ -2872,7 +2878,16 @@ def main():
             flow_fade = min(1.0, flow_fade + fdt * 6.0)
             if flow_fx != flow_t or flow_fade < 1.0:
                 _anim_clock[2] = True
-            draw_flow_home(canvas, f_small, f_row, fgames, flow_fx, flow_fade, fl_, flow_f, sysname, favorite_paths, clk, rd_bat(), rescan.busy)
+            if view == "home":
+                crumb, hints, empty = "", [("<>", "Browse"), ("A", "Open"), ("MENU", "First")], ("", "")
+            elif view == "systems":
+                crumb, hints = "Games", [("<>", "Browse"), ("A", "Open"), ("B", "Back")]
+                empty = ("No games found", "Copy ROMs to the SD card, then press X to rescan")
+            else:
+                crumb = {"recents": "Recents", "favorites": "Favorites"}.get(view) or (sysname.get(vsys[sys_idx][0], "") if vsys else "")
+                hints = [("<>", "Browse"), ("A", "Play"), ("Y", "Favorite"), ("B", "Back")]
+                empty = ("Nothing here yet", "Play or star some games first") if view != "games" else ("No games found", "Press X to rescan")
+            draw_flow_level(canvas, f_small, f_row, fcards, flow_fx, flow_fade, crumb, hints, empty, clk, rd_bat(), rescan.busy)
             hint = ""
         elif view == "home" and launcher_id == "xmb":
             xcat = XMB_CATS[xmb_cat][0]
