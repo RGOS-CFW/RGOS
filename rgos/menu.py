@@ -1187,7 +1187,15 @@ def _flow_base(hue, tag, abbr, S, icon=None):
         mask = pygame.Surface((S, S), pygame.SRCALPHA)
         pygame.draw.rect(mask, (255, 255, 255, 255), (0, 0, S, S), border_radius=r)
         surf.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        pygame.draw.rect(surf, (255, 255, 255, 70), (0, 0, S, S), max(2, S // 130), border_radius=r)
+        gl = pygame.Surface((S, S), pygame.SRCALPHA)                     # glossy highlight on the top half, soft shade on the bottom
+        for y in range(S):
+            if y < S * 0.5:
+                gl.fill((255, 255, 255, int(52 * (1 - y / (S * 0.5)) ** 1.5)), (0, y, S, 1))
+            elif y > S * 0.72:
+                gl.fill((0, 0, 0, int(60 * (y - S * 0.72) / (S * 0.28))), (0, y, S, 1))
+        gl.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        surf.blit(gl, (0, 0))
+        pygame.draw.rect(surf, (255, 255, 255, 80), (0, 0, S, S), max(2, S // 130), border_radius=r)
         if tag:
             ft = _flow_font(S * 0.066, False)
             tt = ft.render(tag, True, (240, 240, 250))
@@ -1198,6 +1206,10 @@ def _flow_base(hue, tag, abbr, S, icon=None):
             surf.blit(chip, (int(S * 0.06), int(S * 0.06)))
             surf.blit(tt, (int(S * 0.06) + px, int(S * 0.06) + py))
         if icon:
+            disc = pygame.Surface((S, S), pygame.SRCALPHA)
+            pygame.draw.circle(disc, (255, 255, 255, 40), (S // 2, S // 2), int(S * 0.34))
+            pygame.draw.circle(disc, (255, 255, 255, 60), (S // 2, S // 2), int(S * 0.34), max(2, S // 90))
+            surf.blit(disc, (0, 0))
             isz = int(S * 0.5)
             surf.blit(xmb_icon(icon, isz, (242, 242, 250)), ((S - isz) // 2, (S - isz) // 2))
         else:
@@ -1219,6 +1231,40 @@ def _flow_scaled(key, base, w):
     return s
 
 
+def _flow_blur(base, k=5):
+    sz = base.get_size()
+    small = pygame.transform.smoothscale(base, (max(4, sz[0] // k), max(4, sz[1] // k)))
+    return pygame.transform.smoothscale(small, sz)
+
+
+def _flow_glow(w):
+    """Soft accent halo behind the centred cover (built once per size, blurred by scaling down and back up)."""
+    cards = _FLOW["cards"]
+    key = ("glow", w, tuple(ACCENT[:3]))
+    s = cards.get(key)
+    if s is None:
+        if len(cards) > 160:
+            cards.clear()
+        g = max(12, w // 6)
+        base = pygame.Surface((w + 2 * g, w + 2 * g), pygame.SRCALPHA)
+        pygame.draw.rect(base, tuple(ACCENT[:3]) + (150,), (g, g, w, w), border_radius=max(8, w // 8))
+        s = cards[key] = _flow_blur(base)
+    return s
+
+
+def _flow_shadow(w):
+    cards = _FLOW["cards"]
+    key = ("shadow", w)
+    s = cards.get(key)
+    if s is None:
+        if len(cards) > 160:
+            cards.clear()
+        small = pygame.Surface((20, 5), pygame.SRCALPHA)
+        pygame.draw.ellipse(small, (0, 0, 0, 170), (2, 0, 16, 5))
+        s = cards[key] = pygame.transform.smoothscale(small, (max(8, int(w * 0.94)), max(6, int(w * 0.11))))
+    return s
+
+
 def flow_bg(c):
     """Vertical gradient from a tint of the theme accent down to the theme background (darkened on dark themes)."""
     key = (BG, ACCENT, W, H)
@@ -1229,6 +1275,9 @@ def flow_bg(c):
         s = pygame.Surface((W, H))
         for y in range(H):
             s.fill(_mix(top, bot, (y / max(1, H - 1)) ** 0.8), (0, y, W, 1))
+        lg = pygame.Surface((32, 18), pygame.SRCALPHA)                  # soft spotlight behind the carousel
+        pygame.draw.ellipse(lg, tuple(ACCENT[:3]) + (70 if dark else 40,), (3, 2, 26, 14))
+        s.blit(pygame.transform.smoothscale(lg, (W, int(H * 0.8))), (0, int(H * 0.08)))
         _FLOW["bg"] = (key, s)
     c.blit(_FLOW["bg"][1], (0, 0))
 
@@ -1297,17 +1346,33 @@ def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk
             surf = _flow_scaled(key, base, w)
             surf.set_alpha(int(max(0, min(255, alpha * fade))))
             ccx, ccy = W // 2 + off, card_bot - S // 2
-            c.blit(surf, (int(ccx - w / 2), int(ccy - w / 2)))
+            x0_, y0_ = int(ccx - w / 2), int(ccy - w / 2)
+            if abs(d) < 0.5:                               # halo behind the centred cover
+                gs = _flow_glow(w)
+                gs.set_alpha(int(255 * fade * (1 - abs(d) * 2)))
+                c.blit(gs, (x0_ - (gs.get_width() - w) // 2, y0_ - (gs.get_height() - w) // 2))
+            sh = _flow_shadow(w)
+            sh.set_alpha(int(210 * fade * (1 - 0.4 * min(a, 1.0))))
+            c.blit(sh, (int(ccx - sh.get_width() / 2), y0_ + w - sh.get_height() // 3))
+            c.blit(surf, (x0_, y0_))
         ci = int(round(fx))
         g = cards[ci % n] if wrap_ else cards[max(0, min(n - 1, ci))]
         tsize = 34 if compact else 44
         while tsize > 20 and _flow_font(tsize).size(g["title"])[0] > W - 40:
             tsize -= 2
         tf = _flow_font(tsize)
-        tt = tf.render(fit(tf, g["title"], W - 40), True, TEXT)
+        ttxt = fit(tf, g["title"], W - 40)
+        tt = tf.render(ttxt, True, TEXT)
+        if sum(BG) < 384:                                  # soft drop shadow so the title stays readable over the glow
+            ts = tf.render(ttxt, True, (0, 0, 0))
+            ts.set_alpha(130)
+        else:
+            ts = None
         star = f_row.render("\u2605" if arrows else "*", True, ACCENT) if g.get("fav") else None
         tw = tt.get_width() + (star.get_width() + 10 if star else 0)
         tx = (W - tw) // 2
+        if ts:
+            c.blit(ts, (tx + 2, title_cy - tt.get_height() // 2 + 2))
         c.blit(tt, (tx, title_cy - tt.get_height() // 2))
         if star:
             c.blit(star, (tx + tt.get_width() + 10, title_cy - star.get_height() // 2))
@@ -1315,6 +1380,16 @@ def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk
         sub = ("%s   \u2022   %s" if arrows else "%s  -  %s") % (g["sub"], pos) if g["sub"] else pos
         st = (f_small if compact else f_row).render(fit(f_small if compact else f_row, sub, W - 40), True, DIM)
         c.blit(st, ((W - st.get_width()) // 2, sub_cy - st.get_height() // 2))
+        if 1 < n <= 12:                                    # page dots (the selected one is a wide accent pill)
+            dy = sub_cy + (23 if compact else 33)
+            gap = 14
+            dx = (W - (n - 1) * gap) // 2 - 0
+            sel_i = ci % n if wrap_ else max(0, min(n - 1, ci))
+            for k in range(n):
+                if k == sel_i:
+                    pygame.draw.rect(c, ACCENT, (dx + k * gap - 7, dy - 3, 14, 6), border_radius=3)
+                else:
+                    pygame.draw.circle(c, _mix(BG, TEXT, 0.35), (dx + k * gap, dy), 3)
 
     # bottom hint bar (hints = [(button, label), ...], spread evenly)
     if _FLOW["bar"][0] != (BG, W, bar_h):
@@ -1326,12 +1401,15 @@ def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk
     for k_, (key_, label) in enumerate(hints):
         key_ = key_.replace("<>", "\u25c0 \u25b6" if arrows else "L/R")
         fxp = (k_ + 0.5) / len(hints)
-        kt = f_small.render(key_, True, _mix(DIM, ACCENT, 0.6) if key_ in ("A",) else DIM)
+        hot = key_ in ("A",)
+        kt = f_small.render(key_, True, BG if hot else TEXT)
         lt = f_row.render(label, True, DIM) if not compact else f_small.render(label, True, DIM)
-        tw = kt.get_width() + 10 + lt.get_width()
+        bw, bh = kt.get_width() + 14, kt.get_height() + 4
+        tw = bw + 8 + lt.get_width()
         x0 = max(32, min(W - 32 - tw, int(W * fxp - tw / 2)))
-        c.blit(kt, (x0, hy - kt.get_height() // 2))
-        c.blit(lt, (x0 + kt.get_width() + 10, hy - lt.get_height() // 2))
+        pygame.draw.rect(c, _mix(BG, ACCENT, 0.8) if hot else _mix(BG, TEXT, 0.2), (x0, hy - bh // 2, bw, bh), border_radius=bh // 2)
+        c.blit(kt, (x0 + 7, hy - kt.get_height() // 2))
+        c.blit(lt, (x0 + bw + 8, hy - lt.get_height() // 2))
 
 
 def rd_file(path):
