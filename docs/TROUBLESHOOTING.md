@@ -9,6 +9,16 @@ RG OS leaves up to four evidence files on the FAT boot partition (the one labell
 | `rgos-logs.txt` | `rgos-session`, at 8, 28 and 58 s | the session never started, or it died early |
 | `rgos-retroarch.txt` | `rgos-launch`, after every game | no game was launched yet |
 
+## RG34XXSP / RG35XX H / RG35XX SP: black screen, nothing is written to the card
+
+If the card has no `rgos-initramfs.txt` at all, the console never reached Linux, which is before anything RG OS adds. On the H700 consoles the usual causes are, in this order:
+
+1. **Wrong RAM type.** The stock ROCKNIX H700 images come in `DDR4` and `DDR3` flavours, and the U-Boot on the card is built for exactly one of them. The wrong one gives a black screen with no output, and other systems (which ship their own bootloader) still boot fine on the same console. `build.sh` defaults to DDR4; build the other one with `H700_RAM=DDR3 sudo -E ./build.sh rg35xxh`, or choose `h700_ram` = `DDR3` in the GitHub workflow. The card's `rgos-image-info.txt` says which type the image was built for.
+2. **Wrong panel revision (device tree).** The RG35XX H / SP (and RG34XXSP) exist with two screen revisions. A black or garbled screen that still lets the card boot far enough to write `rgos-initramfs.txt` is this. Rebuild with `RG35XXH_DTB=sun50i-h700-anbernic-rg35xx-h-rev6-panel` (RG35XX SP: `RG35XXSP_DTB=...-rev6-panel`, RG34XXSP: `RG34XXSP_DTB=...-v2-panel`), or choose `h700_panel` = `alt` in the workflow. Fully power off (10 s power hold) before trying a new card.
+3. **Card not ejected cleanly** after flashing: re-flash it.
+
+The two options are independent, so with an unknown console try the four combinations (DDR4/DDR3 x standard/alt panel). The RAM type is only a concern for fresh images: offline updates reuse the U-Boot already on the card.
+
 ## RG Rotate boots Android instead of RG OS
 
 Android does not always mean the SPL failed to find U-Boot. The boot chain falls through to the internal Android whenever the card's U-Boot cannot start Linux, for example when extlinux fails because U-Boot cannot load the `INITRD` file (no `ramdisk_addr_r` in its environment). Stock ROCKNIX has no INITRD line, so this U-Boot may never have been asked to load one.

@@ -493,6 +493,15 @@ if [[ "$MODE" == "update" ]]; then
   [[ ( "$DEVICE" == "rg34xxsp" || "$DEVICE" == "rg35xxh" || "$DEVICE" == "rg35xxsp" ) && "${UPDATE_DTB:-0}" == "1" ]] && cp "$WORK/mnt/dtb.img" "$WORK/upd/dtb.img"
 fi
 
+{ echo "RG OS image info (written by build.sh)"
+  echo "device: $DEVICE"
+  echo "base image: $(basename "$ROCKNIX_URL")"
+  if [[ "$PTABLE" == dos ]]; then
+    echo "h700 ram type: $H700_RAM   (the U-Boot on this card only starts consoles with this RAM; black screen + nothing written = wrong type, rebuild with H700_RAM=DDR3 or DDR4)"
+    echo "device tree: $H700_DTB   (screen black or garbage = wrong panel revision, rebuild with the other one)"
+  fi
+  echo "build: $(date -u +%Y-%m-%dT%H:%MZ)"
+} > "$WORK/mnt/rgos-image-info.txt"
 sync
 umount "$WORK/mnt"; losetup -d "$LOOP"; LOOP=""
 
@@ -530,5 +539,6 @@ echo "RG OS logs are copied to rgos-logs.txt on the card's FAT partition at 8, 2
 if [[ "$DEVICE" == "rg-rotate" ]]; then
   echo "Flash the SPL once (cd spl-flasher && ./flash-spl.sh), then write the image to the SD card."
 else
+  echo "Built for $H700_RAM RAM. The H700 U-Boot on the card is specific to the RAM type: if the console stays black and nothing is written to the card, rebuild with the other one (H700_RAM=DDR3 / DDR4; unsure which? try DDR4 first, then DDR3)."
   echo "Write the image to the SD card (the H700 boots straight from it; no SPL flashing). dtb.img = $H700_DTB.dtb; to change it, rebuild with RG34XXSP_DTB=... / RG35XXH_DTB=... / RG35XXSP_DTB=... (device_trees/ is not on the card)."
 fi

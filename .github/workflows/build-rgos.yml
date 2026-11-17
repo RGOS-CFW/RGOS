@@ -42,6 +42,22 @@ on:
         required: true
         type: boolean
         default: false
+      h700_ram:
+        description: RG34XXSP / RG35XX H / RG35XX SP only - RAM type of the console (the stock ROCKNIX U-Boot is built per RAM type; the wrong one gives a black screen and no boot)
+        required: true
+        type: choice
+        options:
+          - DDR4
+          - DDR3
+        default: DDR4
+      h700_panel:
+        description: RG34XXSP / RG35XX H / RG35XX SP only - device tree to use (alt = the -v2-panel / -rev6-panel tree; pick it if the screen stays black or shows garbage)
+        required: true
+        type: choice
+        options:
+          - standard
+          - alt
+        default: standard
       rocknix_url:
         description: override the stock ROCKNIX image URL (blank uses the build.sh default; not allowed with device=all, the devices use different images)
         required: false
@@ -114,11 +130,19 @@ jobs:
           BUILD_PSX: ${{ inputs.build_psx }}
           BUILD_GC: ${{ inputs.build_gc }}
           ROCKNIX_URL_INPUT: ${{ inputs.rocknix_url }}
+          H700_RAM_INPUT: ${{ inputs.h700_ram }}
+          H700_PANEL_INPUT: ${{ inputs.h700_panel }}
         run: |
           set -euo pipefail
           [[ "$BUILD_PSX" == "true" ]] || export PSX_REPO=none
           [[ "$BUILD_GC" == "true" ]] || export GC_REPO=none
           [[ -z "$ROCKNIX_URL_INPUT" ]] || export ROCKNIX_URL="$ROCKNIX_URL_INPUT"
+          export H700_RAM="$H700_RAM_INPUT"
+          if [[ "$H700_PANEL_INPUT" == "alt" ]]; then
+            export RG34XXSP_DTB=sun50i-h700-anbernic-rg34xx-sp-v2-panel
+            export RG35XXH_DTB=sun50i-h700-anbernic-rg35xx-h-rev6-panel
+            export RG35XXSP_DTB=sun50i-h700-anbernic-rg35xx-sp-rev6-panel
+          fi
           bash ./build.sh "$DEVICE" image
           if [[ "$DEVICE" == "all" ]]; then
             test -s out/rg-rotate-rgos.img && test -s out/rg34xxsp-rgos.img && test -s out/rg35xxh-rgos.img && test -s out/rg35xxsp-rgos.img
@@ -183,12 +207,20 @@ jobs:
           BUILD_GC: ${{ inputs.build_gc }}
           INCLUDE_EXTLINUX: ${{ inputs.update_extlinux }}
           ROCKNIX_URL_INPUT: ${{ inputs.rocknix_url }}
+          H700_RAM_INPUT: ${{ inputs.h700_ram }}
+          H700_PANEL_INPUT: ${{ inputs.h700_panel }}
         run: |
           set -euo pipefail
           [[ "$BUILD_PSX" == "true" ]] || export PSX_REPO=none
           [[ "$BUILD_GC" == "true" ]] || export GC_REPO=none
           [[ "$INCLUDE_EXTLINUX" != "true" ]] || export UPDATE_EXTLINUX=1
           [[ -z "$ROCKNIX_URL_INPUT" ]] || export ROCKNIX_URL="$ROCKNIX_URL_INPUT"
+          export H700_RAM="$H700_RAM_INPUT"
+          if [[ "$H700_PANEL_INPUT" == "alt" ]]; then
+            export RG34XXSP_DTB=sun50i-h700-anbernic-rg34xx-sp-v2-panel
+            export RG35XXH_DTB=sun50i-h700-anbernic-rg35xx-h-rev6-panel
+            export RG35XXSP_DTB=sun50i-h700-anbernic-rg35xx-sp-rev6-panel
+          fi
           bash ./build.sh "$DEVICE" update
           if [[ "$DEVICE" == "all" ]]; then
             test -s "out/rgos-update-rg-rotate-${UPDATE_ID}.tar" && test -s "out/rgos-update-rg34xxsp-${UPDATE_ID}.tar" && test -s "out/rgos-update-rg35xxh-${UPDATE_ID}.tar" && test -s "out/rgos-update-rg35xxsp-${UPDATE_ID}.tar"
