@@ -10,6 +10,7 @@ import btctl
 import sshctl
 import biosctl
 import filemanager
+import rgclassic
 try:
     import sdcard
 except Exception:
@@ -667,7 +668,8 @@ SETTINGS_ROWS = ["theme", "launcher", "splash", "emulators", "bios", "bmap", "sw
 RECENT_MAX = 20
 
 LAUNCHERS = [("rgos", "RG OS", "Classic tile launcher"), ("xmb", "RG XMB", "PlayStation-style cross media bar"),
-             ("flow", "RG Flow", "Carousels: menu, systems, games")]
+             ("flow", "RG Flow", "Carousels: menu, systems, games"),
+             ("rgclassic", "RG Classic", "Pixel tile launcher, 3x2 buttons")]
 DEFAULT_LAUNCHER = LAUNCHERS[0][0]
 
 
@@ -2088,6 +2090,7 @@ def main():
         mk = lambda s: CFont(pygame.font.Font(None, int(s * 1.3)))
     f_logo, f_big, f_row, f_small, f_tiny = mk(30), mk(22), mk(19), mk(14), mk(11)
 
+    classic_ui = rgclassic.Classic(W, H)
     inp = Input()
     all_games = scan_roms()
     rescan = Rescan()
@@ -2524,14 +2527,15 @@ def main():
                     elif act[0] == "power":
                         code = EXIT_POWER
             elif view == "home":
-                col, row = home_idx % HOME_COLS, home_idx // HOME_COLS
-                nrows = (len(HOME_ITEMS) + HOME_COLS - 1) // HOME_COLS
+                hc = 3 if launcher_id == "rgclassic" else HOME_COLS
+                col, row = home_idx % hc, home_idx // hc
+                nrows = (len(HOME_ITEMS) + hc - 1) // hc
                 if a == "left":
-                    home_idx = row * HOME_COLS + (col - 1) % HOME_COLS
+                    home_idx = row * hc + (col - 1) % hc
                 elif a == "right":
-                    home_idx = row * HOME_COLS + (col + 1) % HOME_COLS
+                    home_idx = row * hc + (col + 1) % hc
                 elif a in ("up", "down"):
-                    candidate = ((row + (1 if a == "down" else -1)) % nrows) * HOME_COLS + col
+                    candidate = ((row + (1 if a == "down" else -1)) % nrows) * hc + col
                     home_idx = candidate if candidate < len(HOME_ITEMS) else home_idx
                 elif a == "a":
                     view = HOME_ITEMS[home_idx][0]
@@ -2880,7 +2884,8 @@ def main():
         anim_moving = anim_tick()
         XMB_UI[0] = launcher_id == "xmb"
         flow_on = launcher_id == "flow" and view in ("home", "systems", "games", "recents", "favorites")
-        if flow_on:
+        classic_on = launcher_id == "rgclassic" and view == "home"
+        if flow_on or classic_on:
             pass
         elif launcher_id == "xmb":
             xmb_bg(canvas, time.time(), anim_moving or time.monotonic() - last_act < 0.35)
@@ -2923,10 +2928,10 @@ def main():
             info = "First-time setup   %s" % clk
         if rescan.busy:
             info = "Scanning...   " + info
-        if flow_on:
+        if flow_on or classic_on:
             info = ""
         s = f_small.render(info, True, DIM)
-        bat = None if flow_on else rd_bat()
+        bat = None if flow_on or classic_on else rd_bat()
         right = W - 20
         if launcher_id == "xmb":
             pl = (W - 90 - 16 if bat else W - 20) - s.get_width() - 20
@@ -2989,6 +2994,19 @@ def main():
                 _anim_clock[2] = True
             draw_xmb_home(canvas, f_row, f_small, xmb_cx, xmb_cat, xitems, xmb_vy, xmb_fade)
             hint = "Left/Right Category   Up/Down Item   A Open   X Rescan"
+            if dd is not None:
+                draw_xmb_dropdown(canvas, f_small, dd, dd_options(dd["kind"]))
+                hint = "Up/Down Browse   A Select   B Cancel"
+        elif classic_on:
+            cdescs = {"games": "%d games" % len(all_games),
+                      "recents": "%d recent" % len(recent_games()),
+                      "favorites": "%d favorites" % len(favorite_games()),
+                      "tools": "Files, ports, RetroArch",
+                      "settings": "Theme, Wi-Fi, info, controls",
+                      "power": "Shut down RG OS"}
+            classic_ui.draw(canvas, HOME_ITEMS, cdescs, home_idx, clk, rd_bat(),
+                            [("A", "Open"), ("X", "Rescan")], 3)
+            hint = ""
             if dd is not None:
                 draw_xmb_dropdown(canvas, f_small, dd, dd_options(dd["kind"]))
                 hint = "Up/Down Browse   A Select   B Cancel"
