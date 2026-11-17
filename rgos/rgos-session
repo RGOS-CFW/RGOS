@@ -133,6 +133,10 @@ if ! mountpoint -q /media/roms && mountpoint -q /boot && mkdir -p /boot/roms 2>/
       && echo "ROMS: using /boot/roms on the FAT partition (no ext4 ROMS partition)" >> /var/log/rgos-state.log
 fi
 mountpoint -q /dev/pts || mount -t devpts devpts /dev/pts 2>/dev/null
+[ -e /dev/fd ] || ln -s /proc/self/fd /dev/fd 2>/dev/null
+[ -e /dev/stdin ] || ln -s /proc/self/fd/0 /dev/stdin 2>/dev/null
+[ -e /dev/stdout ] || ln -s /proc/self/fd/1 /dev/stdout 2>/dev/null
+[ -e /dev/stderr ] || ln -s /proc/self/fd/2 /dev/stderr 2>/dev/null
 [ -e /var/run ] || ln -s /run /var/run 2>/dev/null
 python3 /opt/rgos/wifictl.py daemon >> /var/log/rgos-wifi.log 2>&1 &
 python3 /opt/rgos/btctl.py start >> /var/log/rgos-bt.log 2>&1 &

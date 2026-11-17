@@ -389,6 +389,12 @@ cat > "$ROOTFS/usr/sbin/rgos-init" <<'INIT'
 #!/bin/sh
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 mount -t proc proc /proc 2>/dev/null; mount -t sysfs sys /sys 2>/dev/null; mount -t devtmpfs dev /dev 2>/dev/null
+# devtmpfs has no /dev/fd (udev/systemd normally makes it); bash process substitution <(...) and PortMaster need it
+[ -e /dev/fd ] || ln -s /proc/self/fd /dev/fd 2>/dev/null
+[ -e /dev/stdin ] || ln -s /proc/self/fd/0 /dev/stdin 2>/dev/null
+[ -e /dev/stdout ] || ln -s /proc/self/fd/1 /dev/stdout 2>/dev/null
+[ -e /dev/stderr ] || ln -s /proc/self/fd/2 /dev/stderr 2>/dev/null
+[ -d /dev/shm ] || { mkdir -p /dev/shm && mount -t tmpfs -o mode=1777 tmpfs /dev/shm 2>/dev/null; }
 [ -x /bin/busybox ] && /bin/busybox --install -s /usr/bin 2>/dev/null
 
 mountpoint -q /run || mount -t tmpfs tmpfs /run
@@ -431,6 +437,8 @@ mkdir -p "$ROOTFS/usr/lib/systemd" "$ROOTFS/usr/lib/libreelec" "$ROOTFS/usr/lib/
 ln -sf ../../sbin/rgos-init "$ROOTFS/usr/lib/systemd/systemd"
 ln -sf rgos-init            "$ROOTFS/usr/sbin/init"
 ln -sf usr/sbin/rgos-init   "$ROOTFS/init"
+# the root is read-only squashfs, so the /roms alias PortMaster-style scripts expect must be baked in (dangling until ROMS mounts)
+ln -sfn /media/roms/roms "$ROOTFS/roms"
 rm -f "$ROOTFS/usr/bin/qemu-aarch64-static"
 if ! chroot "$ROOTFS" python3 -c 'import pygame; print("pygame", pygame.version.ver)'; then
   echo "==> pygame missing from the rootfs: installing python3-pygame"

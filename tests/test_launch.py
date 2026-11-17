@@ -90,6 +90,14 @@ class NativePortTests(unittest.TestCase):
         with open(seen["cmd"][1], "rb") as f:
             self.assertNotIn(b"\r", f.read())
 
+    def test_self_extracting_installer_is_not_rewritten(self):
+        payload = b"#!/bin/bash\r\n# Makeself\r\nexit 0\r\n" + bytes(range(256)) + b"\r\n\x00\x1f\x8b\r\n"
+        with open(self.script, "wb") as f:
+            f.write(payload)
+        self.assertEqual(self.launch.fix_crlf(self.script), self.script)
+        with open(self.script, "rb") as f:
+            self.assertEqual(f.read(), payload)
+
     def test_portmaster_is_found_in_the_roms_ports_folder(self):
         ports = os.path.join(self.tmp, "roms", "ports")
         os.makedirs(ports)

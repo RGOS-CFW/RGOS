@@ -456,6 +456,14 @@ def fix_crlf(path):
             data = f.read()
         if b"\r\n" not in data:
             return path
+        # Self-extracting installers (PortMaster's makeself .sh) carry a binary archive after the script;
+        # rewriting its CR LF bytes corrupts it ("Unexpected archive size"), so only touch pure text files.
+        if b"\x00" in data:
+            return path
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError:
+            return path
         fixed = data.replace(b"\r\n", b"\n")
         try:
             with open(path, "wb") as f:
