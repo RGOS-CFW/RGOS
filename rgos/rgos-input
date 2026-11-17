@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import errno, fcntl, glob, json, os, select, signal, struct, subprocess, sys, time
+import errno, fcntl, glob, json, os, select, signal, stat, struct, subprocess, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 CONF = "/etc/rgos/input.json"
@@ -11,6 +11,7 @@ EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
 EVFMT = struct.Struct("llHHi")
 AMAX = 32767
 RULES = "/run/udev/rules.d/91-rgos-hub.rules"
+HIDDEN = "/run/rgos/inputhub.hidden"
 BTNMAP = "/var/lib/rgos/button-map.json"
 SWAPAB = "/var/lib/rgos/swap-ab"
 KEYS_PROBE, KEYS_RAW = "/run/rgos/keys.probe", "/run/rgos/keys.raw"
@@ -138,6 +139,60 @@ def udev_refresh():
         subprocess.run(["udevadm", "settle", "--timeout=5"], timeout=10)
     except Exception as e:
         log("udevadm failed:", e)
+
+
+HIDDEN_NODES = {}
+
+
+def _save_hidden():
+    try:
+        if HIDDEN_NODES:
+            with open(HIDDEN, "w") as f:
+                json.dump([[p, a, b] for p, (a, b) in sorted(HIDDEN_NODES.items())], f)
+        elif os.path.exists(HIDDEN):
+            os.unlink(HIDDEN)
+    except OSError:
+        pass
+
+
+def hide_raw_node(path, sysfs="/sys/class/input"):
+    """Take a grabbed raw pad out of /dev/input so SDL ports never see it.
+
+    The hub grabs the raw pad, so it never reports anything to anyone else. The udev rule written by
+    write_rules() is meant to hide it from SDL, but this image runs no udevd, so SDL ports saw the dead raw
+    pad as controller 0 and the working "RG OS Gamepad" as controller 1: ports that read only the first
+    controller had no input. The hub keeps its already-open fd, so unlinking the node is safe. It is put
+    back by restore_hidden() when the hub exits, and at the next start if the hub was killed.
+    """
+    try:
+        with open(os.path.join(sysfs, os.path.basename(path), "dev")) as f:
+            major, minor = (int(v) for v in f.read().strip().split(":"))
+        os.unlink(path)
+    except (OSError, ValueError) as e:
+        log("cannot hide %s from ports: %s" % (path, e))
+        return
+    HIDDEN_NODES[path] = (major, minor)
+    _save_hidden()
+    log("hid %s from SDL ports (the hub owns it)" % path)
+
+
+def restore_hidden():
+    try:
+        with open(HIDDEN) as f:
+            for p, a, b in json.load(f):
+                HIDDEN_NODES.setdefault(p, (a, b))
+    except (OSError, ValueError, TypeError):
+        pass
+    for path, (major, minor) in list(HIDDEN_NODES.items()):
+        try:
+            if not os.path.exists(path):
+                os.mknod(path, 0o666 | stat.S_IFCHR, os.makedev(major, minor))
+                os.chmod(path, 0o666)
+        except OSError as e:
+            log("cannot restore %s: %s" % (path, e))
+            continue
+        del HIDDEN_NODES[path]
+    _save_hidden()
 
 
 def write_status(text):
@@ -506,6 +561,7 @@ class KeyProbe:
 
 
 def run():
+    restore_hidden()  # a hub that was killed earlier may have left its raw pad hidden
     iconf = load_input_conf()
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
@@ -580,6 +636,8 @@ def run():
         ff = ffpad.FFHandler(ufd, motor, float(r_.get("threshold", 0.15)), int(r_.get("max_ms", 3000)))
     for x in srcs.values():
         x.grab()
+        if x.grabbed:
+            hide_raw_node(x.path)
     open(FLAG, "w").close()
     write_rules([x.name for x in srcs.values()])
     udev_refresh()
@@ -603,6 +661,8 @@ def run():
                             continue
                         learn_source(translator, x)
                         x.grab()
+                        if x.grabbed:
+                            hide_raw_node(path)
                         srcs[path] = x
                         added = True
                         log("source added: %s (%s)" % (path, name))
@@ -634,6 +694,8 @@ def run():
                     log("source gone: %s (%s): %s" % (x.path, x.name, e))
                     x.close()
                     del srcs[x.path]
+                    HIDDEN_NODES.pop(x.path, None)
+                    _save_hidden()
                     write_rules([y.name for y in srcs.values()])
                     udev_refresh()
                     if legacy and not srcs:
@@ -675,6 +737,7 @@ def run():
             fcntl.ioctl(ufd, UI_DEV_DESTROY)
         except OSError:
             pass
+        restore_hidden()
         for p in (FLAG, STATUS, KEYS_RAW, STICKS_RAW, RULES, MAP_REPORT):
             try:
                 os.unlink(p)

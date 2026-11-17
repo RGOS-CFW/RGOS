@@ -49,6 +49,14 @@ field of the generated `/run/rgos/gamecontrollerdb.txt`. Lines starting with `#`
 are ignored. A mapping already exported in `SDL_GAMECONTROLLERCONFIG` wins over
 all of these.
 
+## Which controller ports see
+
+The input hub grabs the console's raw gamepad and exposes only the virtual "RG OS Gamepad".
+Because the image runs no udev, the hub also removes the raw pad's `/dev/input/eventN` node while it
+is running (it keeps the device open itself), so SDL ports see exactly one controller, the working one.
+The node is put back when the hub stops, and at the next hub start if the hub was killed. Look for
+`hid /dev/input/eventN from SDL ports` in `rgos-input.log`.
+
 ## Quitting a port
 
 Hold **Select + Start** for about 2 seconds to stop the running native port and
