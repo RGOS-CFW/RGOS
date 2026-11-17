@@ -463,6 +463,60 @@ def launch_retroarch(sid, core, core_path, content):
     return rc
 
 
+def portmaster_script():
+    """Find the PortMaster entry point on the active ROMS partition."""
+    roots = [ROMS_ROOT, "/roms"]
+    seen = set()
+    for root in roots:
+        if not root or root in seen:
+            continue
+        seen.add(root)
+        ports = os.path.join(root, "ports")
+        candidates = [
+            os.path.join(ports, "PortMaster", "PortMaster.sh"),
+            os.path.join(ports, "PortMaster", "portmaster.sh"),
+            os.path.join(ports, "PortMaster.sh"),
+            os.path.join(ports, "portmaster.sh"),
+        ]
+        for path in candidates:
+            if os.path.isfile(path):
+                return path
+        # Accommodate case variations used by community installs.
+        try:
+            for entry in os.listdir(ports):
+                if entry.lower() == "portmaster":
+                    folder = os.path.join(ports, entry)
+                    for name in ("PortMaster.sh", "portmaster.sh"):
+                        path = os.path.join(folder, name)
+                        if os.path.isfile(path):
+                            return path
+        except OSError:
+            pass
+    return ""
+
+
+def launch_portmaster():
+    script = portmaster_script()
+    if not script:
+        show_error("RG OS: PortMaster is not installed",
+                   "Expected PortMaster.sh in %s/ports/PortMaster or %s/ports. "
+                   "Install PortMaster on the ROMS partition, then try again." % (ROMS_ROOT, ROMS_ROOT))
+        return 1
+    shell = shutil.which("bash") or "/bin/sh"
+    env = dict(os.environ)
+    env.update({"HOME": "/root", "XDG_RUNTIME_DIR": RUN_DIR})
+    os.makedirs(RUN_DIR, exist_ok=True)
+    log("starting PortMaster: %s" % script)
+    try:
+        rc = subprocess.call([shell, script], cwd=os.path.dirname(script), env=env,
+                              stdin=subprocess.DEVNULL)
+    except OSError as e:
+        show_error("RG OS: cannot start PortMaster", str(e))
+        return 1
+    log("PortMaster exited rc=%s (%s)" % (rc, rc_text(rc)))
+    return rc
+
+
 def main(argv):
     target = (argv[1] if len(argv) > 1 else "").strip()
     if not target:
@@ -471,6 +525,9 @@ def main(argv):
     state = load_json(STATE_FILE, {})
     if target == "@tool:retroarch":
         launch_retroarch("", "", "", "")
+        return 0
+    if target == "@tool:portmaster":
+        launch_portmaster()
         return 0
     if target.startswith("@"):
         log("target %s is not supported by this build" % target)
