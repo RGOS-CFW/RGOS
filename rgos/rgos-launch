@@ -417,7 +417,7 @@ def save_report(pads, idx, drv, cmd, rc, history=(), core_path=""):
         pass
 
 
-def native_env(base=None):
+def native_env(base=None, cwd=None):
     """Environment for a Linux port: the menu's own SDL/RG OS settings must not leak into it.
 
     rgos-session exports SDL_VIDEODRIVER=dummy (the menu draws straight to the framebuffer),
@@ -435,6 +435,12 @@ def native_env(base=None):
     env.setdefault("AUDIODEV", dev)
     if env.get("SDL_AUDIODRIVER", "") in ("", "dummy"):
         env["SDL_AUDIODRIVER"] = "alsa"
+    try:  # SDL controller mapping for the hub pad; a failure here must never stop a port from starting
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import portpad
+        env.update(portpad.env_for(env, RUN_DIR, ROMS_ROOT, cwd))
+    except Exception as e:
+        log("controller mapping unavailable: %s" % e)
     return env
 
 
@@ -508,10 +514,10 @@ def launch_native(target):
             return 126
         cmd = [target]
     os.makedirs(RUN_DIR, exist_ok=True)
-    env = native_env()
+    cwd = os.path.dirname(target)
+    env = native_env(cwd=cwd)
     link_roms_alias()
     os.makedirs(os.path.dirname(NATIVE_LOG) or ".", exist_ok=True)
-    cwd = os.path.dirname(target)
     log("native port starting: %s (cwd=%s)" % (" ".join(cmd), cwd))
     hw = not os.environ.get("RGOS_NO_HW") or os.environ.get("RGOS_SYSFS")
     saved = set_governor(perf_governor("native")) if hw else {}
