@@ -282,12 +282,41 @@ def video_attempts(sid, boot_dir=None):
     return list(GC_VIDEO_DRIVERS)
 
 
+TAIL_BYTES = 256 * 1024
+NATIVE_LOG_MAX = 1024 * 1024
+NATIVE_LOG_KEEP = 256 * 1024
+
+
 def tail(path, n=12):
+    """Last n lines of a file, reading only its end (logs can be huge and live in RAM)."""
     try:
-        with open(path, errors="replace") as f:
-            return "".join(f.readlines()[-n:])
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - TAIL_BYTES))
+            data = f.read()
     except OSError:
         return ""
+    lines = data.decode("utf-8", "replace").splitlines(True)
+    return "".join(lines[-n:])
+
+
+def trim_log(path, limit=NATIVE_LOG_MAX, keep=NATIVE_LOG_KEEP):
+    """Cap an append-only log. /var is a tmpfs, so an untrimmed port log would eat RAM until reboot."""
+    try:
+        if os.path.getsize(path) <= limit:
+            return
+        with open(path, "rb") as f:
+            f.seek(-keep, os.SEEK_END)
+            data = f.read()
+        nl = data.find(b"\n")
+        data = data[nl + 1:] if nl >= 0 else data
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(b"[older output trimmed]\n" + data)
+        os.replace(tmp, path)
+    except OSError:
+        pass
 
 
 def show_error(title, detail):
@@ -578,6 +607,7 @@ def launch_native(target):
     set_game_flag(True)
     started = time.monotonic()
     try:
+        trim_log(NATIVE_LOG)
         with open(NATIVE_LOG, "a") as out:
             out.write("\n[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), " ".join(cmd)))
             out.flush()

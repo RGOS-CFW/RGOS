@@ -100,6 +100,38 @@ class NativePortTests(unittest.TestCase):
                           ("/tmp/game.gba", "")):
             self.assertEqual(self.launch.system_of(path), sid, path)
 
+    def test_tail_returns_the_last_lines_of_a_huge_log(self):
+        with open(self.launch.NATIVE_LOG, "w") as f:
+            for i in range(60000):
+                f.write("line %d\n" % i)
+        self.assertEqual(self.launch.tail(self.launch.NATIVE_LOG, 2), "line 59998\nline 59999\n")
+        self.assertEqual(self.launch.tail(os.path.join(self.tmp, "missing"), 3), "")
+
+    def test_tail_of_a_short_file_returns_it_whole(self):
+        with open(self.launch.NATIVE_LOG, "w") as f:
+            f.write("a\nb\nc\n")
+        self.assertEqual(self.launch.tail(self.launch.NATIVE_LOG, 10), "a\nb\nc\n")
+
+    def test_oversized_native_log_is_trimmed_to_its_recent_end(self):
+        with open(self.launch.NATIVE_LOG, "w") as f:
+            for i in range(200000):
+                f.write("old output %d\n" % i)
+        self.launch.trim_log(self.launch.NATIVE_LOG)
+        size = os.path.getsize(self.launch.NATIVE_LOG)
+        self.assertLess(size, self.launch.NATIVE_LOG_KEEP + 100)
+        with open(self.launch.NATIVE_LOG) as f:
+            lines = f.read().splitlines()
+        self.assertEqual(lines[0], "[older output trimmed]")
+        self.assertEqual(lines[-1], "old output 199999")
+        self.assertTrue(lines[1].startswith("old output "))  # cut on a line boundary
+
+    def test_small_native_log_is_left_alone(self):
+        with open(self.launch.NATIVE_LOG, "w") as f:
+            f.write("keep me\n")
+        self.launch.trim_log(self.launch.NATIVE_LOG)
+        with open(self.launch.NATIVE_LOG) as f:
+            self.assertEqual(f.read(), "keep me\n")
+
     def test_self_extracting_installer_is_not_rewritten(self):
         payload = b"#!/bin/bash\r\n# Makeself\r\nexit 0\r\n" + bytes(range(256)) + b"\r\n\x00\x1f\x8b\r\n"
         with open(self.script, "wb") as f:
