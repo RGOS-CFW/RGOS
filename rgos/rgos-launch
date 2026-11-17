@@ -33,10 +33,15 @@ def log(msg):
 
 
 def system_of(path):
+    """System folder of a ROM: the name right after the first "roms" directory that is not the mount point.
+
+    The partition is mounted at <...>/roms and holds a roms/ folder, so a "roms" followed by another "roms"
+    is skipped. Later "roms" folders belong to the ROM set (arcade/roms/<game>.zip) and must not be matched.
+    """
     parts = os.path.normpath(path).split(os.sep)
-    for i in range(len(parts) - 2, 0, -1):
-        if parts[i - 1] == "roms":
-            return parts[i]
+    for i in range(len(parts) - 2):
+        if parts[i] == "roms" and parts[i + 1] != "roms":
+            return parts[i + 1]
     return ""
 
 

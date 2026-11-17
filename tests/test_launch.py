@@ -90,6 +90,16 @@ class NativePortTests(unittest.TestCase):
         with open(seen["cmd"][1], "rb") as f:
             self.assertNotIn(b"\r", f.read())
 
+    def test_system_is_not_confused_by_a_roms_folder_inside_a_system(self):
+        for path, sid in (("/media/roms/roms/arcade/roms/neogeo/kof.zip", "arcade"),
+                          ("/media/roms/roms/snes/Hacks/roms/Zelda/x.sfc", "snes"),
+                          ("/media/roms/roms/snes/a.sfc", "snes"),
+                          ("/media/roms2/roms/psx/game/disc.cue", "psx"),
+                          ("/roms/gba/x.gba", "gba"),
+                          ("/media/roms/roms/ports/example.sh", "ports"),
+                          ("/tmp/game.gba", "")):
+            self.assertEqual(self.launch.system_of(path), sid, path)
+
     def test_self_extracting_installer_is_not_rewritten(self):
         payload = b"#!/bin/bash\r\n# Makeself\r\nexit 0\r\n" + bytes(range(256)) + b"\r\n\x00\x1f\x8b\r\n"
         with open(self.script, "wb") as f:
