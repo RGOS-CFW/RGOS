@@ -338,7 +338,7 @@ def usage(mountpoint):
 
 
 def cli(argv):
-    cmd = argv[0] if argv else "sync"
+    cmd = next((a for a in argv if not a.startswith("--")), "sync")
     if cmd == "status":
         st = status()
         print(json.dumps(st) if st else "no second SD card")
