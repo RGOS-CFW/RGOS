@@ -75,7 +75,7 @@ audio_report() {
   dmesg 2>/dev/null | grep -iE 'snd|asoc|alsa|audio|agdsp|audcp|vbc|codec|mcdt|agcp|aw873|mailbox|firmware|deferred|sprd.*(fail|err)' \
     | grep -vE 'name : FE_|stream_name : FE_|asoc_sprd_card_dai_link_of: parse for codec failed|sub_parse_of parse phandle .codec. failed' | tail -n 120
 }
-audio_report > /var/log/rgos-audio.log 2>&1
+audio_report > /var/log/rgos-audio.log 2>&1 &   # log only (dmesg/lsmod/sysfs walks); do not hold up boot
 if ! grep -q '\[' /proc/asound/cards 2>/dev/null; then
   ( for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
       sleep 5; load_audio_modules

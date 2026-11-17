@@ -59,10 +59,10 @@ def load_json(path, default):
 def menu_api():
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        import menu
-        return menu.default_core, menu.compatible_cores
+        import cores  # tiny tables-only module: importing menu would pull in pygame for a lookup
+        return cores.default_core, cores.compatible_cores
     except Exception as e:
-        log("menu module not usable (%s); using built-in core tables" % e)
+        log("core tables not usable (%s); using built-in core tables" % e)
         return (lambda sid: FALLBACK_DEFAULT.get(sid, "")), (lambda sid, cores=None: [c for c in FALLBACK_COMPAT.get(sid, ()) if core_file(c)])
 
 
@@ -223,15 +223,36 @@ def ensure_dolphin_sys(roms_root, src=None):
     return True, ""
 
 
+def _ldd_marker(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    key = re.sub(r"[^A-Za-z0-9._-]", "_", "%s.%d.%d" % (os.path.basename(path), st.st_mtime_ns, st.st_size))
+    return os.path.join(RUN_DIR, "ldd-ok", key)
+
+
 def missing_libs(path):
+    """Libraries a core cannot find. A clean ldd run is remembered until reboot (/run is a tmpfs),
+    because spawning ldd on every launch costs far more than the check is worth."""
     ldd = shutil.which("ldd")
     if not ldd or not path:
+        return []
+    marker = _ldd_marker(path)
+    if marker and os.path.exists(marker):
         return []
     try:
         out = subprocess.run([ldd, path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=20).stdout
     except (OSError, subprocess.SubprocessError):
         return []
-    return sorted({l.split("=>")[0].strip() for l in out.splitlines() if "not found" in l})
+    gone = sorted({l.split("=>")[0].strip() for l in out.splitlines() if "not found" in l})
+    if not gone and marker:
+        try:
+            os.makedirs(os.path.dirname(marker), exist_ok=True)
+            open(marker, "w").close()
+        except OSError:
+            pass
+    return gone
 
 
 def rc_text(rc):

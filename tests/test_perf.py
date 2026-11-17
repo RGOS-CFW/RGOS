@@ -103,3 +103,59 @@ class SwitchesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LaunchStartupTests(unittest.TestCase):
+    def setUp(self):
+        self.launch = load_launch()
+        self.tmp = helpers.sandbox()
+        self.launch.RUN_DIR = os.path.join(self.tmp, "run")
+        self.core = os.path.join(self.tmp, "x_libretro.so")
+        write(self.core, "core")
+
+    def test_menu_api_does_not_import_the_menu_or_pygame(self):
+        import sys
+        for name in ("menu", "pygame"):
+            sys.modules.pop(name, None)
+        default_core, compatible = self.launch.menu_api()
+        self.assertEqual(default_core("snes"), "snes9x")
+        self.assertEqual(compatible("snes", ["snes9x", "other"]), ["snes9x"])
+        self.assertNotIn("menu", sys.modules)
+        self.assertNotIn("pygame", sys.modules)
+
+    def test_clean_ldd_result_is_remembered(self):
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            return mock.Mock(stdout="\tlibc.so.6 => /lib/libc.so.6\n")
+        with mock.patch.object(self.launch.shutil, "which", return_value="/usr/bin/ldd"), \
+             mock.patch.object(self.launch.subprocess, "run", side_effect=fake_run):
+            self.assertEqual(self.launch.missing_libs(self.core), [])
+            self.assertEqual(self.launch.missing_libs(self.core), [])
+        self.assertEqual(len(calls), 1)
+
+    def test_missing_libs_are_never_cached(self):
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            return mock.Mock(stdout="\tlibfoo.so.1 => not found\n")
+        with mock.patch.object(self.launch.shutil, "which", return_value="/usr/bin/ldd"), \
+             mock.patch.object(self.launch.subprocess, "run", side_effect=fake_run):
+            self.assertEqual(self.launch.missing_libs(self.core), ["libfoo.so.1"])
+            self.assertEqual(self.launch.missing_libs(self.core), ["libfoo.so.1"])
+        self.assertEqual(len(calls), 2)
+
+    def test_a_changed_core_is_checked_again(self):
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            return mock.Mock(stdout="")
+        with mock.patch.object(self.launch.shutil, "which", return_value="/usr/bin/ldd"), \
+             mock.patch.object(self.launch.subprocess, "run", side_effect=fake_run):
+            self.launch.missing_libs(self.core)
+            write(self.core, "a different, larger core")
+            self.launch.missing_libs(self.core)
+        self.assertEqual(len(calls), 2)
