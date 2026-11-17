@@ -14,11 +14,13 @@ only when analog sticks are enabled in /etc/rgos/input.json.
 import json, os, struct
 
 HUB_NAME = "RG OS Gamepad"
+# Must match make_uinput() in rgos-input: bus, vendor, product, version of the virtual pad.
 BUS, VENDOR, PRODUCT, VERSION = 0x19, 0x484B, 0x14DF, 0x0100
 INPUT_CONF = os.environ.get("RGOS_INPUT_CONF", "/etc/rgos/input.json")
 USER_DB_NAME = "rgos-gamecontrollerdb.txt"
 MAX_USER_BYTES = 256 * 1024
 
+# SDL name -> hub button index. Positional like an Xbox pad: a = bottom, b = right, x = left, y = top.
 BUTTONS = (
     ("a", 0), ("b", 1), ("x", 3), ("y", 2),
     ("back", 8), ("start", 9), ("guide", 10),
@@ -107,7 +109,7 @@ def env_for(base_env, run_dir, roms_root, port_dir=None, conf=None):
     """
     extra = user_lines(*user_files(roms_root, port_dir))
     text = build_db(analog_enabled(conf), extra)
-    cfg = "\n".join(text.splitlines()[2:])
+    cfg = "\n".join(text.splitlines()[2:])  # drop the comment header, keep mapping + user lines
     existing = (base_env.get("SDL_GAMECONTROLLERCONFIG") or "").strip()
     env = {"SDL_GAMECONTROLLERCONFIG": cfg + ("\n" + existing if existing else "")}
     path = write_db(run_dir, text)

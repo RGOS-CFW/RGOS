@@ -8,8 +8,8 @@ import unittest
 from tests import helpers
 
 sys.path.insert(0, helpers.RGOS)
-import portpad  
-from tests.test_launch import load_launch
+import portpad  # noqa: E402
+from tests.test_launch import load_launch  # noqa: E402
 
 
 def parse(line):

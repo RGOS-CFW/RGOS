@@ -44,3 +44,11 @@ A line with the same GUID replaces the built-in mapping; the GUID is the first
 field of the generated `/run/rgos/gamecontrollerdb.txt`. Lines starting with `#`
 are ignored. A mapping already exported in `SDL_GAMECONTROLLERCONFIG` wins over
 all of these.
+
+## Quitting a port
+
+Hold **Select + Start** for about 2 seconds to stop the running native port and
+return to the menu. RG OS sends the port's whole process group SIGTERM, then
+SIGKILL after 3 seconds if it has not exited. The stop is logged in
+`rgos-native.log` and is not reported as an error. This also works inside
+PortMaster. Ports run in their own session so child processes stop with them.

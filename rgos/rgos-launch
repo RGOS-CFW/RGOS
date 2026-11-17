@@ -488,6 +488,34 @@ def fix_crlf(path):
         return path
 
 
+def call_native(cmd, prio=False, **kw):
+    """Run a port in its own session and watch for the Select+Start hold that stops it.
+
+    Returns (returncode, stopped_by_user). The pad watcher is best effort: without a hub pad
+    the port simply runs unwatched.
+    """
+    def child():
+        if prio:
+            game_priority()
+    proc = subprocess.Popen(cmd, start_new_session=True, preexec_fn=child, **kw)
+    watcher = None
+    try:
+        import portexit
+        fds = portexit.open_events(portexit.find_pad_events(SYS_INPUT, os.environ.get("RGOS_DEV_INPUT", "/dev/input"), HUB_NAME))
+        if fds:
+            watcher = portexit.ExitWatcher(fds, proc.pid, lambda: proc.poll() is None, log=log)
+            watcher.start()
+    except Exception as e:
+        log("exit hold unavailable: %s" % e)
+    try:
+        rc = proc.wait()
+    finally:
+        if watcher:
+            watcher.stop()
+            watcher.join(1.0)
+    return rc, bool(watcher and watcher.fired)
+
+
 def launch_native(target):
     """Run a Linux port directly; no RetroArch core or emulator is involved."""
     target = os.path.abspath(target)
@@ -527,9 +555,8 @@ def launch_native(target):
         with open(NATIVE_LOG, "a") as out:
             out.write("\n[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), " ".join(cmd)))
             out.flush()
-            rc = subprocess.call(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                                 stdout=out, stderr=subprocess.STDOUT,
-                                 preexec_fn=None if os.environ.get("RGOS_NO_HW") else game_priority)
+            rc, stopped = call_native(cmd, prio=not os.environ.get("RGOS_NO_HW"), cwd=cwd, env=env,
+                                      stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
     except OSError as e:
         log("native port failed: %s" % e)
         show_error("RG OS: native port failed to start", str(e))
@@ -539,6 +566,9 @@ def launch_native(target):
         restore_governor(saved)
     dt = time.monotonic() - started
     log("native port exited rc=%s after %.1fs" % (rc, dt))
+    if stopped:
+        log("native port was stopped by the Select+Start hold")
+        return 0
     if rc != 0 and dt < EARLY_FAIL_S:
         show_error("RG OS: native port exited with an error (%s)" % rc_text(rc), "%s\nLog: %s" % (tail(NATIVE_LOG, 8), NATIVE_LOG))
     return rc
@@ -639,13 +669,13 @@ def launch_portmaster():
     link_roms_alias()
     log("starting PortMaster: %s" % script)
     try:
-        rc = subprocess.call([shell, fix_crlf(script)], cwd=os.path.dirname(script), env=env,
-                              stdin=subprocess.DEVNULL)
+        rc, stopped = call_native([shell, fix_crlf(script)], cwd=os.path.dirname(script), env=env,
+                                  stdin=subprocess.DEVNULL)
     except OSError as e:
         show_error("RG OS: cannot start PortMaster", str(e))
         return 1
-    log("PortMaster exited rc=%s (%s)" % (rc, rc_text(rc)))
-    return rc
+    log("PortMaster exited rc=%s (%s)%s" % (rc, rc_text(rc), " after the Select+Start hold" if stopped else ""))
+    return 0 if stopped else rc
 
 
 def main(argv):

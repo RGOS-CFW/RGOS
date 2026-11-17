@@ -54,9 +54,9 @@ class NativePortTests(unittest.TestCase):
         seen = {}
         def fake_call(cmd, **kw):
             seen.update(cmd=cmd, cwd=kw["cwd"])
-            return 0
+            return 0, False
         with mock.patch.dict(os.environ, {"RGOS_NO_HW": "1"}), \
-             mock.patch.object(self.launch.subprocess, "call", side_effect=fake_call), \
+             mock.patch.object(self.launch, "call_native", side_effect=fake_call), \
              mock.patch.object(self.launch, "set_game_flag"), \
              mock.patch.object(self.launch, "set_governor", return_value={}), \
              mock.patch.object(self.launch, "restore_governor"):
@@ -83,9 +83,9 @@ class NativePortTests(unittest.TestCase):
         seen = {}
         def fake_call(cmd, **kw):
             seen["cmd"] = cmd
-            return 0
+            return 0, False
         with mock.patch.dict(os.environ, {"RGOS_NO_HW": "1"}), \
-             mock.patch.object(self.launch.subprocess, "call", side_effect=fake_call):
+             mock.patch.object(self.launch, "call_native", side_effect=fake_call):
             self.launch.launch_native(self.script)
         with open(seen["cmd"][1], "rb") as f:
             self.assertNotIn(b"\r", f.read())
