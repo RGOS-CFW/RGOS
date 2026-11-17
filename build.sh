@@ -253,6 +253,31 @@ if [[ -d "$HERE/music" ]]; then
 else
   echo "!! $HERE/music missing: no bundled launcher music in the image"
 fi
+# PortMaster preinstall: a read-only seed in the rootfs; rgos-session copies it to ROMS/roms/ports/PortMaster on the first boot
+# where that folder is missing, and PortMaster then updates itself in place there. PORTMASTER=0 skips it,
+# PORTMASTER_ZIP=<local PortMaster.zip> builds offline.
+PORTMASTER="${PORTMASTER:-1}"
+PORTMASTER_URL="${PORTMASTER_URL:-https://github.com/PortsMaster/PortMaster-GUI/releases/latest/download/PortMaster.zip}"
+if [[ "$PORTMASTER" == 1 ]]; then
+  PM_ZIP="${PORTMASTER_ZIP:-$WORK/PortMaster.zip}"
+  if [[ -z "${PORTMASTER_ZIP:-}" ]]; then
+    echo "==> Downloading PortMaster for the preinstall seed"
+    wget -q -O "$PM_ZIP.part" "$PORTMASTER_URL" && mv "$PM_ZIP.part" "$PM_ZIP" || { rm -f "$PM_ZIP.part"; echo "!! PortMaster download failed ($PORTMASTER_URL)"; }
+  fi
+  if [[ -s "$PM_ZIP" ]]; then
+    rm -rf "$ROOTFS/opt/rgos/seed"; mkdir -p "$ROOTFS/opt/rgos/seed"
+    python3 -c 'import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$PM_ZIP" "$ROOTFS/opt/rgos/seed" \
+      || echo "!! cannot unpack $PM_ZIP"
+    if [[ -f "$ROOTFS/opt/rgos/seed/PortMaster/PortMaster.sh" ]]; then
+      echo "==> PortMaster seed ready ($(du -sh "$ROOTFS/opt/rgos/seed/PortMaster" | cut -f1))"
+    else
+      rm -rf "$ROOTFS/opt/rgos/seed"
+      echo "!! the PortMaster zip has no PortMaster/PortMaster.sh: the image will NOT come with PortMaster"
+    fi
+  else
+    echo "!! no PortMaster zip: the image will NOT come with PortMaster (set PORTMASTER_ZIP=<file> to build offline)"
+  fi
+fi
 printf 'BUILD_ID=%s\n' "$(date +%Y%m%d-%H%M)" > "$ROOTFS/etc/rgos-release"
 echo '{"enabled": false, "mountpoint": "/media/roms2"}' > "$ROOTFS/etc/rgos/sdcard.json"
 [[ -f "$HERE/config/retroarch.cfg" ]] || { echo "!! $HERE/config/retroarch.cfg missing"; exit 1; }

@@ -11,6 +11,10 @@ other emulator.
   permission on the filesystem.
 - The launcher's working directory is the directory containing the selected
   port, so relative asset paths used by common port launchers continue to work.
+- PortMaster comes preinstalled: the image carries a copy that is placed in
+  `ROMS/roms/ports/PortMaster` on the first boot where that folder is missing, and
+  PortMaster updates itself there. An existing install is never overwritten. Build
+  with `PORTMASTER=0` to leave it out, or `PORTMASTER_ZIP=<file>` to build offline.
 - PortMaster remains a separate Tools entry. PortMaster-installed ports are
   started through their installed launch scripts, allowing PortMaster to set
   up its own runtime and dependencies; RG OS does not wrap those games in

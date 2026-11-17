@@ -132,6 +132,18 @@ if ! mountpoint -q /media/roms && mountpoint -q /boot && mkdir -p /boot/roms 2>/
       && mkdir -p /media/roms/update /media/roms/roms/gb /media/roms/roms/gbc /media/roms/roms/gba 2>/dev/null \
       && echo "ROMS: using /boot/roms on the FAT partition (no ext4 ROMS partition)" >> /var/log/rgos-state.log
 fi
+# preinstalled PortMaster: copy the rootfs seed onto ROMS once; never touch an existing install (PortMaster updates itself there)
+if mountpoint -q /media/roms && [ -f /opt/rgos/seed/PortMaster/PortMaster.sh ] && [ ! -e /media/roms/roms/ports/PortMaster ]; then
+    if mkdir -p /media/roms/roms/ports 2>/dev/null && rm -rf /media/roms/roms/ports/.PortMaster.tmp \
+       && cp -R /opt/rgos/seed/PortMaster /media/roms/roms/ports/.PortMaster.tmp 2>>/var/log/rgos-state.log \
+       && mv /media/roms/roms/ports/.PortMaster.tmp /media/roms/roms/ports/PortMaster 2>>/var/log/rgos-state.log; then
+        echo "PortMaster: installed the bundled copy into /media/roms/roms/ports/PortMaster" >> /var/log/rgos-state.log
+    else
+        rm -rf /media/roms/roms/ports/.PortMaster.tmp 2>/dev/null
+        echo "PortMaster: could not copy the bundled copy onto ROMS" >> /var/log/rgos-state.log
+    fi
+    sync
+fi
 mountpoint -q /dev/pts || mount -t devpts devpts /dev/pts 2>/dev/null
 [ -e /dev/fd ] || ln -s /proc/self/fd /dev/fd 2>/dev/null
 [ -e /dev/stdin ] || ln -s /proc/self/fd/0 /dev/stdin 2>/dev/null
@@ -149,7 +161,7 @@ python3 /opt/rgos/rgos-input >> /var/log/rgos-input.log 2>&1 &
     { echo "== $(date) kernel $(uname -r) t=$t"; echo "--- pygame"
       T=""; command -v timeout >/dev/null 2>&1 && T="timeout 4"
       $T python3 -c 'import pygame; print("pygame", pygame.version.ver)' 2>&1
-      for f in /var/log/rgos-menu.log /var/log/rgos-input.log /var/log/rgos-launch.log /var/log/rgos-retroarch.log /var/log/rgos-roms.log /var/log/rgos-volume.log /var/log/rgos-audio.log /var/log/rgos-audio-prep.log /var/log/rgos-audio-load.log /var/log/rgos-wifi.log /var/log/rgos-bt.log /var/log/rgos-ssh.log; do echo "--- $f"; tail -n 100 "$f" 2>&1; done
+      for f in /var/log/rgos-menu.log /var/log/rgos-input.log /var/log/rgos-launch.log /var/log/rgos-native.log /var/log/rgos-retroarch.log /var/log/rgos-roms.log /var/log/rgos-volume.log /var/log/rgos-audio.log /var/log/rgos-audio-prep.log /var/log/rgos-audio-load.log /var/log/rgos-wifi.log /var/log/rgos-bt.log /var/log/rgos-ssh.log; do echo "--- $f"; tail -n 100 "$f" 2>&1; done
       echo "--- settings dir"; id; grep -E ' (/|/var|/var/lib|/var/lib/rgos) ' /proc/mounts; ls -ld /var /var/lib /var/lib/rgos 2>&1
       ls -la /var/lib/rgos 2>&1; { touch /var/lib/rgos/.w && rm -f /var/lib/rgos/.w && echo "write test: ok"; } 2>&1 || echo "write test: FAILED"
       cat /var/log/rgos-state.log 2>&1
