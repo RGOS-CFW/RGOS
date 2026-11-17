@@ -65,6 +65,39 @@ class NativePortTests(unittest.TestCase):
         self.assertEqual(seen["cmd"], [self.launch.shutil.which("sh"), self.script])
         self.assertEqual(seen["cwd"], self.tmp)
 
+    def test_menu_sdl_dummy_driver_does_not_leak_into_ports(self):
+        base = {"SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "dummy", "RGOS_VIDEO": "fb", "RGOS_NO_HW": "1", "PATH": "/bin"}
+        env = self.launch.native_env(base)
+        self.assertNotIn("SDL_VIDEODRIVER", env)
+        self.assertNotIn("RGOS_VIDEO", env)
+        self.assertEqual(env["SDL_AUDIODRIVER"], "alsa")
+        self.assertEqual(env["HOME"], "/root")
+
+    def test_an_explicit_real_video_driver_is_kept(self):
+        env = self.launch.native_env({"SDL_VIDEODRIVER": "kmsdrm", "RGOS_NO_HW": "1"})
+        self.assertEqual(env["SDL_VIDEODRIVER"], "kmsdrm")
+
+    def test_crlf_script_is_converted_before_running(self):
+        with open(self.script, "wb") as f:
+            f.write(b"#!/bin/sh\r\necho native\r\n")
+        seen = {}
+        def fake_call(cmd, **kw):
+            seen["cmd"] = cmd
+            return 0
+        with mock.patch.dict(os.environ, {"RGOS_NO_HW": "1"}), \
+             mock.patch.object(self.launch.subprocess, "call", side_effect=fake_call):
+            self.launch.launch_native(self.script)
+        with open(seen["cmd"][1], "rb") as f:
+            self.assertNotIn(b"\r", f.read())
+
+    def test_portmaster_is_found_in_the_roms_ports_folder(self):
+        ports = os.path.join(self.tmp, "roms", "ports")
+        os.makedirs(ports)
+        pm = os.path.join(ports, "PortMaster.sh")
+        open(pm, "w").close()
+        self.launch.ROMS_ROOT = self.tmp
+        self.assertEqual(self.launch.portmaster_script(), pm)
+
     def test_port_paths_are_classified_as_native(self):
         self.assertEqual(self.launch.system_of("/media/roms/roms/ports/example.sh"), "ports")
 

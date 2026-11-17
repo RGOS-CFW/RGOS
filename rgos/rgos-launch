@@ -417,6 +417,63 @@ def save_report(pads, idx, drv, cmd, rc, history=(), core_path=""):
         pass
 
 
+def native_env(base=None):
+    """Environment for a Linux port: the menu's own SDL/RG OS settings must not leak into it.
+
+    rgos-session exports SDL_VIDEODRIVER=dummy (the menu draws straight to the framebuffer),
+    which would leave every SDL port without a display, so SDL is left to pick its real driver.
+    """
+    env = dict(os.environ if base is None else base)
+    for k in [k for k in env if k.startswith("RGOS_") and k not in ("RGOS_NO_HW",)]:
+        del env[k]
+    if env.get("SDL_VIDEODRIVER", "") in ("dummy", "offscreen", ""):
+        env.pop("SDL_VIDEODRIVER", None)
+    env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:" + env.get("PATH", "")
+    env.update({"HOME": "/root", "XDG_RUNTIME_DIR": RUN_DIR, "XDG_DATA_HOME": "/root/.local/share",
+                "XDG_CONFIG_HOME": "/root/.config"})
+    dev = alsa_device()
+    env.setdefault("AUDIODEV", dev)
+    if env.get("SDL_AUDIODRIVER", "") in ("", "dummy"):
+        env["SDL_AUDIODRIVER"] = "alsa"
+    return env
+
+
+def link_roms_alias():
+    """PortMaster-style launchers look for /roms/ports; point /roms at the ROMS partition's roms folder."""
+    src = os.path.join(ROMS_ROOT, "roms")
+    if os.environ.get("RGOS_NO_HW") or not os.path.isdir(src) or os.path.lexists("/roms"):
+        return
+    try:
+        os.symlink(src, "/roms")
+    except OSError as e:
+        log("cannot link /roms -> %s: %s" % (src, e))
+
+
+def fix_crlf(path):
+    """Scripts copied from Windows have CRLF line endings, which breaks every command in bash/sh."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        if b"\r\n" not in data:
+            return path
+        fixed = data.replace(b"\r\n", b"\n")
+        try:
+            with open(path, "wb") as f:
+                f.write(fixed)
+            log("converted CRLF line endings in %s" % path)
+            return path
+        except OSError:
+            alt = os.path.join(RUN_DIR, "native-" + os.path.basename(path))
+            os.makedirs(RUN_DIR, exist_ok=True)
+            with open(alt, "wb") as f:
+                f.write(fixed)
+            log("%s is read-only; running a CRLF-fixed copy %s" % (path, alt))
+            return alt
+    except OSError as e:
+        log("cannot check line endings of %s: %s" % (path, e))
+        return path
+
+
 def launch_native(target):
     """Run a Linux port directly; no RetroArch core or emulator is involved."""
     target = os.path.abspath(target)
@@ -431,17 +488,20 @@ def launch_native(target):
             show_error("RG OS: cannot read native port", str(e))
             return 127
         shell = shutil.which("bash") if "bash" in first else shutil.which("sh")
+        if not shell and "bash" not in first:
+            shell = shutil.which("bash")
         if not shell:
             show_error("RG OS: shell unavailable", "Cannot run %s: its script interpreter is missing." % target)
             return 127
-        cmd = [shell, target]
+        cmd = [shell, fix_crlf(target)]
     else:
         if not os.access(target, os.X_OK):
             show_error("RG OS: native port is not executable", target + "\nMake the binary executable or provide a .sh launcher.")
             return 126
         cmd = [target]
-    env = dict(os.environ)
-    env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:" + env.get("PATH", "")
+    os.makedirs(RUN_DIR, exist_ok=True)
+    env = native_env()
+    link_roms_alias()
     os.makedirs(os.path.dirname(NATIVE_LOG) or ".", exist_ok=True)
     cwd = os.path.dirname(target)
     log("native port starting: %s (cwd=%s)" % (" ".join(cmd), cwd))
@@ -466,7 +526,7 @@ def launch_native(target):
     dt = time.monotonic() - started
     log("native port exited rc=%s after %.1fs" % (rc, dt))
     if rc != 0 and dt < EARLY_FAIL_S:
-        show_error("RG OS: native port exited with an error", "Exit code: %s\nLog: %s" % (rc, NATIVE_LOG))
+        show_error("RG OS: native port exited with an error (%s)" % rc_text(rc), "%s\nLog: %s" % (tail(NATIVE_LOG, 8), NATIVE_LOG))
     return rc
 
 
@@ -525,27 +585,30 @@ def portmaster_script():
         if not root or root in seen:
             continue
         seen.add(root)
-        ports = os.path.join(root, "ports")
-        candidates = [
-            os.path.join(ports, "PortMaster", "PortMaster.sh"),
-            os.path.join(ports, "PortMaster", "portmaster.sh"),
-            os.path.join(ports, "PortMaster.sh"),
-            os.path.join(ports, "portmaster.sh"),
-        ]
-        for path in candidates:
-            if os.path.isfile(path):
-                return path
-        # Accommodate case variations used by community installs.
-        try:
-            for entry in os.listdir(ports):
-                if entry.lower() == "portmaster":
-                    folder = os.path.join(ports, entry)
-                    for name in ("PortMaster.sh", "portmaster.sh"):
-                        path = os.path.join(folder, name)
-                        if os.path.isfile(path):
-                            return path
-        except OSError:
-            pass
+        for ports in (os.path.join(root, "roms", "ports"), os.path.join(root, "ports")):
+            found = _portmaster_in(ports)
+            if found:
+                return found
+    return ""
+
+
+def _portmaster_in(ports):
+    for path in (os.path.join(ports, "PortMaster", "PortMaster.sh"),
+                 os.path.join(ports, "PortMaster", "portmaster.sh"),
+                 os.path.join(ports, "PortMaster.sh"),
+                 os.path.join(ports, "portmaster.sh")):
+        if os.path.isfile(path):
+            return path
+    # Accommodate case variations used by community installs.
+    try:
+        for entry in os.listdir(ports):
+            if entry.lower() == "portmaster":
+                for name in ("PortMaster.sh", "portmaster.sh"):
+                    path = os.path.join(ports, entry, name)
+                    if os.path.isfile(path):
+                        return path
+    except OSError:
+        pass
     return ""
 
 
@@ -557,12 +620,12 @@ def launch_portmaster():
                    "Install PortMaster on the ROMS partition, then try again." % (ROMS_ROOT, ROMS_ROOT))
         return 1
     shell = shutil.which("bash") or "/bin/sh"
-    env = dict(os.environ)
-    env.update({"HOME": "/root", "XDG_RUNTIME_DIR": RUN_DIR})
     os.makedirs(RUN_DIR, exist_ok=True)
+    env = native_env()
+    link_roms_alias()
     log("starting PortMaster: %s" % script)
     try:
-        rc = subprocess.call([shell, script], cwd=os.path.dirname(script), env=env,
+        rc = subprocess.call([shell, fix_crlf(script)], cwd=os.path.dirname(script), env=env,
                               stdin=subprocess.DEVNULL)
     except OSError as e:
         show_error("RG OS: cannot start PortMaster", str(e))
