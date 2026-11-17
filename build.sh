@@ -356,6 +356,25 @@ KEEP
   fi
   rm -rf "$ROOTFS/tmp/core-src" "$ROOTFS/etc/resolv.conf"
 fi
+if [[ "$DEVICE" == "rg-rotate" && -e "$LRDIR/dolphin_libretro.so" ]]; then
+  # A prebuilt core (cores/) or a purged toolchain can leave the core linked against libraries the image does not have; the core
+  # then fails to load and the game "just closes". Check with ldd, try to install what is missing, and say so if something stays missing.
+  gc_missing() { chroot "$ROOTFS" sh -c 'ldd /usr/local/lib/libretro/dolphin_libretro.so 2>&1 | grep "not found"' || true; }
+  GC_GONE="$(gc_missing)"
+  if [[ -n "$GC_GONE" ]]; then
+    echo "==> dolphin_libretro.so needs libraries that are not in the image, trying to install them:"; echo "$GC_GONE"
+    cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf" 2>/dev/null || true
+    chroot "$ROOTFS" apt-get update >/dev/null 2>&1 || true
+    for pkg in libevdev2 libudev1 libpulse0 libasound2t64 libcurl4t64 libpng16-16t64 libminizip1t64 liblzo2-2 libmbedcrypto16 libmbedtls21 \
+               libmbedx509-7 libhidapi-hidraw0 libusb-1.0-0 libbluetooth3 libdrm2 libgbm1 libegl1 libgles2 libgl1 zlib1g libzstd1 libxxhash0 \
+               libpugixml1v5 libminiupnpc17 libenet7 libfmt10 libbz2-1.0 liblzma5; do
+      chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg" >/dev/null 2>&1 || true
+    done
+    rm -f "$ROOTFS/etc/resolv.conf"
+    GC_GONE="$(gc_missing)"
+    [[ -z "$GC_GONE" ]] || { echo "!! dolphin_libretro.so still has missing libraries (GameCube will not start; install the matching Debian packages with EXTRA_PKGS=... or rebuild the core here):"; echo "$GC_GONE"; }
+  fi
+fi
 CORES="$(ls "$ROOTFS"/usr/local/lib/libretro/*_libretro.so "$ROOTFS"/usr/lib/*/libretro/*_libretro.so "$ROOTFS"/usr/lib/libretro/*_libretro.so 2>/dev/null | xargs -rn1 basename | tr '\n' ' ' || true)"
 echo "==> libretro cores in the image: ${CORES:-NONE}"
 core_present() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so "$ROOTFS/usr/lib/libretro/$1"_libretro.so "$ROOTFS/usr/local/lib/libretro/$1"_libretro.so; do [[ -e "$f" ]] && return 0; done; return 1; }

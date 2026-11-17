@@ -2,6 +2,7 @@
 import importlib.machinery
 import importlib.util
 import os
+import tempfile
 import unittest
 from unittest import mock
 
@@ -37,6 +38,109 @@ class PickCoreTests(unittest.TestCase):
         for bad in ([], None, "x", 5, {"emulators": []}, {"emulators": "a"}, {"emulators": {"snes": ["bsnes"]}},
                     {"emulators": {"snes": 7}}):
             self.assertEqual(self.pick(bad), "snes9x", bad)
+
+
+class DolphinSysTests(unittest.TestCase):
+    def setUp(self):
+        self.launch = load_launch()
+        self.tmp = tempfile.mkdtemp(prefix="rgos-gc-")
+        self.src = os.path.join(self.tmp, "src", "Sys")
+        os.makedirs(os.path.join(self.src, "GC"))
+        for rel in ("codehandler.bin", os.path.join("GC", "dsp_rom.bin")):
+            with open(os.path.join(self.src, rel), "w") as f:
+                f.write("x")
+        rel = os.path.join(self.tmp, "release")
+        with open(rel, "w") as f:
+            f.write("BUILD_ID=1\n")
+        self.launch.RELEASE_FILE = rel
+        self.roms = os.path.join(self.tmp, "roms")
+        self.dst = os.path.join(self.roms, "bios", "dolphin-emu", "Sys")
+
+    def test_copies_everything_and_writes_the_stamp_last(self):
+        ok, why = self.launch.ensure_dolphin_sys(self.roms, self.src)
+        self.assertTrue(ok, why)
+        self.assertTrue(os.path.isfile(os.path.join(self.dst, "GC", "dsp_rom.bin")))
+        self.assertTrue(os.path.isfile(os.path.join(self.dst, self.launch.SYS_MARK)))
+
+    def test_a_half_copied_folder_without_the_stamp_is_completed(self):
+        os.makedirs(self.dst)  # what an interrupted copy used to leave behind
+        ok, _ = self.launch.ensure_dolphin_sys(self.roms, self.src)
+        self.assertTrue(ok)
+        self.assertTrue(os.path.isfile(os.path.join(self.dst, "codehandler.bin")))
+
+    def test_user_files_survive_a_refresh_for_a_new_build(self):
+        self.launch.ensure_dolphin_sys(self.roms, self.src)
+        ipl = os.path.join(self.dst, "GC", "USA")
+        os.makedirs(ipl)
+        with open(os.path.join(ipl, "IPL.bin"), "w") as f:
+            f.write("bios")
+        with open(self.launch.RELEASE_FILE, "w") as f:
+            f.write("BUILD_ID=2\n")
+        self.launch.ensure_dolphin_sys(self.roms, self.src)
+        self.assertTrue(os.path.isfile(os.path.join(ipl, "IPL.bin")))
+
+    def test_a_good_stamp_means_no_copying(self):
+        self.launch.ensure_dolphin_sys(self.roms, self.src)
+        with mock.patch.object(self.launch, "copy_tree", side_effect=AssertionError("copied again")):
+            self.assertTrue(self.launch.ensure_dolphin_sys(self.roms, self.src)[0])
+
+    def test_missing_source_reports_failure_without_a_destination(self):
+        ok, why = self.launch.ensure_dolphin_sys(self.roms, os.path.join(self.tmp, "nope"))
+        self.assertFalse(ok)
+        self.assertIn("no Dolphin Sys", why)
+
+
+class GameCubeLaunchTests(unittest.TestCase):
+    def setUp(self):
+        self.launch = load_launch()
+
+    def test_gc_tries_glcore_then_gl_and_other_systems_are_left_alone(self):
+        self.assertEqual(self.launch.video_attempts("gc", "/nonexistent"), ["glcore", "gl"])
+        self.assertEqual(self.launch.video_attempts("gba", "/nonexistent"), [None])
+
+    def test_boot_file_forces_one_video_driver(self):
+        d = tempfile.mkdtemp(prefix="rgos-boot-")
+        with open(os.path.join(d, "retroarch-gc-video.txt"), "w") as f:
+            f.write("vulkan\n")
+        self.assertEqual(self.launch.video_attempts("gc", d), ["vulkan"])
+
+    def test_run_config_pins_the_video_driver_only_when_asked(self):
+        self.assertIn('video_driver = "glcore"', self.launch.run_config("gc", "/r", "default", video_driver="glcore"))
+        self.assertNotIn("video_driver", self.launch.run_config("gba", "/r", "default"))
+
+    def test_signal_deaths_are_named(self):
+        self.assertEqual(self.launch.rc_text(-11), "killed by SIGSEGV")
+        self.assertEqual(self.launch.rc_text(1), "code 1")
+
+    def test_missing_libs_lists_only_the_not_found_ones(self):
+        out = "\tlinux-vdso.so.1 (0x1)\n\tliblzo2.so.2 => not found\n\tlibc.so.6 => /lib/libc.so.6 (0x2)\n"
+        fake = mock.Mock(stdout=out)
+        with mock.patch.object(self.launch.shutil, "which", return_value="/usr/bin/ldd"), \
+             mock.patch.object(self.launch.subprocess, "run", return_value=fake):
+            self.assertEqual(self.launch.missing_libs("/x/dolphin_libretro.so"), ["liblzo2.so.2"])
+
+    def test_a_dying_first_attempt_is_retried_with_the_next_driver(self):
+        L = self.launch
+        d = tempfile.mkdtemp(prefix="rgos-run-")
+        seen = []
+        codes = iter([-11, 0])
+
+        def fake_call(cmd, **kw):
+            seen.append(open(os.path.join(d, "retroarch-run.cfg")).read())
+            return next(codes)
+
+        with mock.patch.dict(os.environ, {"RGOS_NO_HW": "1"}), \
+             mock.patch.object(L, "RUN_DIR", d), mock.patch.object(L, "ROMS_ROOT", d), mock.patch.object(L, "BOOT_DIR", d), \
+             mock.patch.object(L, "LOG", os.path.join(d, "ra.log")), mock.patch.object(L, "TTY", os.path.join(d, "tty")), \
+             mock.patch.object(L, "SYS_INPUT", d), mock.patch.object(L.subprocess, "call", side_effect=fake_call):
+            rc = L.launch_retroarch("gc", "dolphin", "/cores/dolphin_libretro.so", "/roms/gc/g.iso")
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(seen), 2)
+        self.assertIn('video_driver = "glcore"', seen[0])
+        self.assertIn('video_driver = "gl"', seen[1])
+        report = open(os.path.join(d, "rgos-retroarch.txt")).read()
+        self.assertIn("earlier attempt 1", report)
+        self.assertIn("SIGSEGV", report)
 
 
 if __name__ == "__main__":

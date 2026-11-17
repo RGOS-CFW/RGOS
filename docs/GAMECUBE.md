@@ -22,3 +22,15 @@ The build is best-effort, like the other source-built cores: if it fails, a `!!`
 ## Runtime dependency fix
 
 The Dolphin core may fail to load with `liblzo2.so.2: cannot open shared object file` when a prebuilt `dolphin_libretro.so` is used. RG OS now includes Debian's `liblzo2-2` runtime package in the base image so this dependency is present even for prebuilt cores. Rebuild the image or install `liblzo2-2` on an existing Debian-based RG OS image.
+
+
+## If a GameCube game closes right after launching
+
+RG OS now does these things itself; each one was a way for the game to "just close" without a message:
+
+* **Dolphin `Sys` folder.** A half-copied `<ROMS>/bios/dolphin-emu/Sys` (interrupted copy, or the exFAT card refusing file permissions) used to count as done forever. Now a stamp file is written only after a complete copy, so an incomplete folder is finished on the next launch and a new image build refreshes the shipped files. Your own files (`IPL.bin`) are left alone.
+* **Missing libraries.** Before starting, the launcher runs `ldd` on the core and, if a library is missing, shows its name instead of closing. `build.sh` does the same check at build time for `rg-rotate` and tries to install what is missing.
+* **Video driver.** Dolphin needs a real GL context. GameCube launches pin RetroArch to `glcore` and, if that dies within 30 s, retry once with `gl`. To force one driver, put one word (`glcore`, `gl`, `vulkan`) in `/boot/retroarch-gc-video.txt`.
+* **A readable report.** GameCube launches always use RetroArch's verbose log. After every launch `/boot/rgos-retroarch.txt` (on the FAT partition, readable on a PC) holds the command, the missing libraries (if any), the log of every attempt, the exit code or the signal that killed it (for example `SIGSEGV`), and kernel lines about segfaults, out-of-memory kills and GPU errors.
+
+If it still closes, send `rgos-retroarch.txt` and `rgos-logs.txt` from the boot partition.

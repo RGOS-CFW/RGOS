@@ -16,7 +16,7 @@ visible on the device; the full log stays in /var/log/rgos-retroarch.log. Always
 Testing on a PC: RGOS_RA_BIN, RGOS_RA_CFG, RGOS_RUN, RGOS_ROMS, RGOS_CORE_DIRS, RGOS_STATE, RGOS_RA_LOG, RGOS_NO_HW=1
 override the device paths.
 """
-import gc, glob, shutil, json, os, re, subprocess, sys, time
+import gc, glob, shutil, json, os, re, signal, subprocess, sys, time
 
 RA_BIN = os.environ.get("RGOS_RA_BIN", "retroarch")
 RA_CFG = os.environ.get("RGOS_RA_CFG", "/etc/rgos/retroarch.cfg")
@@ -33,6 +33,11 @@ EARLY_FAIL_S = 6.0
 SYS_ROOT = os.environ.get("RGOS_SYSFS", "/sys")
 GAME_FLAG = os.path.join(RUN_DIR, "ingame")
 HEAVY_SYSTEMS = frozenset(("psx", "gc", "n64", "dreamcast", "saturn", "psp"))
+DOLPHIN_SYS_SRC = os.environ.get("RGOS_DOLPHIN_SYS", "/usr/local/share/rgos/dolphin-emu/Sys")
+RELEASE_FILE = os.environ.get("RGOS_RELEASE_FILE", "/etc/rgos-release")
+SYS_MARK = ".rgos-sys-stamp"
+GC_RETRY_S = 30.0          # a GameCube launch that dies sooner than this is retried with the next video driver
+GC_VIDEO_DRIVERS = ("glcore", "gl")
 
 FALLBACK_DEFAULT = {"gba": "mgba", "gb": "gambatte", "gbc": "gambatte", "nes": "nestopia"}
 FALLBACK_COMPAT = {"gba": ("mgba",), "gb": ("gambatte", "mgba"), "gbc": ("gambatte", "mgba"), "nes": ("nestopia", "fceumm")}
@@ -160,7 +165,7 @@ def osd_font():
     return next((p for p in OSD_FONTS if os.path.isfile(p)), "")
 
 
-def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, font=""):
+def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, font="", video_driver=None):
     """Text of the per-launch appendconfig. Folders are per system and live on the ROMS card so saves survive updates."""
     q = lambda p: '"%s"' % p
     lines = ['audio_device = %s' % q(audio_device)]
@@ -168,6 +173,8 @@ def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, fo
         lines.append('video_font_path = %s' % q(font))
     if joy_driver:
         lines.append('input_joypad_driver = %s' % q(joy_driver))
+    if video_driver:
+        lines.append('video_driver = %s' % q(video_driver))
     if joy_index is not None:
         lines.append('input_player1_joypad_index = %s' % q(joy_index))
     lines += [
@@ -192,16 +199,101 @@ def make_dirs(sid, roms_root):
             log("cannot create %s: %s (saves may be lost)" % (d, e))
 
 
-def ensure_dolphin_sys(roms_root):
-    """The Dolphin core wants <system dir>/dolphin-emu/Sys. The image ships a copy; put it on the ROMS card once (exFAT: no symlinks)."""
-    src, dst = "/usr/local/share/rgos/dolphin-emu/Sys", os.path.join(roms_root, "bios", "dolphin-emu", "Sys")
-    if os.path.isdir(dst) or not os.path.isdir(src):
-        return
+def _release_stamp():
     try:
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.copytree(src, dst)
+        with open(RELEASE_FILE) as f:
+            return f.read().strip() or "1"
+    except OSError:
+        return "1"
+
+
+def copy_tree(src, dst):
+    """Copy src into dst file by file (dst may already exist). Plain content copy only: shutil.copytree/copy2 also copy the
+    permission bits, which the exFAT ROMS card refuses (EPERM), and that left a half-copied Sys folder behind. Returns the
+    list of errors; broken symlinks in the source are skipped."""
+    errs = []
+    for root, _dirs, files in os.walk(src):
+        rel = os.path.relpath(root, src)
+        out = dst if rel == "." else os.path.join(dst, rel)
+        try:
+            os.makedirs(out, exist_ok=True)
+        except OSError as e:
+            errs.append("%s: %s" % (out, e))
+            continue
+        for name in files:
+            sp = os.path.join(root, name)
+            if os.path.islink(sp) and not os.path.exists(sp):
+                continue
+            try:
+                shutil.copyfile(sp, os.path.join(out, name))
+            except OSError as e:
+                errs.append("%s: %s" % (sp, e))
+    return errs
+
+
+def ensure_dolphin_sys(roms_root, src=None):
+    """The Dolphin core wants <system dir>/dolphin-emu/Sys. The image ships a copy; put it on the ROMS card (exFAT: no symlinks).
+    A stamp file written only after a COMPLETE copy says the folder is good, so an interrupted or failed copy is redone on the
+    next launch (before, the mere existence of the folder counted as done and the core then died on missing files), and a new
+    image build refreshes the shipped files. Files the user added (IPL.bin) are never touched. Returns (ok, message)."""
+    src = src or DOLPHIN_SYS_SRC
+    dst = os.path.join(roms_root, "bios", "dolphin-emu", "Sys")
+    if not os.path.isdir(src):
+        return os.path.isdir(dst), "no Dolphin Sys folder in the image (%s)" % src
+    stamp, mark = _release_stamp(), os.path.join(dst, SYS_MARK)
+    try:
+        with open(mark) as f:
+            if f.read().strip() == stamp:
+                return True, ""
+    except OSError:
+        pass
+    errs = copy_tree(src, dst)
+    if errs:
+        log("Dolphin Sys copy to %s had %d errors, first: %s" % (dst, len(errs), errs[0]))
+        return False, "cannot copy Dolphin Sys to %s: %s" % (dst, errs[0])
+    try:
+        with open(mark, "w") as f:
+            f.write(stamp + "\n")
     except OSError as e:
-        log("cannot copy Dolphin Sys to %s: %s" % (dst, e))
+        log("cannot write %s: %s" % (mark, e))
+    return True, ""
+
+
+def missing_libs(path):
+    """Shared libraries that `ldd path` cannot find (names only). [] when ldd is not available or the file is fine."""
+    ldd = shutil.which("ldd")
+    if not ldd or not path:
+        return []
+    try:
+        out = subprocess.run([ldd, path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return sorted({l.split("=>")[0].strip() for l in out.splitlines() if "not found" in l})
+
+
+def rc_text(rc):
+    if rc is not None and rc < 0:
+        try:
+            return "killed by %s" % signal.Signals(-rc).name
+        except ValueError:
+            return "killed by signal %d" % -rc
+    return "code %s" % rc
+
+
+def video_attempts(sid, boot_dir=None):
+    """Video drivers to try in order. Only the GameCube core needs a real GL context (the 2D cores run on whatever RetroArch
+    picks), so only gc is pinned: glcore, then gl if the first launch dies at once. One word in /boot/retroarch-gc-video.txt
+    (glcore, gl, vulkan, ...) forces a single choice. [None] = leave RetroArch's own driver."""
+    if sid != "gc":
+        return [None]
+    try:
+        with open(os.path.join(boot_dir or BOOT_DIR, "retroarch-gc-video.txt")) as f:
+            w = f.read().split()
+        if w and re.fullmatch(r"[a-z0-9_]+", w[0]):
+            return [w[0]]
+    except OSError:
+        pass
+    return list(GC_VIDEO_DRIVERS)
 
 
 def tail(path, n=12):
@@ -328,7 +420,7 @@ def unload_menu():
     gc.collect()
 
 
-def build_command(core_path, content, roms_root, cfg_run):
+def build_command(core_path, content, roms_root, cfg_run, verbose=None):
     appends = [cfg_run]
     dev_cfg = device_cfg()
     if dev_cfg:
@@ -336,7 +428,7 @@ def build_command(core_path, content, roms_root, cfg_run):
     user = os.path.join(roms_root, "config", "retroarch.cfg")
     if os.path.isfile(user):
         appends.append(user)
-    cmd = [RA_BIN] + (["--verbose"] if ra_verbose() else []) + ["--log-file", LOG, "--config", RA_CFG, "--appendconfig", "|".join(appends)]
+    cmd = [RA_BIN] + (["--verbose"] if (ra_verbose() if verbose is None else verbose) else []) + ["--log-file", LOG, "--config", RA_CFG, "--appendconfig", "|".join(appends)]
     if core_path:
         cmd += ["-L", core_path]
     if content:
@@ -346,18 +438,35 @@ def build_command(core_path, content, roms_root, cfg_run):
     return cmd
 
 
-def save_report(pads, idx, drv, cmd, rc):
-    """Copy what a PC needs to see why buttons do not work to <boot>/rgos-retroarch.txt (the boot FAT partition)."""
+def kernel_hints(n=40):
+    """The last kernel lines that explain a silent death of the emulator (segfault, out-of-memory kill, GPU errors)."""
+    if os.environ.get("RGOS_NO_HW"):
+        return ""
+    try:
+        out = subprocess.run(["dmesg"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    keep = [l for l in out.splitlines() if re.search(r"segfault|out of memory|oom|killed process|panfrost|mali|drm.*(error|fail)|retroarch|dolphin", l, re.I)]
+    return "\n".join(keep[-n:])
+
+
+def save_report(pads, idx, drv, cmd, rc, history=(), core_path=""):
+    """Copy what a PC needs to see why a game does not start to <boot>/rgos-retroarch.txt (the boot FAT partition)."""
     try:
         with open(os.path.join(BOOT_DIR, "rgos-retroarch.txt"), "w") as f:
-            f.write("== %s rc=%s\ncmd: %s\npads (jsN, name): %s\nhub pad: %s   joypad driver: %s\n"
-                    % (time.strftime("%Y-%m-%d %H:%M:%S"), rc, " ".join(cmd), pads, idx, drv))
+            f.write("== %s rc=%s (%s)\ncmd: %s\npads (jsN, name): %s\nhub pad: %s   joypad driver: %s\n"
+                    % (time.strftime("%Y-%m-%d %H:%M:%S"), rc, rc_text(rc), " ".join(cmd), pads, idx, drv))
+            if core_path:
+                f.write("core: %s\nmissing libraries: %s\n" % (core_path, ", ".join(missing_libs(core_path)) or "none"))
+            for n, (video, hrc, hdt, htail) in enumerate(history, 1):
+                f.write("\n--- earlier attempt %d: video_driver=%s, %s after %.1fs; log tail:\n%s\n" % (n, video or "default", rc_text(hrc), hdt, htail))
             for path in ("/proc/bus/input/devices", RUN_DIR + "/retroarch-run.cfg"):
                 f.write("\n--- %s\n" % path)
                 try:
                     f.write(open(path, errors="replace").read())
                 except OSError as e:
                     f.write("(%s)\n" % e)
+            f.write("\n--- kernel messages (segfault / OOM / GPU)\n" + (kernel_hints() or "(none)\n"))
             f.write("\n--- retroarch log (last 150 lines)\n" + tail(LOG, 150))
         os.sync()
     except OSError:
@@ -371,33 +480,44 @@ def launch_retroarch(sid, core, core_path, content):
     pads = pad_nodes()
     idx, drv = hub_index(pads), joypad_driver()
     log("pads: %s; hub pad: %s; joypad driver: %s" % (pads or "none", ("js%d" % idx) if idx is not None else "NOT FOUND", drv))
-    with open(cfg_run, "w") as f:
-        f.write(run_config(sid, ROMS_ROOT, alsa_device(), idx, drv, osd_font()))
-    cmd = build_command(core_path, content, ROMS_ROOT, cfg_run)
+    audio, font = alsa_device(), osd_font()
     env = dict(os.environ)
     env.update({"HOME": "/root", "XDG_RUNTIME_DIR": RUN_DIR, "SDL_VIDEODRIVER": "dummy",
                 "MESA_SHADER_CACHE_DIR": "/tmp/mesa-cache", "SDL_AUDIODRIVER": "dummy"})
     if not os.environ.get("RGOS_NO_HW"):
         os.makedirs("/tmp/retroarch", exist_ok=True)
-    log("starting: %s" % " ".join(cmd))
-    t0 = time.monotonic()
     hw = not os.environ.get("RGOS_NO_HW") or os.environ.get("RGOS_SYSFS")
-    saved = set_governor(perf_governor(sid)) if hw else {}
-    set_game_flag(True)
-    try:
-        rc = subprocess.call(cmd, env=env, stdin=subprocess.DEVNULL,
-                             preexec_fn=None if os.environ.get("RGOS_NO_HW") else game_priority)
-    except OSError as e:
-        show_error("RG OS: cannot start RetroArch", str(e))
-        return 1
-    finally:
-        set_game_flag(False)
-        restore_governor(saved)
-    dt = time.monotonic() - t0
-    log("retroarch exited rc=%s after %.1fs" % (rc, dt))
-    save_report(pads, idx, drv, cmd, rc)
-    if rc != 0 and dt < EARLY_FAIL_S:
-        show_error("RG OS: %s failed to start (code %s)" % (core or "RetroArch", rc), tail(LOG))
+    attempts = video_attempts(sid)
+    history, rc, cmd = [], 0, []
+    for n, video in enumerate(attempts):
+        with open(cfg_run, "w") as f:
+            f.write(run_config(sid, ROMS_ROOT, audio, idx, drv, font, video))
+        # The GameCube core always runs with RetroArch's verbose log: without it a core that fails to start leaves nothing to read.
+        cmd = build_command(core_path, content, ROMS_ROOT, cfg_run, verbose=True if sid == "gc" else None)
+        log("starting%s: %s" % (" (video_driver %s)" % video if video else "", " ".join(cmd)))
+        t0 = time.monotonic()
+        saved = set_governor(perf_governor(sid)) if hw else {}
+        set_game_flag(True)
+        try:
+            rc = subprocess.call(cmd, env=env, stdin=subprocess.DEVNULL,
+                                 preexec_fn=None if os.environ.get("RGOS_NO_HW") else game_priority)
+        except OSError as e:
+            show_error("RG OS: cannot start RetroArch", str(e))
+            return 1
+        finally:
+            set_game_flag(False)
+            restore_governor(saved)
+        dt = time.monotonic() - t0
+        log("retroarch exited rc=%s (%s) after %.1fs" % (rc, rc_text(rc), dt))
+        failed = rc != 0 or "[ERROR]" in tail(LOG, 40)
+        if sid == "gc" and failed and dt < GC_RETRY_S and n + 1 < len(attempts):
+            history.append((video, rc, dt, tail(LOG, 60)))
+            log("GameCube failed to start with video_driver %s; retrying with %s" % (video, attempts[n + 1]))
+            continue
+        break
+    save_report(pads, idx, drv, cmd, rc, history, core_path)
+    if dt < EARLY_FAIL_S and (rc != 0 or "[ERROR]" in tail(LOG, 40)):
+        show_error("RG OS: %s failed to start (%s)" % (core or "RetroArch", rc_text(rc)), tail(LOG))
     return rc
 
 
@@ -426,9 +546,18 @@ def main(argv):
     log("%s: system=%s core=%s" % (target, sid, core))
     default_core = compatible_cores = None
     unload_menu()
+    path = core_file(core)
+    gone = missing_libs(path)
+    if gone:
+        show_error("RG OS: %s cannot load, libraries missing" % core, "%s\nRebuild the image (see docs/GAMECUBE.md) or install them." % ", ".join(gone))
+        save_report([], None, "", [RA_BIN, "-L", path, target], 127, (), path)
+        return 0
     if core == "dolphin":
-        ensure_dolphin_sys(ROMS_ROOT)
-    launch_retroarch(sid, core, core_file(core), target)
+        ok, why = ensure_dolphin_sys(ROMS_ROOT)
+        if not ok:
+            show_error("RG OS: Dolphin data folder is not usable", why)
+            return 0
+    launch_retroarch(sid, core, path, target)
     return 0
 
 
