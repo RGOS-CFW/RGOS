@@ -11,6 +11,7 @@ import sshctl
 import biosctl
 import filemanager
 import rgclassic
+import artwork
 try:
     import sdcard
 except Exception:
@@ -664,7 +665,7 @@ def make_file_manager():
 
 
 FM_ROWS = 7 + DY // 44
-SETTINGS_ROWS = ["theme", "launcher", "splash", "emulators", "bios", "bmap", "swapab", "wifi", "bluetooth", "ssh", "info"]
+SETTINGS_ROWS = ["theme", "launcher", "splash", "emulators", "bios", "artwork", "bmap", "swapab", "wifi", "bluetooth", "ssh", "info"]
 RECENT_MAX = 20
 
 LAUNCHERS = [("rgos", "RG OS", "Classic tile launcher"), ("xmb", "RG XMB", "PlayStation-style cross media bar"),
@@ -780,6 +781,13 @@ def icon_bios(c, cx, cy, col, bg):
         pygame.draw.rect(c, col, (cx + i * 14 - 2, cy + 20, 4, 8))
 
 
+def icon_artwork(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 28, cy - 22, 56, 44), border_radius=6)
+    pygame.draw.rect(c, bg, (cx - 22, cy - 16, 44, 32), border_radius=3)
+    pygame.draw.polygon(c, col, [(cx - 22, cy + 16), (cx - 8, cy - 2), (cx + 2, cy + 8), (cx + 10, cy), (cx + 22, cy + 16)])
+    pygame.draw.circle(c, col, (cx + 11, cy - 8), 4)
+
+
 def icon_bmap(c, cx, cy, col, bg):
     pygame.draw.rect(c, col, (cx - 10, cy - 30, 20, 60), border_radius=4)
     pygame.draw.rect(c, col, (cx - 30, cy - 10, 60, 20), border_radius=4)
@@ -822,7 +830,7 @@ def icon_files(c, cx, cy, col, bg):
 
 
 ICONS = {"games": icon_games, "recents": icon_recents, "favorites": icon_favorites, "tools": icon_tools, "settings": icon_settings, "power": icon_power,
-         "theme": icon_theme, "launcher": icon_launcher, "splash": icon_splash, "emulators": icon_emulators, "bios": icon_bios, "bmap": icon_bmap,
+         "theme": icon_theme, "launcher": icon_launcher, "splash": icon_splash, "emulators": icon_emulators, "bios": icon_bios, "artwork": icon_artwork, "bmap": icon_bmap,
          "swapab": icon_swapab, "wifi": icon_wifi, "bluetooth": icon_bluetooth, "ssh": icon_ssh, "info": icon_info, "files": icon_files}
 
 _XI = {}
@@ -1137,48 +1145,95 @@ def _flow_hsv(h, s, v):
     return (int(r * 255), int(g * 255), int(b * 255))
 
 
-def _flow_base(hue, tag, abbr, S, icon=None):
-    key = (hue, tag, abbr, S, icon)
-    cards = _FLOW["cards"]
-    lv = _lru_get(cards, key)
-    if lv is None:
-        r = max(8, S // 10)
+def _flow_gradient_card(hue, tag, abbr, S, icon=None):
+    r = max(8, S // 10)
+    surf = pygame.Surface((S, S), pygame.SRCALPHA)
+    top, bot = _flow_hsv(hue, 0.42, 0.80), _flow_hsv(hue, 0.50, 0.50)
+    for y in range(S):
+        surf.fill(_mix(top, bot, y / max(1, S - 1)), (0, y, S, 1))
+    mask = pygame.Surface((S, S), pygame.SRCALPHA)
+    pygame.draw.rect(mask, (255, 255, 255, 255), (0, 0, S, S), border_radius=r)
+    surf.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    gl = pygame.Surface((S, S), pygame.SRCALPHA)
+    for y in range(S):
+        if y < S * 0.5:
+            gl.fill((255, 255, 255, int(52 * (1 - y / (S * 0.5)) ** 1.5)), (0, y, S, 1))
+        elif y > S * 0.72:
+            gl.fill((0, 0, 0, int(60 * (y - S * 0.72) / (S * 0.28))), (0, y, S, 1))
+    gl.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    surf.blit(gl, (0, 0))
+    pygame.draw.rect(surf, (255, 255, 255, 80), (0, 0, S, S), max(2, S // 130), border_radius=r)
+    if tag:
+        ft = _flow_font(S * 0.066, False)
+        tt = ft.render(tag, True, (240, 240, 250))
+        px, py = int(S * 0.045), int(S * 0.02)
+        cw, ch = tt.get_width() + 2 * px, tt.get_height() + 2 * py
+        chip = pygame.Surface((cw, ch), pygame.SRCALPHA)
+        pygame.draw.rect(chip, (30, 25, 60, 90), (0, 0, cw, ch), border_radius=max(4, ch // 4))
+        surf.blit(chip, (int(S * 0.06), int(S * 0.06)))
+        surf.blit(tt, (int(S * 0.06) + px, int(S * 0.06) + py))
+    if icon:
+        disc = pygame.Surface((S, S), pygame.SRCALPHA)
+        pygame.draw.circle(disc, (255, 255, 255, 40), (S // 2, S // 2), int(S * 0.34))
+        pygame.draw.circle(disc, (255, 255, 255, 60), (S // 2, S // 2), int(S * 0.34), max(2, S // 90))
+        surf.blit(disc, (0, 0))
+        isz = int(S * 0.5)
+        surf.blit(xmb_icon(icon, isz, (242, 242, 250)), ((S - isz) // 2, (S - isz) // 2))
+    else:
+        fa = _flow_font(S * (0.32 if len(abbr) <= 3 else 0.24))
+        at = fa.render(abbr, True, (242, 242, 250))
+        surf.blit(at, ((S - at.get_width()) // 2, int(S * 0.55) - at.get_height() // 2))
+    return surf
+
+
+def _flow_art_card(path, S):
+    """Square card made from a cover image: fitted whole, over a blurred copy of itself."""
+    try:
+        img = pygame.image.load(path)
+        try:
+            img = img.convert_alpha()
+        except Exception:
+            pass
+        iw, ih = img.get_size()
+        if iw < 2 or ih < 2:
+            return None
         surf = pygame.Surface((S, S), pygame.SRCALPHA)
-        top, bot = _flow_hsv(hue, 0.42, 0.80), _flow_hsv(hue, 0.50, 0.50)
-        for y in range(S):
-            surf.fill(_mix(top, bot, y / max(1, S - 1)), (0, y, S, 1))
+        if abs(iw / float(ih) - 1.0) < 0.06:
+            surf.blit(pygame.transform.smoothscale(img, (S, S)), (0, 0))
+        else:
+            kc = max(S / float(iw), S / float(ih))
+            cw, ch = max(S, int(iw * kc + 0.5)), max(S, int(ih * kc + 0.5))
+            surf.blit(pygame.transform.smoothscale(img, (cw, ch)), ((S - cw) // 2, (S - ch) // 2))
+            surf = _flow_blur(surf, 8)
+            shade = pygame.Surface((S, S), pygame.SRCALPHA)
+            shade.fill((0, 0, 0, 110))
+            surf.blit(shade, (0, 0))
+            kf = min(S / float(iw), S / float(ih))
+            fw, fh = max(1, int(iw * kf + 0.5)), max(1, int(ih * kf + 0.5))
+            surf.blit(pygame.transform.smoothscale(img, (fw, fh)), ((S - fw) // 2, (S - fh) // 2))
+        r = max(8, S // 10)
         mask = pygame.Surface((S, S), pygame.SRCALPHA)
         pygame.draw.rect(mask, (255, 255, 255, 255), (0, 0, S, S), border_radius=r)
         surf.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        gl = pygame.Surface((S, S), pygame.SRCALPHA)
-        for y in range(S):
-            if y < S * 0.5:
-                gl.fill((255, 255, 255, int(52 * (1 - y / (S * 0.5)) ** 1.5)), (0, y, S, 1))
-            elif y > S * 0.72:
-                gl.fill((0, 0, 0, int(60 * (y - S * 0.72) / (S * 0.28))), (0, y, S, 1))
-        gl.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        surf.blit(gl, (0, 0))
         pygame.draw.rect(surf, (255, 255, 255, 80), (0, 0, S, S), max(2, S // 130), border_radius=r)
-        if tag:
-            ft = _flow_font(S * 0.066, False)
-            tt = ft.render(tag, True, (240, 240, 250))
-            px, py = int(S * 0.045), int(S * 0.02)
-            cw, ch = tt.get_width() + 2 * px, tt.get_height() + 2 * py
-            chip = pygame.Surface((cw, ch), pygame.SRCALPHA)
-            pygame.draw.rect(chip, (30, 25, 60, 90), (0, 0, cw, ch), border_radius=max(4, ch // 4))
-            surf.blit(chip, (int(S * 0.06), int(S * 0.06)))
-            surf.blit(tt, (int(S * 0.06) + px, int(S * 0.06) + py))
-        if icon:
-            disc = pygame.Surface((S, S), pygame.SRCALPHA)
-            pygame.draw.circle(disc, (255, 255, 255, 40), (S // 2, S // 2), int(S * 0.34))
-            pygame.draw.circle(disc, (255, 255, 255, 60), (S // 2, S // 2), int(S * 0.34), max(2, S // 90))
-            surf.blit(disc, (0, 0))
-            isz = int(S * 0.5)
-            surf.blit(xmb_icon(icon, isz, (242, 242, 250)), ((S - isz) // 2, (S - isz) // 2))
-        else:
-            fa = _flow_font(S * (0.32 if len(abbr) <= 3 else 0.24))
-            at = fa.render(abbr, True, (242, 242, 250))
-            surf.blit(at, ((S - at.get_width()) // 2, int(S * 0.55) - at.get_height() // 2))
+        return surf
+    except Exception as e:
+        log("artwork: cannot use %s: %s" % (path, e))
+        return None
+
+
+def _flow_key(hue, tag, abbr, S, icon=None, art=None):
+    return (hue, tag, abbr, S, icon) + ((art,) if art else ())
+
+
+def _flow_base(hue, tag, abbr, S, icon=None, art=None):
+    key = _flow_key(hue, tag, abbr, S, icon, art)
+    cards = _FLOW["cards"]
+    lv = _lru_get(cards, key)
+    if lv is None:
+        surf = _flow_art_card(art, S) if art else None
+        if surf is None:
+            surf = _flow_gradient_card(hue, tag, abbr, S, icon)
         lv = [surf] + [None] * (len(FLOW_LEVELS) - 1)
         _lru_put(cards, key, lv, FLOW_CACHE_CARDS)
     return key, lv
@@ -1265,7 +1320,7 @@ def flow_warm(cards, centre, budget):
     levels = []
     for dist, i in order:
         g = cards[i]
-        k = (g["hue"], g["tag"], g["abbr"], S, g.get("icon"))
+        k = _flow_key(g["hue"], g["tag"], g["abbr"], S, g.get("icon"), g.get("art"))
         fresh = k not in _FLOW["cards"]
         lv = _flow_base(*k)[1]
         if dist <= 2:
@@ -1367,7 +1422,7 @@ def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk
             alpha = 255 - 55 * min(a, 1.0) - 110 * max(0.0, a - 1.0) if a < 2 else 90
             tw_ = S * scale
             w = max(16, int(round(tw_)))
-            key, lv = _flow_base(g["hue"], g["tag"], g["abbr"], S, g.get("icon"))
+            key, lv = _flow_base(g["hue"], g["tag"], g["abbr"], S, g.get("icon"), g.get("art"))
             li = flow_level_index(tw_, S)
             src = _flow_cover(lv, S, li)
             surf = src if src.get_width() == w else pygame.transform.scale(src, (w, w))
@@ -1978,6 +2033,27 @@ def tail_fit(font, text, width):
     return text
 
 
+def art_shrink(path, max_side=480):
+    """Downscale a freshly downloaded cover so cards load quickly. Returns the file to keep."""
+    try:
+        img = pygame.image.load(path)
+        iw, ih = img.get_size()
+        if max(iw, ih) <= max_side:
+            return path
+        k = max_side / float(max(iw, ih))
+        img = img.convert_alpha()
+        img = pygame.transform.smoothscale(img, (max(1, int(iw * k)), max(1, int(ih * k))))
+        out = os.path.splitext(path)[0] + ".png"
+        tmp = os.path.splitext(path)[0] + ".tmp.png"
+        pygame.image.save(img, tmp)
+        os.replace(tmp, out)
+        if out != path:
+            os.remove(path)
+        return out
+    except Exception:
+        return path
+
+
 def log(msg):
     sys.stderr.write("%s menu: %s\n" % (time.strftime("%H:%M:%S"), msg))
     sys.stderr.flush()
@@ -2144,6 +2220,7 @@ def main():
                 "splash": ("Startup splash", spl + "   (plays once at power on)   X previews"),
                 "emulators": ("Emulators", "Choose the RetroArch core used for each system"),
                 "bios": ("Missing BIOS check", (bios_summary_text(bios_cache[1]) + "   A opens it") if bios_cache else "Find missing emulator BIOS files and where they go"),
+                "artwork": ("Game artwork", art_text()),
                 "bmap": ("Map buttons", "Teach RG OS which physical button is A, B, D-pad, ... (if buttons are wrong)"),
                 "swapab": ("Swap A / B buttons", ("ON" if swap_ab_on() else "off") + "   A toggles it (use if A and B act the wrong way round)"),
                 "wifi": ("Wi-Fi", wifictl.status_text(wst)),
@@ -2183,6 +2260,47 @@ def main():
     view, home_idx, sys_idx, idx_by = "home", 0, 0, {}
     bmap = None
     set_idx, tool_idx, kb = 0, 0, None
+    art_idx = 0
+    art_index = artwork.ArtIndex(ROMS_ROOT)
+    art = {"sc": None, "key": artwork.load_key(ROMS_ROOT), "msg": "", "until": 0.0, "ver": 0, "seen": 0, "seen_at": 0.0, "cnt": (0.0, 0, 0)}
+
+    def art_on():
+        return state.get("artwork", True) is not False
+
+    def art_note(msg):
+        art["msg"], art["until"] = msg, time.time() + 5
+
+    def art_scraper():
+        sc = art["sc"]
+        if sc is None or (not sc.running and sc.key != art["key"]):
+            sc = art["sc"] = artwork.Scraper(ROMS_ROOT, art["key"], art_index, post=art_shrink)
+        return sc
+
+    def art_start(retry):
+        sc = art_scraper()
+        if sc.running:
+            sc.stop()
+        elif not artwork.valid_key(art["key"]):
+            art_note("Set your SteamGridDB API key first")
+        elif not all_games:
+            art_note("No games found yet: copy ROMs to the ROMS card first")
+        else:
+            sc.start(all_games, retry)
+
+    def art_counts():
+        now = time.monotonic()
+        if now - art["cnt"][0] > 2.0:
+            art["cnt"] = (now, art_index.count(all_games), len(all_games))
+        return art["cnt"][1], art["cnt"][2]
+
+    def art_text():
+        sc = art["sc"]
+        s = sc.snapshot() if sc is not None else None
+        if s and s["state"] == "running":
+            return "Downloading %d of %d   A opens it" % (s["done"], s["total"])
+        if not artwork.valid_key(art["key"]):
+            return "Download covers from SteamGridDB   A opens it (free API key needed)"
+        return "SteamGridDB covers are %s   A opens it" % ("shown" if art_on() else "hidden")
     dd = None
     xmb_cat, xmb_sel, xmb_cx, xmb_vy, xmb_fade = XMB_START, {}, float(XMB_START), 0.0, 1.0
     xmb_cv, xmb_vv = 0.0, 0.0
@@ -2252,7 +2370,7 @@ def main():
             key, keep = ("systems", id(all_games)), vsys
         else:
             keep = recent_games() if view == "recents" else favorite_games() if view == "favorites" else games_of(vsys[sys_idx][0] if vsys else "")
-            key = (view, id(keep), len(keep), frozenset(favorite_paths))
+            key = (view, id(keep), len(keep), frozenset(favorite_paths), art["ver"], art_on())
         if _fcm[0] == key and _fcm[1] is keep:
             return _fcm[2]
         if view == "home":
@@ -2263,7 +2381,8 @@ def main():
                     "hue": flow_hue(sy[0]), "tag": "", "abbr": sy[1], "icon": None, "fav": False} for sy in vsys]
         else:
             out = [{"game": g, "title": g["title"], "sub": sysname.get(g["sid"], g["tag"]), "hue": flow_hue(g["sid"]), "tag": g["tag"],
-                    "abbr": flow_abbr(g["title"]), "icon": None, "fav": g["path"] in favorite_paths} for g in keep]
+                    "abbr": flow_abbr(g["title"]), "icon": None, "fav": g["path"] in favorite_paths,
+                    "art": art_index.lookup(g["sid"], g["path"]) if art_on() else None} for g in keep]
         _fcm[0], _fcm[1], _fcm[2] = key, keep, out
         return out
 
@@ -2388,6 +2507,14 @@ def main():
         blanked = False
         if pygame.mixer.get_init() and not pygame.mixer.music.get_busy() and (_music_playlist or _music_tracks()):
             _play_next_launcher_track()
+        _asc = art["sc"]
+        if _asc is not None:
+            _now = time.monotonic()
+            _sn = _asc.snapshot()
+            if _sn["version"] != art["seen"] and (_now - art["seen_at"] >= 1.5 or _sn["state"] != "running"):
+                art["seen"], art["seen_at"] = _sn["version"], _now
+                art_index.invalidate()
+                art["ver"] += 1
         _scanned = rescan.take()
         if _scanned is not None:
             cur_sid = vsys[sys_idx][0] if vsys else None
@@ -2441,7 +2568,7 @@ def main():
                     flow_fade = 0.0
                 elif view in ("systems", "games", "recents", "favorites") and launcher_id == "flow":
                     view = "home"
-                elif view in ("systems", "games", "recents", "favorites", "tools", "settings", "wifi", "bt", "ssh", "info", "bios", "files"):
+                elif view in ("systems", "games", "recents", "favorites", "tools", "settings", "wifi", "bt", "ssh", "info", "bios", "artwork", "files"):
                     view = "home"
                 elif view == "bmap" and bmap and bmap.state in ("done", "fail"):
                     view = "home"
@@ -2692,6 +2819,8 @@ def main():
                         emu_idx, view = 0, "emulators"
                     elif row == "bios":
                         bios_cache, bios_scroll, bios_pos, view = bios_scan(state), 0, 0.0, "bios"
+                    elif row == "artwork":
+                        art_idx, view = 0, "artwork"
                     elif row == "wifi":
                         wconf, wf_idx, wf_msg, wf_msg_until = wifictl.load_conf(), 0, "", 0.0
                         wscan.kick()
@@ -2708,6 +2837,26 @@ def main():
                         restart_hub()
                     else:
                         bmap, view = ButtonMap(), "bmap"
+            elif view == "artwork":
+                _sc = art["sc"]
+                art_running = _sc is not None and _sc.running
+                if a in ("up", "down"):
+                    art_idx = (art_idx + (1 if a == "down" else -1)) % 4
+                elif a == "b":
+                    view = back_to("settings")
+                elif a == "x" and art_running:
+                    _sc.stop()
+                elif a == "a":
+                    if art_idx == 0:
+                        if art_running:
+                            art_note("Stop the download first (X)")
+                        else:
+                            kb, view = Kbd("sgdb_key", "SteamGridDB API key", "", False), "kbd"
+                    elif art_idx in (1, 2):
+                        art_start(art_idx == 2)
+                    else:
+                        state["artwork"] = not art_on()
+                        save_state(state)
             elif view == "emulators":
                 emu_systems = [sy for sy in SYSTEMS if sy[2] == "retroarch" and compatible_cores(sy[0])]
                 if a in ("up", "down"):
@@ -2780,6 +2929,17 @@ def main():
                                 wf_msg, wf_msg_until = "The password must be 8-63 characters", time.time() + 4
                             else:
                                 wf_do(wifictl.join, "Joining %s..." % ssid_, ssid_, kb.text, hidden_)
+                    elif res and kb.field == "sgdb_key":
+                        view = "artwork"
+                        if res == "ok":
+                            _k = kb.text.strip()
+                            if not artwork.valid_key(_k):
+                                art_note("That is not an API key (16 to 64 letters and numbers)")
+                            elif artwork.save_key(ROMS_ROOT, _k):
+                                art["key"] = _k
+                                art_note("API key saved")
+                            else:
+                                art_note("Could not save the key")
                     elif res:
                         view = "settings"
             elif view == "wifi":
@@ -2916,6 +3076,8 @@ def main():
             info = "Settings > Emulators   %s" % clk
         elif view == "bios":
             info = "Settings > Missing BIOS check   %s" % clk
+        elif view == "artwork" or (view == "kbd" and kb.field.startswith("sgdb")):
+            info = "Settings > Game artwork   %s" % clk
         elif view == "wifi" or (view == "kbd" and kb.field.startswith("wifi")):
             info = "Settings > Wi-Fi   %s" % clk
         elif view == "bt":
@@ -3190,6 +3352,33 @@ def main():
                     "A Pick launcher   " if SETTINGS_ROWS[set_idx] == "launcher" else
                     "A Change   X Preview   " if SETTINGS_ROWS[set_idx] == "splash" else
                     "A Toggle   " if SETTINGS_ROWS[set_idx] == "swapab" else "A Open   ") + ("" if dd is not None else "B Back   START+SELECT Power off")
+        elif view == "artwork":
+            _sc = art["sc"]
+            _s = _sc.snapshot() if _sc is not None else {"state": "idle", "total": 0, "done": 0, "found": 0, "missed": 0, "failed": 0, "current": "", "msg": ""}
+            _run = _s["state"] == "running"
+            _have, _all = art_counts()
+            _rows = [("SteamGridDB API key", ("Set: " + artwork.key_hint(art["key"]) + "   A changes it") if artwork.valid_key(art["key"]) else "Not set   A types it (free key: steamgriddb.com, Preferences, API)"),
+                     ("Download missing artwork", ("Downloading...   A stops" if _run else "%d of %d games have artwork   A starts" % (_have, _all))),
+                     ("Retry games with no match", "Ask SteamGridDB again about games it could not find   A starts"),
+                     ("Show artwork on game cards", ("On" if art_on() else "Off") + "   A toggles (RG Flow launcher)")]
+            for i, (nm, sub) in enumerate(_rows):
+                by, sel = top_y + i * 64, i == art_idx
+                draw_button(canvas, (list_x, by, W - 2 * list_x, 58), SEL_BG if sel else PANEL, 12, 3, sel)
+                canvas.blit(f_row.render(nm, True, TEXT if sel else DIM), (list_x + 24, by + 8))
+                canvas.blit(f_small.render(fit(f_small, sub, W - 2 * list_x - 48), True, DIM), (list_x + 24, by + 34))
+            py = top_y + 4 * 64 + 4
+            if _run or _s["state"] in ("done", "stopped", "error"):
+                if _s["total"]:
+                    ui_rect(canvas, PANEL, (list_x, py, W - 2 * list_x, 10), 5)
+                    pygame.draw.rect(canvas, ACCENT, (list_x, py, int((W - 2 * list_x) * min(1.0, _s["done"] / float(_s["total"]))), 10), border_radius=5)
+                _line = ("Now: " + _s["current"]) if _run else _s["msg"]
+                canvas.blit(f_small.render(fit(f_small, _line, W - 2 * list_x), True, (230, 70, 60) if _s["state"] == "error" else TEXT), (list_x, py + 16))
+                canvas.blit(f_small.render("Found %d   No match %d   Failed %d   (%d of %d)" % (_s["found"], _s["missed"], _s["failed"], _s["done"], _s["total"]), True, DIM), (list_x, py + 38))
+            else:
+                canvas.blit(f_small.render(fit(f_small, "Your own images work too: ROMS/artwork/<system>/<game file name>.png", W - 2 * list_x), True, DIM), (list_x, py + 16))
+            if time.time() < art["until"]:
+                canvas.blit(f_small.render(fit(f_small, art["msg"], W - 2 * list_x), True, ACCENT), (list_x, py + 60))
+            hint = "A Select   " + ("X Stop   " if _run else "") + "B Back"
         elif view == "emulators":
             emu_systems = [sy for sy in SYSTEMS if sy[2] == "retroarch" and compatible_cores(sy[0])]
             ui_rect(canvas, PANEL, (list_x, top_y, W - 2 * list_x, 336 + DY), 10)

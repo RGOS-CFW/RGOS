@@ -170,7 +170,7 @@ unsquashfs -q -d "$WORK/system" "$OLD_SYS" || echo "   (some unsquashfs errors; 
 
 rm -rf "$ROOTFS"
 echo "==> debootstrap $DEBIAN_SUITE arm64 minbase"
-debootstrap --arch=arm64 --variant=minbase --foreign --components=main,non-free --include=busybox-static,kmod,python3,python3-pygame,fonts-dejavu-core,e2fsprogs,exfatprogs,fdisk,gdisk,iproute2,iw,wpasupplicant,rfkill,alsa-utils,bluez,dbus,dropbear-bin,openssh-sftp-server,"$EMU_PKGS${EXTRA_PKGS:+,${EXTRA_PKGS// /,}}" \
+debootstrap --arch=arm64 --variant=minbase --foreign --components=main,non-free --include=busybox-static,kmod,python3,python3-pygame,ca-certificates,fonts-dejavu-core,e2fsprogs,exfatprogs,fdisk,gdisk,iproute2,iw,wpasupplicant,rfkill,alsa-utils,bluez,dbus,dropbear-bin,openssh-sftp-server,"$EMU_PKGS${EXTRA_PKGS:+,${EXTRA_PKGS// /,}}" \
   "$DEBIAN_SUITE" "$ROOTFS" "$DEBIAN_MIRROR"
 [[ "$(uname -m)" == "aarch64" ]] || cp "$(command -v qemu-aarch64-static)" "$ROOTFS/usr/bin/"
 mkdir -p "$ROOTFS/usr/sbin"; printf '#!/bin/sh\nexit 101\n' > "$ROOTFS/usr/sbin/policy-rc.d"; chmod +x "$ROOTFS/usr/sbin/policy-rc.d"
