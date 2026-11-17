@@ -39,6 +39,36 @@ class PickCoreTests(unittest.TestCase):
             self.assertEqual(self.pick(bad), "snes9x", bad)
 
 
+class NativePortTests(unittest.TestCase):
+    def setUp(self):
+        self.launch = load_launch()
+        self.tmp = tempfile.mkdtemp(prefix="rgos-native-")
+        self.script = os.path.join(self.tmp, "game.sh")
+        with open(self.script, "w") as f:
+            f.write("#!/bin/sh\necho native\n")
+        self.launch.NATIVE_LOG = os.path.join(self.tmp, "native.log")
+        self.launch.RUN_DIR = os.path.join(self.tmp, "run")
+        self.launch.GAME_FLAG = os.path.join(self.launch.RUN_DIR, "ingame")
+
+    def test_shell_port_runs_directly_without_selecting_a_core(self):
+        seen = {}
+        def fake_call(cmd, **kw):
+            seen.update(cmd=cmd, cwd=kw["cwd"])
+            return 0
+        with mock.patch.dict(os.environ, {"RGOS_NO_HW": "1"}), \
+             mock.patch.object(self.launch.subprocess, "call", side_effect=fake_call), \
+             mock.patch.object(self.launch, "set_game_flag"), \
+             mock.patch.object(self.launch, "set_governor", return_value={}), \
+             mock.patch.object(self.launch, "restore_governor"):
+            rc = self.launch.launch_native(self.script)
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen["cmd"], [self.launch.shutil.which("sh"), self.script])
+        self.assertEqual(seen["cwd"], self.tmp)
+
+    def test_port_paths_are_classified_as_native(self):
+        self.assertEqual(self.launch.system_of("/media/roms/roms/ports/example.sh"), "ports")
+
+
 class DolphinSysTests(unittest.TestCase):
     def setUp(self):
         self.launch = load_launch()
