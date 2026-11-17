@@ -1,26 +1,4 @@
 #!/usr/bin/env python3
-"""rgos-input: RG OS input hub = the device's physical buttons -> ONE virtual button pad.
-
-Reads the raw button devices (gpio-keys etc.), translates every key to a canonical code (the codes retroarch.cfg and
-gamecontrollerdb.txt are written for) and re-publishes them as one uinput device, "RG OS Gamepad". Buttons and the D-pad
-only, unless the device config turns "analog" on (RG34XXSP, RG35XX H: two sticks).
-
-  * "sources": which input devices to merge: ["gpio-keys-joypad"] or "auto" (default: every event device that has pad buttons, D-pad keys or a hat; power/volume/lid/
-    touch devices are skipped). A list of name substrings picks devices by hand.
-  * known BTN_* codes pass through, ABS_HAT0X/Y become the D-pad, anything else comes from the table the menu's
-    Settings > Map buttons wizard saved in /var/lib/rgos/button-map.json (or "keymap" {"<code>": "<canonical code>"} in input.json).
-  /etc/rgos/input-<device>.json (device = /etc/rgos-device) is merged over input.json.
-  * "analog": true (RG34XXSP and RG35XX H; the image ships it in input-<device>.json) also publishes the two analog sticks: ABS_X/ABS_Y (left)
-    and ABS_RX/ABS_RY (right) of the source device are scaled to -32767..32767 and forwarded. Off everywhere else; the RG35XX SP (no sticks)
-    ships input-rg35xxsp.json with "analog": false, so it publishes no axes and the Map buttons wizard asks for no sticks.
-    The stick step of the menu's wizard stores a centre and the two travel limits per axis ("sticks" in button-map.json);
-    with it the centre reads 0 and the full travel reaches +-32767. Without it the source's declared range is used.
-
-usage: rgos-input                run the hub
-       rgos-input reset-buttons  forget the button mapping and stick calibration saved by the menu's Map buttons wizard
-
-Config: optional top-level "enabled": false in /etc/rgos/input.json leaves the raw input devices alone.
-"""
 import errno, fcntl, glob, json, os, select, signal, struct, subprocess, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -154,7 +132,6 @@ def make_uinput(codes, ff=False, axes=()):
 
 
 def udev_refresh():
-    """Re-run the udev rules for input devices (they hide the raw pad only while FLAG exists)."""
     try:
         subprocess.run(["udevadm", "control", "--reload"], timeout=10)
         subprocess.run(["udevadm", "trigger", "--action=change", "--subsystem-match=input"], timeout=10)
@@ -182,7 +159,6 @@ def _stop(*_):
 
 
 def load_input_conf(conf=CONF, devfile="/etc/rgos-device", etc="/etc/rgos"):
-    """input.json merged with /etc/rgos/input-<device>.json (top-level keys of the device file replace)."""
     out = {}
     try:
         with open(conf) as f:
@@ -204,8 +180,6 @@ def load_input_conf(conf=CONF, devfile="/etc/rgos-device", etc="/etc/rgos"):
 
 
 def load_keymap(iconf):
-    """{(device name or None, type, code, sign): canonical code}. Sources: input.json "keymap" (any device, plain key
-    codes) and the wizard's button-map.json ({"keys": {"<name>|<type>:<code>:<sign>": canonical}})."""
     km = {}
     extra = iconf.get("keymap")
     for k, v in (extra.items() if isinstance(extra, dict) else ()):
@@ -230,8 +204,6 @@ def load_keymap(iconf):
 
 
 def load_sticks():
-    """{axis code: (centre, low, high)} from the wizard's button-map.json ("sticks": {"<code>": [centre, low, high]}).
-    Entries that are not three plain numbers with a usable travel on both sides are ignored (the axis then uses its declared range)."""
     cal = {}
     try:
         with open(BTNMAP) as f:
@@ -251,7 +223,6 @@ def load_sticks():
 
 
 class Translator:
-    """Turns raw source events into button events of the canonical pad (pure logic, no I/O)."""
     def __init__(self, keymap=None, legacy=False, auto_map=True):
         self.keymap, self.legacy = keymap or {}, legacy
         self.auto_map = bool(auto_map)
@@ -262,7 +233,6 @@ class Translator:
         self.stick_cal = {}
 
     def learn(self, name, keys):
-        """Profile one source from its key capability bits (`keys` = set of codes) and say what was decided."""
         notes, kmap = [], {}
         if self.auto_map and not self.legacy:
             known = {c for c in keys if (name, 1, c, 0) in self.keymap or (None, 1, c, 0) in self.keymap
@@ -296,8 +266,6 @@ class Translator:
         return [(EV_KEY, self.swap.get(t, t), value)]
 
     def abs(self, name, code, value, rng):
-        """The only ABS events RG OS uses: a hat axis (or a wizard-mapped axis) acting as a D-pad / button.
-        rng = (min, max) of the source axis. Everything else is ignored."""
         out = []
         lo, hi = rng
         if hi <= lo:
@@ -316,7 +284,6 @@ class Translator:
 
 
     def stick(self, code, value, rng):
-        """An analog stick axis of the source, rescaled to -ASTICK..ASTICK (centre of the source's own range = 0). [] when analog is off."""
         if not self.analog or code not in ANALOG_AXES:
             return []
         cal = self.stick_cal.get(code)
@@ -334,7 +301,6 @@ class Translator:
 
 
 class Source:
-    """One physical input device that feeds the hub."""
     def __init__(self, path, name):
         self.path, self.name = path, name
         self.fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
@@ -342,7 +308,6 @@ class Source:
         self.grabbed = False
 
     def absinfo(self, c):
-        """(current value, min, max) of an absolute axis, read live; None if the device does not have it."""
         try:
             buf = bytearray(24)
             fcntl.ioctl(self.fd, EVIOCGABS(c), buf)
@@ -393,14 +358,12 @@ _REJECTED = {}
 
 
 def _reject(path, name, why):
-    """Say once (per device and reason) why a device is NOT used, so the log shows what the hub saw."""
     if _REJECTED.get(path) != why:
         _REJECTED[path] = why
         log("input skipped %s (%s): %s" % (path, name, why))
 
 
 def scan_sources(spec, have):
-    """Event devices to merge. spec: "auto" or a list of name substrings. `have` = paths already open."""
     found = []
     for ev in sorted(glob.glob("/sys/class/input/event*")):
         path = "/dev/input/" + os.path.basename(ev)
@@ -457,7 +420,6 @@ def scan_sources(spec, have):
 
 
 def learn_source(translator, src):
-    """Profile a source for auto-mapping and write what was decided to the log and /run/rgos/input-map.txt."""
     try:
         keys = _bits(src.fd, EVIOCGBIT_KEY, 96)
     except OSError:
@@ -473,7 +435,6 @@ def learn_source(translator, src):
 
 
 def write_rules(names):
-    """Hide the grabbed sources from SDL/RetroArch (only the hub's merged pad should show up)."""
     try:
         if not names:
             os.unlink(RULES)
@@ -488,7 +449,6 @@ def write_rules(names):
 
 
 class KeyProbe:
-    """While the menu's button wizard runs (flag file), publish the last raw key/hat/trigger press of any source."""
     def __init__(self):
         self.n, self.next_check, self.on = 0, 0.0, False
         self.next_stick = 0.0
@@ -522,8 +482,6 @@ class KeyProbe:
 
 
     def sticks(self, srcs):
-        """While the wizard probes: write the live raw value and range of every stick axis to STICKS_RAW (~20 times a second),
-        so the menu can calibrate the sticks. Raw = before any calibration, so a re-run always measures the real hardware."""
         now = time.time()
         if now < self.next_stick:
             return

@@ -1,4 +1,3 @@
-"""rgos-launch: a damaged state.json must not stop a game from launching."""
 import importlib.machinery
 import importlib.util
 import os
@@ -63,7 +62,7 @@ class DolphinSysTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(self.dst, self.launch.SYS_MARK)))
 
     def test_a_half_copied_folder_without_the_stamp_is_completed(self):
-        os.makedirs(self.dst)  # what an interrupted copy used to leave behind
+        os.makedirs(self.dst)
         ok, _ = self.launch.ensure_dolphin_sys(self.roms, self.src)
         self.assertTrue(ok)
         self.assertTrue(os.path.isfile(os.path.join(self.dst, "codehandler.bin")))

@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""RG OS Bluetooth: bring-up at boot (modules, rfkill, dbus, bluetoothd), and the helpers the menu uses
-(Settings > Bluetooth): power, scan, pair, connect, disconnect, forget.
-
-Everything is built on BlueZ (bluetoothd + bluetoothctl) and the kernel's Bluetooth modules, which come from the stock
-ROCKNIX kernel. The adapter is whatever the kernel shows in /sys/class/bluetooth.
-
-Files:  /var/lib/rgos/bt.json            on/off (kept on the FAT partition)
-        /var/lib/rgos/bluetooth.tar.gz   pairings (a copy of /var/lib/bluetooth, restored at boot; FAT cannot hold the
-                                         permissions bluetoothd wants, so it is stored as an archive)
-        /var/log/rgos-bt.log             what happened at boot (copied to rgos-logs.txt on the card)
-Pairing uses the "NoInputNoOutput" agent (Just Works), which is what game controllers, keyboards and most headsets use.
-"""
 import glob, json, os, re, select, subprocess, sys, tarfile, threading, time, uuid
 
 CONF = os.environ.get("RGOS_BT_CONF", "/var/lib/rgos/bt.json")
@@ -56,7 +44,6 @@ def set_enabled(on):
 
 
 def apply_power():
-    """Put the adapter in the saved on/off state. Off must be applied too: BlueZ powers adapters on by itself (AutoEnable)."""
     run(["bluetoothctl", "power", "on" if enabled() else "off"])
 
 
@@ -154,7 +141,6 @@ def start():
 
 
 def parse_info(text):
-    """`bluetoothctl info A\\ninfo B ...` output -> {mac: {name, paired, connected, trusted, rssi}}"""
     out, cur = {}, None
     for line in text.splitlines():
         m = re.match(r"\s*Device ((?:[0-9A-F]{2}:){5}[0-9A-F]{2})", line, re.I)
@@ -175,7 +161,6 @@ def parse_info(text):
 
 
 def devices():
-    """[{mac, name, paired, connected, trusted, rssi}] paired ones first, then the strongest unpaired ones; nameless ads dropped."""
     rc, out = run(["bluetoothctl", "devices"], timeout=6)
     macs = [m.group(1).upper() for m in re.finditer(r"Device ((?:[0-9A-F]{2}:){5}[0-9A-F]{2})", out, re.I)] if rc == 0 else []
     if not macs:
@@ -208,8 +193,6 @@ def scan(seconds=8):
 
 
 def _converse(cmds, waits, timeout):
-    """Feed bluetoothctl commands on stdin one by one; after each, read output until a line matching waits[i] appears (or timeout).
-    Returns the list of outputs."""
     p = subprocess.Popen(["bluetoothctl"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     outs = []
     try:
@@ -239,7 +222,6 @@ def _converse(cmds, waits, timeout):
 
 
 def pair(mac):
-    """Pair, trust and connect. Returns (ok, message)."""
     if not MAC.match(mac):
         return False, "bad address"
     outs = _converse(["agent NoInputNoOutput", "default-agent", "pair " + mac, "trust " + mac, "connect " + mac],
@@ -272,7 +254,6 @@ def forget(mac):
 
 
 class Manager:
-    """Background worker for the menu: refresh() / scan_now() / act(fn, mac) never block the UI."""
     def __init__(self):
         self.rows, self.on, self.busy, self.msg, self.msg_until, self.scanning = [], None, False, "", 0.0, False
 

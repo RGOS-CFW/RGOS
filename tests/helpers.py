@@ -1,8 +1,3 @@
-"""Shared loaders for the RG OS tests: they import the real menu.py and rgos-input without pygame, a device or root.
-
-menu.py needs pygame and the device-side helper modules at import time, so those are replaced by mocks; every path the
-code reads from the environment is pointed at a temporary directory first.
-"""
 import importlib.machinery
 import importlib.util
 import os
@@ -18,13 +13,10 @@ _cache = {}
 
 
 def sandbox():
-    """A fresh temporary directory (deleted by the OS later); returns its path."""
     return tempfile.mkdtemp(prefix="rgos-test-")
 
 
 def load_menu():
-    """The real menu.py, imported once. Its RUN_DIR / BTN_MAP point at a temp dir; tests that need a clean one call
-    fresh_wizard_env() to repoint them."""
     if "menu" in _cache:
         return _cache["menu"]
     tmp = sandbox()
@@ -53,7 +45,6 @@ def load_menu():
 
 
 def fresh_wizard_env(menu):
-    """Point the wizard's run dir and button-map file at new empty temp paths; returns (run_dir, btn_map_path)."""
     tmp = sandbox()
     run = os.path.join(tmp, "run")
     os.makedirs(run)
@@ -65,7 +56,6 @@ def fresh_wizard_env(menu):
 
 
 def load_hub():
-    """rgos-input (a script with no .py extension) as a module."""
     if "hub" not in _cache:
         loader = importlib.machinery.SourceFileLoader("rgos_input", os.path.join(RGOS, "rgos-input"))
         spec = importlib.util.spec_from_loader("rgos_input", loader)

@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""RG OS menu - original frontend for the Anbernic RG Rotate, RG34XXSP, RG35XX H and RG35XX SP.
-
-Lists the native Linux ports in <ROMS>/roms/ports/ (the .sh launchers) and on selection writes the script path to
-/run/rgos/launch and exits with code 10 so the session loop can run it.
-Exit code 20 = power off.
-"""
 import glob
 import io, json, math, os, random, re, signal, subprocess, sys, threading, time
 import pygame
@@ -14,6 +8,7 @@ import splash
 import wifictl
 import btctl
 import sshctl
+import biosctl
 import filemanager
 try:
     import sdcard
@@ -91,6 +86,7 @@ XMB_COLORS = {"midnight": ((9, 11, 28), (62, 52, 130), (190, 180, 255)),
               "mustard": ((22, 20, 14), (170, 130, 20), (255, 235, 170)),
               "contrast": ((0, 0, 0), (50, 50, 50), (255, 255, 255))}
 XMB_TOP = XMB_LOW = XMB_SILK = (0, 0, 0)
+BIOS_GOOD, BIOS_WARN, BIOS_BAD = (70, 170, 90), (214, 150, 20), (222, 64, 52)
 
 
 def theme_index(tid):
@@ -101,7 +97,6 @@ def theme_index(tid):
 
 
 def apply_theme(tid):
-    """Make the theme with this id the active colour set (unknown ids fall back to the default) and return the id actually used."""
     global BG, PANEL, SEL_BG, ACCENT, TEXT, DIM, XMB_TOP, XMB_LOW, XMB_SILK
     tid, _name, c = THEMES[theme_index(tid)]
     BG, PANEL, SEL_BG, ACCENT, TEXT, DIM = c["BG"], c["PANEL"], c["SEL_BG"], c["ACCENT"], c["TEXT"], c["DIM"]
@@ -161,8 +156,6 @@ class Input:
                 self._up(a)
 
     def _stick_update(self, out):
-        """Left stick as a D-pad: the axis pushed furthest decides the direction (no diagonals), with hysteresis so a stick that
-        hovers around the threshold does not flicker. It uses the same hold / auto-repeat as the D-pad buttons."""
         x, y = self.stick[0x00], self.stick[0x01]
         ax, ay = abs(x), abs(y)
         cur = self.stick_dir
@@ -231,7 +224,6 @@ def pretty(name):
 
 
 def rom_roots():
-    """[(card number, <ROMS root>)]: card 1 always, card 2 when a second SD card is mounted (see sdcard.py)."""
     roots = [(1, ROMS_ROOT)]
     if sdcard is not None and not os.environ.get("RGOS_NO_CARD2"):
         try:
@@ -265,9 +257,6 @@ def scan_roms():
 
 
 class Rescan:
-    """scan_roms() on a worker thread, so pressing X never freezes the menu (walking a big ROM library off an SD card takes seconds).
-    start() begins a scan (ignored while one runs); take() hands the finished list to the main loop exactly once, which then swaps it in,
-    so the drawing code never sees a half-built list. `busy` is True from start() until take() has delivered (or discarded) the result."""
     def __init__(self):
         self._lock = threading.Lock()
         self._res = None
@@ -290,7 +279,6 @@ class Rescan:
             self._res = (r,)
 
     def take(self):
-        """The finished game list, or None while the scan is still running (or after a failed one: the old list is then kept)."""
         with self._lock:
             if self._res is None:
                 return None
@@ -300,7 +288,6 @@ class Rescan:
 
 
 def visible_systems(games):
-    """The SYSTEMS entries that have at least one game (systems without ROMs are not listed)."""
     have = {g["sid"] for g in games}
     return [sy for sy in SYSTEMS if sy[0] in have]
 
@@ -319,7 +306,6 @@ def save_state(st):
 
 
 def load_favorites():
-    """Read favorite ROM paths from the persistent, newline-delimited favorites.txt."""
     try:
         with open(FAVORITES_FILE, "r", encoding="utf-8") as f:
             return list(dict.fromkeys(line.strip() for line in f if line.strip()))
@@ -328,7 +314,6 @@ def load_favorites():
 
 
 def save_favorites(paths):
-    """Persist favorite paths without losing the existing list if writing fails."""
     try:
         os.makedirs(os.path.dirname(FAVORITES_FILE) or ".", exist_ok=True)
         tmp = FAVORITES_FILE + ".tmp"
@@ -348,7 +333,6 @@ def save_favorites(paths):
 
 
 def installed_cores():
-    """Return RetroArch core names actually installed on this device."""
     dirs = ("/usr/lib/aarch64-linux-gnu/libretro", "/usr/lib/libretro",
             "/usr/lib/aarch64-linux-gnu/retroarch/cores", "/usr/local/lib/libretro")
     found = set()
@@ -400,7 +384,6 @@ SYSTEM_CORE_COMPATIBILITY = {
 
 
 def compatible_cores(sid, cores=None):
-    """Return installed cores known to support this system, in preferred order."""
     installed = set(installed_cores() if cores is None else cores)
     return [core for core in SYSTEM_CORE_COMPATIBILITY.get(sid, ()) if core in installed]
 
@@ -416,11 +399,36 @@ CORE_NAMES = {"mgba": "mGBA", "gpsp": "gpSP", "vbam": "VBA-M", "gambatte": "Gamb
 
 
 def core_label(sid, state):
-    """Display name of the RetroArch core that will run this system (the Settings > Emulators choice, else the default)."""
     core = state.get("emulators", {}).get(sid)
     if core not in SYSTEM_CORE_COMPATIBILITY.get(sid, ()):
         core = default_core(sid)
     return CORE_NAMES.get(core) or core.replace("_", " ") or "RetroArch"
+
+
+def bios_dirs():
+    return [os.path.join(r, "bios") for _c, r in rom_roots()]
+
+
+def bios_scan(st):
+    emus = st.get("emulators") if isinstance(st, dict) else None
+    emus = emus if isinstance(emus, dict) else {}
+
+    def core_of(sid):
+        core = emus.get(sid)
+        return core if core in SYSTEM_CORE_COMPATIBILITY.get(sid, ()) else default_core(sid)
+    return biosctl.check_all([(sy[0], sy[4]) for sy in SYSTEMS if sy[2] == "retroarch"], core_of, bios_dirs())
+
+
+def bios_summary_text(summ):
+    if not summ["systems"]:
+        return "No installed emulator needs BIOS files"
+    parts = []
+    if summ["missing"]:
+        parts.append("%d required missing" % summ["missing"])
+    if summ["optional"]:
+        parts.append("%d optional missing" % summ["optional"])
+    parts.append("%d OK" % summ["ok"])
+    return "   ".join(parts)
 
 
 if os.environ.get("RGOS_ALL_SYSTEMS") != "1":
@@ -431,8 +439,6 @@ if os.environ.get("RGOS_ALL_SYSTEMS") != "1":
 
 
 def ensure_folders():
-    """Create every folder RG OS uses on the ROMS partition (safe to run on every boot; the first boot creates them all, and a
-    folder you delete comes back). Per-system folders are made for the supported systems only (see SYSTEMS above)."""
     shared = ("bios", "config", "firmware", "music", "saves", "screenshots", "splash", "states", "update")
     paths = [os.path.join(ROMS_ROOT, d) for d in shared] + [ROMS_DIR]
     for sy in SYSTEMS:
@@ -481,13 +487,10 @@ def wrap(font, text, width):
 
 
 def _mix(c, t, k):
-    """Blend colour c toward colour t by k (0..1)."""
     return tuple(max(0, min(255, int(c[i] + (t[i] - c[i]) * k))) for i in range(3))
 
 
 class CFont:
-    """pygame Font wrapper that remembers rendered text and measured widths. The menu redraws every frame, and re-rasterising the
-    same strings 30 times a second was the biggest CPU cost on the handheld; now each string is rendered once per colour."""
     def __init__(self, font):
         self._f, self._r, self._s = font, {}, {}
 
@@ -517,7 +520,6 @@ class CFont:
 
 
 def throttled(fn, interval):
-    """fn() at most once per `interval` seconds; in between the last result is returned (for sysfs / run-file polling)."""
     st = [-1e9, None]
 
     def get():
@@ -532,7 +534,6 @@ _BTN_CACHE = {}
 
 
 def _btn_face(w, h, base, radius):
-    """Cached face of a 3D button: vertical light-to-base gradient, rounded corners, thin top highlight."""
     key = (w, h, base, radius)
     surf = _BTN_CACHE.get(key)
     if surf is None:
@@ -558,8 +559,6 @@ _anim_clock = [time.monotonic(), 1 / 30, False]
 
 
 def anim_tick():
-    """Call once per frame before drawing: measures the frame time that every button animation advances by,
-    so the motion takes the same real time at any frame rate (no stutter when the frame rate dips)."""
     now = time.monotonic()
     dt = ANIM_DT if ANIM_DT else min(0.05, max(0.001, now - _anim_clock[0]))
     _anim_clock[0], _anim_clock[1] = now, dt
@@ -572,7 +571,6 @@ _GLASS = {}
 
 
 def _glass_tint():
-    """Glass colour for the active theme: dark glass on dark themes, white glass on light ones."""
     return (255, 255, 255) if sum(BG) / 3.0 > 140 else (0, 0, 0)
 
 
@@ -591,7 +589,6 @@ def _glass_face(w, h, radius, col, alpha, outline=45):
 
 
 def ui_rect(surf, col, rect, radius=0):
-    """A filled rounded rect in the theme colour `col` (PANEL / SEL_BG / BG). On the XMB it is translucent glass so the silk shows through."""
     if not XMB_UI[0]:
         pygame.draw.rect(surf, col, rect, border_radius=radius)
         return
@@ -603,10 +600,6 @@ def ui_rect(surf, col, rect, radius=0):
 
 
 def draw_button(surf, rect, base, radius=12, depth=4, sel=False):
-    """Draw a button that looks raised: soft shadow, darker side edge below the face, gradient face with a top highlight.
-    The face occupies exactly rect; the side and shadow extend `depth` pixels below it. Selecting a button animates it:
-    the colour eases from the card colour to the selected colour, the face lifts a few pixels and the accent outline fades in.
-    Returns (highlight 0..1, lift in px) so callers can animate their contents the same way."""
     x, y, w, h = rect
     st = _BTN_ANIM.get(rect)
     if st is None:
@@ -653,8 +646,6 @@ BOOT_PROTECTED = ("SYSTEM", "SYSTEM.md5", "KERNEL", "KERNEL.md5", "extlinux", "d
 
 
 def fm_roots():
-    """Storage the file manager may touch, in the order shown: RGOS (boot partition), the second SD card when it is
-    mounted, and ROMS last."""
     roots = []
     if os.path.ismount(BOOT_ROOT):
         roots.append(BOOT_ROOT)
@@ -672,7 +663,7 @@ def make_file_manager():
 
 
 FM_ROWS = 7 + DY // 44
-SETTINGS_ROWS = ["theme", "launcher", "splash", "emulators", "bmap", "swapab", "wifi", "bluetooth", "ssh", "info"]
+SETTINGS_ROWS = ["theme", "launcher", "splash", "emulators", "bios", "bmap", "swapab", "wifi", "bluetooth", "ssh", "info"]
 RECENT_MAX = 20
 
 LAUNCHERS = [("rgos", "RG OS", "Classic tile launcher"), ("xmb", "RG XMB", "PlayStation-style cross media bar"),
@@ -688,7 +679,6 @@ def launcher_index(lid):
 
 
 def dd_options(kind):
-    """Entries of a Settings dropdown as (id, name, swatch colours or None, description)."""
     if kind == "theme":
         return [(t[0], t[1], [t[2][k] for k in ("BG", "PANEL", "SEL_BG", "ACCENT", "TEXT")], "") for t in THEMES]
     return [(l[0], l[1], None, l[2]) for l in LAUNCHERS]
@@ -779,6 +769,15 @@ def icon_emulators(c, cx, cy, col, bg):
         pygame.draw.rect(c, col, (cx + i * 14 - 2, cy + 22, 4, 10))
 
 
+def icon_bios(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 24, cy - 20, 48, 40), border_radius=6)
+    pygame.draw.rect(c, bg, (cx - 16, cy - 12, 32, 24), border_radius=3)
+    pygame.draw.line(c, col, (cx - 8, cy), (cx - 2, cy + 6), 4)
+    pygame.draw.line(c, col, (cx - 2, cy + 6), (cx + 9, cy - 7), 4)
+    for i in (-1, 0, 1):
+        pygame.draw.rect(c, col, (cx + i * 14 - 2, cy + 20, 4, 8))
+
+
 def icon_bmap(c, cx, cy, col, bg):
     pygame.draw.rect(c, col, (cx - 10, cy - 30, 20, 60), border_radius=4)
     pygame.draw.rect(c, col, (cx - 30, cy - 10, 60, 20), border_radius=4)
@@ -821,7 +820,7 @@ def icon_files(c, cx, cy, col, bg):
 
 
 ICONS = {"games": icon_games, "recents": icon_recents, "favorites": icon_favorites, "tools": icon_tools, "settings": icon_settings, "power": icon_power,
-         "theme": icon_theme, "launcher": icon_launcher, "splash": icon_splash, "emulators": icon_emulators, "bmap": icon_bmap,
+         "theme": icon_theme, "launcher": icon_launcher, "splash": icon_splash, "emulators": icon_emulators, "bios": icon_bios, "bmap": icon_bmap,
          "swapab": icon_swapab, "wifi": icon_wifi, "bluetooth": icon_bluetooth, "ssh": icon_ssh, "info": icon_info, "files": icon_files}
 
 _XI = {}
@@ -835,8 +834,6 @@ XMB_BG_MOVING_MAX = 0.5
 
 
 def xmb_icon(kind, size, color, alpha=1.0):
-    """The icon `kind` as a size x size surface tinted `color` and faded by `alpha` (the shapes are drawn once, then scaled + cached;
-    the tinted result is cached too, with the colour and fade rounded to steps of 4/255 that the eye cannot tell apart)."""
     ck = tuple(min(255, (int(v) + 4) & ~7) for v in color[:3])
     a8 = int(alpha * 255) if alpha < 0.99 else 255
     aq = 255 if a8 >= 250 else max(0, a8) & ~7
@@ -864,13 +861,10 @@ def xmb_icon(kind, size, color, alpha=1.0):
 
 
 def _xq(col):
-    """A colour rounded to steps of 8 per channel. Labels are cached per exact colour, and in motion their colour changes every frame."""
     return tuple(min(255, (int(v) + 4) & ~7) for v in col[:3])
 
 
 def _smooth_damp(pos, vel, target, dt, omega=22.0):
-    """One step of a critically damped spring (exact for any dt, no overshoot): eases in and out and keeps its velocity when the target
-    moves, so held or repeated presses glide on instead of restarting the ease each time. Returns (pos, vel)."""
     e = math.exp(-omega * dt)
     err = pos - target
     tmp = (vel + omega * err) * dt
@@ -887,7 +881,6 @@ _XMB_SPARKS = []
 
 
 def xmb_tint(x, y, k):
-    """The background colour at (x, y) lifted toward the text colour by k (soft light shapes that follow the gradient)."""
     raw = _XBG_RAW[0]
     if raw is None:
         base = BG
@@ -898,8 +891,6 @@ def xmb_tint(x, y, k):
 
 
 def _xmb_silk_build(g):
-    """Everything about the silk that only depends on the theme and the screen size: the x grid, the parts of the sine waves that do not
-    depend on time (so a frame needs a handful of sin/cos instead of one per point), and the colour of every strand."""
     hl = XMB_SILK
     xs = list(range(0, W + 10, 10))
     wig = ([math.sin(x * 0.021) for x in xs], [math.cos(x * 0.021) for x in xs])
@@ -924,10 +915,6 @@ def _xmb_silk_build(g):
 
 
 def xmb_bg(c, t, moving=False):
-    """The XMB background: a diagonal gradient in the theme colours (dark top-left, glowing bottom-right), a sweeping sheet of silk
-    strands that slowly shimmers and twists, and a little twinkling dust.
-    The silk is by far the costliest part of a frame, so it is redrawn at most 30 times a second, and while the menu is moving
-    (`moving`) the last silk frame is kept for up to XMB_BG_MOVING_MAX seconds: every frame then costs the same, so the motion stays even."""
     key = (XMB_TOP, XMB_LOW, XMB_SILK, W, H)
     g = _XBG.get(key)
     if g is None:
@@ -967,7 +954,6 @@ def xmb_bg(c, t, moving=False):
 
 
 def _xmb_silk_draw(g, t):
-    """Render the silk over the gradient `g` into the cached frame (the expensive part of the background) and return it."""
     fr = _XFRAME
     if fr[0] is None:
         fr[0] = g.copy()
@@ -998,8 +984,6 @@ def _xmb_silk_draw(g, t):
 
 
 def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade):
-    """The XMB home: category icons along a horizontal bar (the selected one big, with its name), its items listed below.
-    cx_f / vy are the animated (float) category and item positions, fade the 0..1 fade-in of the item column."""
     ax, bar_y, big, small, sp_x = 170, int(H * 0.26), 76, 50, 118
     sp, gap = 56 + max(0, H - 480) // 10, 16
     for i, (cid, cname) in enumerate(XMB_CATS):
@@ -1050,8 +1034,6 @@ _XDD = [None, None]
 
 
 def draw_xmb_dropdown(c, f_small, dd, opts):
-    """Settings dropdown (Theme / Launcher) shown over the XMB: a translucent panel under the category bar.
-    Browsing a theme previews it live, so the XMB gradient, silk and dust recolour behind the panel."""
     rh, top = 36, 150
     vis = max(1, min(len(opts), (H - 50 - top - 8) // rh))
     w, h = min(W - 60, 520), vis * rh + 12
@@ -1135,7 +1117,6 @@ def _flow_font(size, bold=True):
 
 
 def flow_abbr(title):
-    """Two-letter cover label: the initials of the first two words (Metal Slug -> MS), or the first two letters of a single word."""
     words = re.findall(r"[A-Za-z0-9]+", title)
     if len(words) > 1 and words[0].lower() in ("the", "a", "an"):
         words = words[1:]
@@ -1155,7 +1136,6 @@ def _flow_hsv(h, s, v):
 
 
 def _flow_base(hue, tag, abbr, S, icon=None):
-    """The full-size cover (rounded gradient square, system tag top left, big initials in the middle). Built once, then scaled."""
     key = (hue, tag, abbr, S, icon)
     cards = _FLOW["cards"]
     lv = _lru_get(cards, key)
@@ -1309,7 +1289,6 @@ def flow_warm(cards, centre, budget):
 
 
 def flow_bg(c):
-    """Vertical gradient from a tint of the theme accent down to the theme background (darkened on dark themes)."""
     key = (BG, ACCENT, W, H)
     if _FLOW["bg"][0] != key:
         dark = sum(BG) < 384
@@ -1326,7 +1305,6 @@ def flow_bg(c):
 
 
 def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk, bat, scanning):
-    """One level of RG Flow (menu buttons, systems or games): a cover carousel. cards = dicts with title, sub, hue, tag, abbr, icon, fav."""
     compact = H < 600
     arrows = bool(FONT_PATH[0])
     flow_bg(c)
@@ -1466,7 +1444,6 @@ def rd_file(path):
 
 
 def card2_info():
-    """Settings > Information text for the second SD card."""
     st = sdcard.status() if sdcard is not None else None
     if not st:
         return "none"
@@ -1529,7 +1506,6 @@ def _rootfs_text():
 
 
 def settings_info():
-    """Read-only system info lines for the Settings > Information screen (the page scrolls, so the list can be long)."""
     build = "".join(l[9:] for l in rd_file("/etc/rgos-release").splitlines() if l.startswith("BUILD_ID="))
     try:
         st = os.statvfs(ROMS_ROOT)
@@ -1553,8 +1529,6 @@ SWAP_AB = os.environ.get("RGOS_SWAPAB", "/var/lib/rgos/swap-ab")
 
 
 def restart_hub():
-    """Restart the input hub (rgos-input) so a new button map / A-B swap takes effect now. There is no systemd in this
-    image: stop the running hub with SIGTERM (it removes its virtual pad) and start a fresh one."""
     if os.environ.get("RGOS_WINDOWED") == "1":
         return
 
@@ -1608,13 +1582,6 @@ def set_swap_ab(on):
 
 
 class ButtonMap:
-    """Guided button mapping. While the probe flag exists the hub (rgos-input) publishes the last raw key / hat / trigger
-    press of every source device as "<n>\\t<device>\\t<type>\\t<code>\\t<sign>". We ask for one button at a time and
-    store raw press -> canonical code in button-map.json, then restart the hub. Optional buttons are skipped when
-    nothing is pressed for a few seconds.
-    After the buttons come the analog sticks (only on devices whose hub publishes them, i.e. writes sticks.raw): first both
-    sticks are left alone to measure their centre, then each one is rolled around its edge to measure its travel. Both are
-    stored under "sticks" in button-map.json. A stick that is not moved is skipped, so a dead or missing stick never blocks setup."""
     PROMPTS = [("A", 0x131, False), ("B", 0x130, False), ("X", 0x133, False), ("Y", 0x134, False),
                ("L", 0x136, False), ("R", 0x137, False), ("SELECT", 0x13a, False), ("START", 0x13b, False),
                ("D-pad UP", 0x220, False), ("D-pad DOWN", 0x221, False), ("D-pad LEFT", 0x222, False),
@@ -1681,8 +1648,6 @@ class ButtonMap:
         return self.state == "fail" and self.failed_in in ("wait", "prompt", "apply")
 
     def resume(self, now=None):
-        """Carry on after a failed step: the buttons already mapped are kept and only the step that failed is asked again
-        (instead of starting the whole wizard over)."""
         if not self.can_resume():
             return
         now = now or time.time()
@@ -1700,7 +1665,6 @@ class ButtonMap:
         self.state = "apply" if was == "apply" else "wait"
 
     def total(self):
-        """Number of button prompts on this device (L3 / R3 only count where there are sticks)."""
         return len(self.PROMPTS) - (0 if self.has_sticks else len(self.STICK_BTNS))
 
     def _next(self, now):
@@ -1713,7 +1677,6 @@ class ButtonMap:
             self._start_sticks(now)
 
     def _read_sticks(self):
-        """Refresh self.sv from the hub's sticks.raw: {axis code: (value, min, max)}."""
         try:
             with open(self.sticksf) as f:
                 ax = json.load(f).get("ax") or {}
@@ -1723,7 +1686,6 @@ class ButtonMap:
         return self.sv
 
     def _start_sticks(self, now):
-        """Buttons are done: go on to the sticks if the hub publishes any (it only does so on devices with analog sticks)."""
         self._read_sticks()
         self.sticks = [i for i, (_, axes) in enumerate(self.STICKS) if all(a in self.sv for a in axes)]
         if not self.sticks:
@@ -1733,7 +1695,6 @@ class ButtonMap:
         self.state, self.tstate = "scenter", now
 
     def _begin_roll(self, now):
-        """Measure the travel of the current stick: start every axis at its centre and wait for it to be pushed out."""
         axes = self.STICKS[self.sticks[self.cstick]][1]
         self.ext = {a: [self.center[a], self.center[a]] for a in axes}
         self.reached, self.moved, self.tgrow = set(), False, now
@@ -1779,8 +1740,6 @@ class ButtonMap:
             self._next_stick(now)
 
     def stick_view(self):
-        """For the wizard screen: (title of the stick being measured, x, y in -1..1 around its centre, set of directions reached
-        as (axis index 0/1, sign)) while a stick step is running, else None."""
         if self.state not in ("scenter", "sroll") or not self.sticks:
             return None
         name, axes = self.STICKS[self.sticks[min(self.cstick, len(self.sticks) - 1)]]
@@ -1886,8 +1845,6 @@ CALIB_DONE = os.environ.get("RGOS_CALIBDONE", "/var/lib/rgos/calibrated")
 
 
 def calibration_needed():
-    """True on the first start of a fresh install: the launcher then forces the button mapping.
-    An install that already has its calibration files (updated from an older version) is marked done without asking."""
     if os.path.exists(CALIB_DONE):
         return False
     if os.path.exists(BTN_MAP):
@@ -1905,7 +1862,6 @@ def mark_calibrated():
 
 
 def read_volume():
-    """(percent, stamp) written by rgos-volume, or None if the daemon has not run."""
     try:
         with open(VOLUME_FILE) as f:
             v, stamp = f.read().split()[:2]
@@ -1920,7 +1876,6 @@ SCREENOFF_FILE = os.path.join(RUN_DIR, "screenoff")
 
 
 def read_brightness():
-    """(percent, stamp) written by rgos-hw (TrimUI Smart Pro), or None."""
     try:
         with open(BRIGHT_FILE) as f:
             v, stamp = f.read().split()[:2]
@@ -1930,11 +1885,6 @@ def read_brightness():
 
 
 def read_battery():
-    """Return (percent, status), preferring the live sysfs gauge over the optional daemon cache.
-
-    The RG Rotate doesn't ship an rgos-hw device config, so relying only on /run/rgos/battery
-    made Settings > Information report n/a even when Linux exposed the battery gauge.
-    """
     try:
         supplies = sorted(glob.glob("/sys/class/power_supply/*"))
         batteries = [p for p in supplies if rd_file(os.path.join(p, "type")).strip().lower() == "battery"]
@@ -1968,7 +1918,6 @@ KB_BOTTOM = ["Layer", "Space", "Del", "OK", "Cancel"]
 
 
 class Kbd:
-    """On-screen keyboard state: a 4-row character grid plus a bottom row of Layer/Space/Del/OK/Cancel."""
     def __init__(self, field, title, text, secret):
         self.field, self.title, self.text, self.secret = field, title, text, secret
         self.show, self.layer, self.row, self.col = not secret, 0, 1, 0
@@ -1985,7 +1934,6 @@ class Kbd:
         self.col = min(self.col, len(self.keys()) - 1)
 
     def press(self):
-        """Press the key under the cursor; returns 'ok', 'cancel' or None."""
         k = self.keys()[self.col]
         if self.row < 4:
             if len(self.text) < 64:
@@ -2005,7 +1953,6 @@ class Kbd:
 
 
 def wrap_n(font, text, width, n):
-    """Word-wrap into at most n lines; the last one gets '...' if the text did not fit."""
     lines, cur = [], ""
     for w in text.split():
         t = (cur + " " + w).strip()
@@ -2024,7 +1971,6 @@ def wrap_n(font, text, width, n):
 
 
 def tail_fit(font, text, width):
-    """Show the end of text if it is too wide (so the cursor end stays visible)."""
     while text and font.size(text)[0] > width:
         text = text[1:]
     return text
@@ -2188,13 +2134,13 @@ def main():
         _fav_c[0] = 0.0
 
     def settings_text():
-        """Title and one-line status of every Settings row (shown in the Settings list and under the XMB's Settings category)."""
         wst = wifictl.status()
         spl = {"on": "On: video and sound", "silent": "On: video only", "off": "Off"}[splash.mode_of(state)]
         return {"theme": ("Theme", "%s   (%d of %d)   A opens the list" % (THEMES[theme_index(theme_id)][1], theme_index(theme_id) + 1, len(THEMES))),
                 "launcher": ("Launcher", "%s   (%d of %d)   A opens the list" % (LAUNCHERS[launcher_index(launcher_id)][1], launcher_index(launcher_id) + 1, len(LAUNCHERS))),
                 "splash": ("Startup splash", spl + "   (plays once at power on)   X previews"),
                 "emulators": ("Emulators", "Choose the RetroArch core used for each system"),
+                "bios": ("Missing BIOS check", (bios_summary_text(bios_cache[1]) + "   A opens it") if bios_cache else "Find missing emulator BIOS files and where they go"),
                 "bmap": ("Map buttons", "Teach RG OS which physical button is A, B, D-pad, ... (if buttons are wrong)"),
                 "swapab": ("Swap A / B buttons", ("ON" if swap_ab_on() else "off") + "   A toggles it (use if A and B act the wrong way round)"),
                 "wifi": ("Wi-Fi", wifictl.status_text(wst)),
@@ -2203,7 +2149,6 @@ def main():
                 "info": ("Information", "Build, kernel, storage, battery, volume and input status")}
 
     def _xmb_items(cat):
-        """The vertical list under one XMB category: dicts with label, sub (second line), icon id and act (what A does, see the input code)."""
         if cat == "settings":
             txt = settings_text()
             return [{"label": txt[r][0], "sub": txt[r][1], "icon": r, "act": ("setting", i)} for i, r in enumerate(SETTINGS_ROWS)]
@@ -2225,8 +2170,6 @@ def main():
     _xic = {}
 
     def xmb_items(cat, fresh=False):
-        """_xmb_items() for the frame loop: the list is rebuilt at most 4 times a second (building it reads status files and the favorites
-        list, which was done every frame). The button handler passes fresh=True so that an action always uses the current list."""
         key, now = (theme_id, launcher_id, id(all_games), id(vsys)), time.monotonic()
         hit = _xic.get(cat)
         if not fresh and hit is not None and hit[1] == key and (now - hit[0] < 1.0 or now - last_act < 0.6):
@@ -2245,14 +2188,12 @@ def main():
     sysname = {sy[0]: sy[4] for sy in SYSTEMS}
 
     def back_to(parent):
-        """Where B leads from a sub screen: the XMB when it was opened from there, else its parent screen."""
         if xmb_ret[0]:
             xmb_ret[0] = False
             return "home"
         return parent
 
     def dd_set(kind, oid):
-        """Make the theme / launcher with this id the active one (used for the live preview, confirm and cancel of the dropdown)."""
         nonlocal theme_id, launcher_id
         if kind == "theme":
             theme_id = apply_theme(oid)
@@ -2260,6 +2201,7 @@ def main():
             launcher_id = LAUNCHERS[launcher_index(oid)][0]
     fm, fm_pop = None, None
     emu_idx = 0
+    bios_cache, bios_scroll, bios_pos, bios_all = None, 0, 0.0, False
     info_scroll, info_pos = 0, 0.0
     wconf, wscan, wf_idx, wf_msg, wf_msg_until, wf_pending = wifictl.load_conf(), wifictl.Scanner(), 0, "", 0.0, ("", False)
     btm, bt_idx = btctl.Manager(), 0
@@ -2267,7 +2209,6 @@ def main():
     ssh_cache, ssh_msg_until = (0.0, sshctl.info()), 0.0
 
     def ssh_info():
-        """sshctl.info() at most once a second (it reads a few small files)."""
         nonlocal ssh_cache
         if time.time() - ssh_cache[0] > 1.0:
             ssh_cache = (time.time(), sshctl.info())
@@ -2283,7 +2224,6 @@ def main():
         threading.Thread(target=job_, daemon=True).start()
 
     def wf_do(fn, msg, *args):
-        """Run a Wi-Fi change off the UI thread (it talks to wpa_cli), show msg for a few seconds, then reload the saved list."""
         nonlocal wf_msg, wf_msg_until, wconf
         wf_msg, wf_msg_until = msg, time.time() + 4
 
@@ -2352,7 +2292,6 @@ def main():
         return EXIT_LAUNCH
 
     def present():
-        """Put the canvas on the screen (framebuffer or SDL window, scaled to fit with black bars if the sizes differ)."""
         if fb is not None:
             fb.present(canvas)
         else:
@@ -2366,7 +2305,6 @@ def main():
             pygame.display.flip()
 
     def play_splash(mode):
-        """Play the startup splash video (see splash.py); any button skips it. mode: "on" (with sound) | "silent"."""
         path = splash.find_splash(DEVICE_ID, ROMS_ROOT)
         if not path:
             log("splash: no video found")
@@ -2500,7 +2438,7 @@ def main():
                     flow_fade = 0.0
                 elif view in ("systems", "games", "recents", "favorites") and launcher_id == "flow":
                     view = "home"
-                elif view in ("systems", "games", "recents", "favorites", "tools", "settings", "wifi", "bt", "ssh", "info", "files"):
+                elif view in ("systems", "games", "recents", "favorites", "tools", "settings", "wifi", "bt", "ssh", "info", "bios", "files"):
                     view = "home"
                 elif view == "bmap" and bmap and bmap.state in ("done", "fail"):
                     view = "home"
@@ -2748,6 +2686,8 @@ def main():
                         save_state(state)
                     elif row == "emulators":
                         emu_idx, view = 0, "emulators"
+                    elif row == "bios":
+                        bios_cache, bios_scroll, bios_pos, view = bios_scan(state), 0, 0.0, "bios"
                     elif row == "wifi":
                         wconf, wf_idx, wf_msg, wf_msg_until = wifictl.load_conf(), 0, "", 0.0
                         wscan.kick()
@@ -2780,6 +2720,23 @@ def main():
                         save_state(state)
                 elif a == "b":
                     view = back_to("settings")
+            elif view == "bios":
+                bios_n = len(biosctl.build_lines(bios_cache[0], bios_all, "")) if bios_cache else 0
+                bios_vis = max(1, (336 + DY - 56) // 34)
+                if a == "b":
+                    view = back_to("settings")
+                elif a == "up":
+                    bios_scroll = max(0, bios_scroll - 1)
+                elif a == "down":
+                    bios_scroll = min(max(0, bios_n - bios_vis), bios_scroll + 1)
+                elif a in ("left", "l"):
+                    bios_scroll = max(0, bios_scroll - bios_vis + 1)
+                elif a in ("right", "r"):
+                    bios_scroll = min(max(0, bios_n - bios_vis), bios_scroll + bios_vis - 1)
+                elif a == "x":
+                    bios_all, bios_scroll, bios_pos = not bios_all, 0, 0.0
+                elif a == "a":
+                    bios_cache = bios_scan(state)
             elif view == "info":
                 if a == "b":
                     view = back_to("settings")
@@ -2952,6 +2909,8 @@ def main():
             info = "Settings > Information   %s" % clk
         elif view == "emulators":
             info = "Settings > Emulators   %s" % clk
+        elif view == "bios":
+            info = "Settings > Missing BIOS check   %s" % clk
         elif view == "wifi" or (view == "kbd" and kb.field.startswith("wifi")):
             info = "Settings > Wi-Fi   %s" % clk
         elif view == "bt":
@@ -3236,6 +3195,52 @@ def main():
             if not any(compatible_cores(sy[0]) for sy in emu_systems):
                 canvas.blit(f_row.render("No installed compatible RetroArch cores found", True, TEXT), (list_x + 24, top_y + 20))
             hint = "Up/Down System   Left/Right Change compatible core   B Back"
+        elif view == "bios":
+            ROW_H = 34
+            px, py, pw, ph = list_x, top_y, W - 2 * list_x, 336 + DY
+            ui_rect(canvas, PANEL, (px, py, pw, ph), 10)
+            brows, bsumm = bios_cache if bios_cache else ([], {"systems": 0, "missing": 0, "optional": 0, "ok": 0})
+            canvas.blit(f_row.render(fit(f_row, bios_summary_text(bsumm), pw - 48), True,
+                                     BIOS_BAD if bsumm["missing"] else (ACCENT if bsumm["systems"] else DIM)), (px + 24, py + 10))
+            where = biosctl.display_dir(bios_dirs()[0], ROMS_ROOT)
+            blines = biosctl.build_lines(brows, bios_all, where)
+            if not blines:
+                blines = [("none", "Nothing to check: no installed emulator uses BIOS files", "")]
+            top_b = py + 46
+            vis = max(1, (ph - 56) // ROW_H)
+            max_scroll = max(0, len(blines) - vis)
+            bios_scroll = min(max(0, bios_scroll), max_scroll)
+            target = bios_scroll * ROW_H
+            if abs(target - bios_pos) < 0.5:
+                bios_pos = float(target)
+            else:
+                bios_pos += (target - bios_pos) * min(1.0, _anim_clock[1] * 18.0)
+                _anim_clock[2] = True
+            pygame.draw.line(canvas, DIM, (px + 16, top_b - 4), (px + pw - 16, top_b - 4), 1)
+            canvas.set_clip(pygame.Rect(px, top_b, pw, ph - 56))
+            for i, (kind, left, right) in enumerate(blines):
+                y = int(top_b + i * ROW_H - bios_pos)
+                if y < top_b - ROW_H or y > py + ph:
+                    continue
+                rcol = {"miss": BIOS_BAD, "opt": BIOS_WARN, "diff": BIOS_WARN, "case": BIOS_WARN, "ok": BIOS_GOOD, "head": DIM}.get(kind, DIM)
+                if kind == "head":
+                    canvas.blit(f_row.render(fit(f_row, left, pw - 48 - 190), True, ACCENT), (px + 24, y + 4))
+                    canvas.blit(f_small.render(right, True, rcol), (px + pw - 30 - f_small.size(right)[0], y + 8))
+                elif kind == "path":
+                    canvas.blit(f_small.render(fit(f_small, left, pw - 96), True, DIM), (px + 56, y + 6))
+                elif kind == "none":
+                    canvas.blit(f_row.render(fit(f_row, left, pw - 48), True, TEXT), (px + 24, y + 4))
+                else:
+                    canvas.blit(f_small.render(fit(f_small, left, pw - 60 - 130), True, TEXT), (px + 40, y + 6))
+                    canvas.blit(f_small.render(right, True, rcol), (px + pw - 30 - f_small.size(right)[0], y + 6))
+            canvas.set_clip(None)
+            if max_scroll > 0:
+                track_h = ph - 64
+                bar_h = max(24, int(track_h * vis / len(blines)))
+                bar_y = top_b + int((track_h - bar_h) * (bios_pos / (max_scroll * ROW_H)))
+                pygame.draw.rect(canvas, DIM, (px + pw - 10, top_b, 4, track_h), 1, border_radius=2)
+                pygame.draw.rect(canvas, ACCENT, (px + pw - 10, bar_y, 4, bar_h), 0, border_radius=2)
+            hint = "Up/Down Scroll   L/R Page   X %s   A Recheck   B Back" % ("Only problems" if bios_all else "Show all")
         elif view == "info":
             ROW_H = 42
             px, py, pw, ph = list_x, top_y, W - 2 * list_x, 336 + DY

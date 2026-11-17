@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-"""Route the speaker once after the sound card shows up (called by rgos-session before the splash plays).
-Restores /etc/rgos/audio/asound.state, runs init.txt / hw.json audio.init, un-mutes the outputs and dumps every mixer
-control to stdout (rgos-audio.log), so a control that still needs setting can be found and put in hw.json."""
 import os, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import hwctl

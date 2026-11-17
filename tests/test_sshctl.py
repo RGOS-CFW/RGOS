@@ -1,4 +1,3 @@
-"""sshctl: the custom root password is read exactly as typed, whatever editor saved the file."""
 import os
 import sys
 import unittest

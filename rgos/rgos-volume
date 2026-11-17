@@ -1,25 +1,4 @@
 #!/usr/bin/env python3
-"""rgos-volume: volume buttons + speaker setup for RG OS.
-
-* At start it picks the speaker's ALSA card, switches on the output (un-mutes the speaker / amp / headphone switches) and
-  restores the last volume (/var/lib/rgos/volume.json, default 70 %), so the launcher's sounds and the games are audible.
-* VOL+ / VOL- (KEY_VOLUMEUP 115 / KEY_VOLUMEDOWN 114, with key repeat) change the volume in 5 % steps; KEY_MUTE (113) toggles mute.
-  The keys are read from EVERY input device that has them, including the RG OS input hub (which forwards them from the
-  gpio-keys device it grabs), so it does not matter which device the hardware puts them on.
-* The level is written to /run/rgos/volume as "<percent> <stamp>" (the launcher shows its volume popup from that file) and
-  shown inside a running RetroArch as an on-screen message. The in-game indicator is owned by this daemon (class Announcer),
-  not by the launcher: it appears whenever a volume key is pressed, whether or not menu.py is running. RetroArch keeps each
-  message up for ~3 s and holds at most 8, so Announcer sends the first change at once and then coalesces key-repeat bursts
-  into a single message with the settled value (see Announcer).
-
-Overrides (/var/lib/rgos/hw.json, optional):  {"audio": {"card": 0, "controls": ["Speaker", "Headphone"], "step": 5}}
-  card      ALSA card number (default: the first card that is not HDMI)
-  controls  mixer controls to set to the volume (default: every playback-volume control that looks like an output)
-Log: /var/log/rgos-volume.log (copied to rgos-logs.txt), including the mixer controls found, so a card with odd control names can be configured.
-
-usage: rgos-volume            run the daemon
-       rgos-volume up|down|mute|set N   change the volume once (for scripts / SSH) and exit
-"""
 import fcntl, glob, json, os, re, select, struct, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -78,7 +57,6 @@ class Mixer:
         self.setup()
 
     def setup(self):
-        """(Re)discover the card and controls. The sound card can appear a few seconds after boot: callers retry."""
         hw = self.hwctl
         want = "" if self.want_card is None else str(self.want_card).strip()
         self.card = int(want) if want.isdigit() else hw.audio_card()
@@ -129,7 +107,6 @@ class State:
 
 
 def publish(pct, mute):
-    """/run/rgos/volume = '<percent> <stamp>' (the launcher polls it; a new stamp pops the volume bar up)."""
     try:
         os.makedirs(RUN_DIR, exist_ok=True)
         tmp = VOLUME_FILE + ".tmp"
@@ -141,7 +118,6 @@ def publish(pct, mute):
 
 
 def bar_text(pct, mute):
-    """'VOLUME [##########----------] 50%' / 'VOLUME [MUTED]'. Plain ASCII so any RetroArch font draws it."""
     if mute:
         return "VOLUME [MUTED]"
     n = max(0, min(BAR_CELLS, (pct * BAR_CELLS + 50) // 100))
@@ -149,19 +125,6 @@ def bar_text(pct, mute):
 
 
 class Announcer:
-    """The in-game volume indicator (a RetroArch on-screen message), independent of the launcher menu.
-
-    RetroArch shows one SHOW_MSG for about 3 s, queues the following ones behind it and silently drops them once 8 are
-    waiting. Sending one per key-repeat event (~25 a second while a button is held) therefore filled the queue: the
-    indicator lagged or never showed. Announcer sends
-
-      * the first change at once (nothing was sent in the last MSG_HOLD seconds), then
-      * ONE message with the latest value when the burst ends (MSG_QUIET without a change), and
-      * at most one every MSG_HOLD seconds while a button stays held,
-
-    so every press produces an indicator and it ends on the value that is really set.
-    """
-
     def __init__(self, send, clock=time.monotonic):
         self.send, self.clock = send, clock
         self.latest = None
@@ -177,14 +140,12 @@ class Announcer:
             log("in-game indicator failed: %r" % e)
 
     def note(self, pct, mute):
-        """Call on every volume change."""
         now = self.clock()
         self.latest, self.last_change = (pct, mute), now
         if self.last_sent is None or now - self.last_sent >= MSG_HOLD:
             self._emit(now)
 
     def poll(self):
-        """Call regularly; sends the settled value once the burst is over. Returns seconds until it wants to be called again."""
         if self.latest is None:
             return None
         now = self.clock()

@@ -1,13 +1,3 @@
-"""hwctl - hardware helpers shared by rgos-hw, rgos-volume, rgos-input (rumble) and rgos-poweroff.
-
-Everything here is *discovery based*: the TrimUI Smart Pro runs the stock 4.9 BSP kernel and nobody has looked at its
-sysfs on real hardware yet, so each helper tries the usual nodes in order, uses the first that exists, and reports what
-it found (rgos-hwprobe writes that to /var/log/rgos-hw.log). Nothing here raises for a missing node: a missing
-backlight/battery/motor just means that feature is off.
-
-Config: /etc/rgos/hw-<device>.json (shipped; <device> = /etc/rgos-device), merged with /var/lib/rgos/hw.json (the
-user's own overrides, kept across firmware updates). If no shipped file exists, rgos-hw still provides generic power-key suspend; optional hardware helpers no-op when absent.
-"""
 import glob, json, os, re, subprocess, time
 
 DEVFILE = "/etc/rgos-device"
@@ -30,7 +20,6 @@ def _merge(a, b):
 
 
 def load_conf(path=None, user=USER_CONF):
-    """Shipped per-device config merged with the user's overrides; None if this device has no hardware config."""
     path = path or "/etc/rgos/hw-%s.json" % device()
     try:
         with open(path) as f:
@@ -67,7 +56,6 @@ def wr(path, text):
 
 
 def write_run(path, text):
-    """Atomic small status file under /run/rgos (the menu polls these)."""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path + ".tmp", "w") as f:
@@ -79,17 +67,6 @@ def write_run(path, text):
 
 
 class LowPower:
-    """Turn everything down while the device sleeps and put it back exactly as it was afterwards.
-
-    enter(full=False)  radios (Wi-Fi, Bluetooth) off and LEDs dark: used before a real kernel suspend
-    enter(full=True)   the above plus CPU at its lowest speed with the extra cores offline and GPU/DRAM devfreq at
-                       powersave: used for the software sleep (screen off, game paused) on kernels that cannot suspend
-    leave()            restores every value that was changed (only values this class changed; a radio that was already
-                       blocked stays blocked)
-    The old values are kept in /run/rgos/lowpower.json, so a restarted rgos-hw can still undo a sleep (restore_stale()).
-    /run/rgos/sleeping exists while asleep: the Wi-Fi daemon keeps the radio down and the input hub idles.
-    Tunables (hw config "low_power"): enabled, radios_off, leds_off, cpu_min, offline_cpus, devfreq_min (all true by default).
-    Every write is best-effort: a missing knob is skipped, never an error."""
     DEFAULTS = {"enabled": True, "radios_off": True, "leds_off": True, "cpu_min": True, "offline_cpus": True,
                 "devfreq_min": True}
     ORDER = ("offline", "cpu", "devfreq", "led", "radio")
@@ -109,7 +86,6 @@ class LowPower:
         return os.path.join(self.sys, *parts)
 
     def _set(self, category, path, value):
-        """Write value to a sysfs knob and remember the old value (only when it really changed)."""
         old = rd(path, None)
         if old is None or old == str(value):
             return False
@@ -177,7 +153,6 @@ class LowPower:
         self.stage = 0
 
     def restore_stale(self):
-        """Undo a sleep that a previous rgos-hw never finished (crash, restart) and drop a stale /run/rgos/sleeping."""
         try:
             with open(self.saved_file) as f:
                 data = json.load(f)
@@ -189,7 +164,6 @@ class LowPower:
         self.leave()
 
     def prefer_deep_sleep(self):
-        """Pick the kernel's deepest suspend state (\"deep\" = suspend to RAM) over s2idle when it offers both."""
         path = self._p("power/mem_sleep")
         states = rd(path).split()
         if "deep" in states and "[deep]" not in states:
@@ -198,12 +172,6 @@ class LowPower:
 
 
 class Backlight:
-    """Panel backlight as a 0..100 percentage.
-
-    Backends, first match wins (conf["backlight"]["path"] forces one sysfs directory; "backend": "sysfs"|"dispdbg"):
-      sysfs    /sys/class/backlight/<x>/{brightness,max_brightness}   (mainline-style, PWM backlight)
-      dispdbg  /sys/kernel/debug/dispdbg/{name,command,param,start}   (Allwinner BSP disp2: 'lcd0' 'setbl' <0-255>)
-    """
     DISPDBG = "/sys/kernel/debug/dispdbg"
 
     def __init__(self, conf=None, sys_root="/sys"):
@@ -253,7 +221,6 @@ class Backlight:
         return max(1, min(100, int(round(100.0 * ((raw / float(self.max)) ** (1.0 / self.gamma))))))
 
     def get(self):
-        """Current percentage, or None if unknown."""
         if self.kind == "sysfs":
             v = rd(os.path.join(self.node, "brightness"))
             return self._pct(int(v)) if v.isdigit() else None
@@ -262,7 +229,6 @@ class Backlight:
         return None
 
     def set(self, pct):
-        """Set 0..100 (0 = panel off; anything above 0 is raised to min_pct so the screen never goes accidentally dark)."""
         if not self.kind:
             return False
         pct = 0 if pct <= 0 else max(self.min_pct, min(100, int(pct)))
@@ -278,8 +244,6 @@ class Backlight:
 
 
 class Battery:
-    """First power_supply of type Battery (conf["battery"]["supply"] = a name picks one). read() -> dict or None."""
-
     def __init__(self, conf=None, sys_root="/sys"):
         c = (conf or {}).get("battery", {}) if conf else {}
         self.vmin = float(c.get("empty_v", 3.3))
@@ -300,7 +264,6 @@ class Battery:
         return self.node is not None
 
     def read(self):
-        """{"pct", "status", "estimated", "charging", "plugged", "discharging"} or None."""
         if not self.node:
             return None
         cap, est = rd(os.path.join(self.node, "capacity")), False
@@ -327,7 +290,6 @@ def _run(args, timeout=5):
 
 
 def audio_card(cards_text=None):
-    """ALSA card index to use: the first card that is not HDMI/digital-out; 0 when there is only one or none."""
     text = cards_text if cards_text is not None else rd("/proc/asound/cards")
     cards = re.findall(r"^\s*(\d+)\s+\[([^\]]*)\]\s*:\s*(.*)$", text, re.M)
     for idx, cid, desc in cards:
@@ -337,7 +299,6 @@ def audio_card(cards_text=None):
 
 
 def audio_pcm(card, proc="/proc/asound"):
-    """Lowest playback PCM device number of the card (Unisoc/vendor cards do not always have playback on device 0); 0 if unknown."""
     devs = []
     for d in glob.glob(os.path.join(proc, "card%d" % card, "pcm*p")):
         m = re.search(r"pcm(\d+)p$", d)
@@ -350,8 +311,6 @@ OUTPUT_RE = re.compile(r"speaker|spk|lineout|line out|headphone|headset|\bhp\b|m
 
 
 def audio_enable(card, extra=()):
-    """Switch on playback *switches* (mute/amp/output enables) that the codec leaves off after boot. Volume levels are
-    rgos-volume's job. Returns the control names it switched on."""
     names = re.findall(r"Simple mixer control '([^']+)',0", _run(["amixer", "-c", str(card), "scontrols"]))
     done = []
     for n in names:
@@ -372,8 +331,6 @@ RAW_SKIP_RE = re.compile(r"capture|record|mic|adc|\bin\b|input|loop|bypass|sidet
 
 
 def audio_enable_raw(card, run=None):
-    """Switch on every playback-output BOOLEAN control of the card (and switch OFF ones named '... Mute'), returning the lines done.
-    Controls for capture / voice call / bluetooth / loopback are left alone. Best effort: never raises."""
     run = run or _run
     out, done, cur = run(["amixer", "-c", str(card), "contents"]) or "", [], None
     for line in out.splitlines():
@@ -398,8 +355,6 @@ def audio_enable_raw(card, run=None):
 
 
 def _audio_init_lines(path, user_conf):
-    """Mixer setup commands: shipped /etc/rgos/audio/init.txt (one per line, # comments) + hw.json {"audio": {"init": [...]}}.
-    A line is the argument list of `amixer -c <card> -q`, e.g.  sset 'Speaker Switch' on   or   cset name='Speaker Mux' 1"""
     import shlex
     lines = []
     try:
@@ -427,9 +382,6 @@ def _audio_init_lines(path, user_conf):
 
 
 def audio_prepare(card, audio_dir=AUDIO_DIR, user_conf=USER_CONF, run=None):
-    """One-time speaker routing after the sound card appears: restore the mixer state captured from the stock ROCKNIX image
-    (asound.state: the codec's output routes and gains as the vendor left them), then run the init commands. Returns a list of
-    log lines. Every step is best effort: a missing file or a failing command never stops the boot."""
     run = run or _run
     log = []
     state = os.path.join(audio_dir, "asound.state")
@@ -454,13 +406,6 @@ def audio_prepare(card, audio_dir=AUDIO_DIR, user_conf=USER_CONF, run=None):
 
 
 class Motor:
-    """On/off vibration motor. Modes (conf["rumble"]["mode"], default auto):
-      gpio    conf["rumble"]["gpio"] = global GPIO number (A133: PH3 = 7*32+3 = 227), "active_low" optional; sysfs gpio
-      timed   /sys/class/timed_output/vibrator/enable (Android style: write milliseconds)
-      led     /sys/class/leds/<vibrator|motor|rumble>/brightness
-      none
-    auto = gpio if a number is configured, else timed, else led, else none."""
-
     def __init__(self, conf=None, sys_root="/sys", gpio_root=None):
         c = (conf or {}).get("rumble", {}) if conf else {}
         self.gpio_root = gpio_root or os.path.join(sys_root, "class/gpio")
@@ -505,7 +450,6 @@ class Motor:
         self.state = on
 
     def pulse(self, ms=120):
-        """Short blocking buzz (UI feedback only: keep it under ~250 ms)."""
         if not self.available:
             return
         self.set(True)
@@ -517,7 +461,6 @@ class Motor:
 
 
 def retroarch_msg(text, port=55355):
-    """On-screen message inside a running RetroArch (network_cmd_enable); harmless when it is not running."""
     import socket
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -528,7 +471,6 @@ def retroarch_msg(text, port=55355):
 
 
 def report(conf=None):
-    """Plain-text summary of what was discovered (rgos-hwprobe appends it to the log)."""
     conf = conf if conf is not None else load_conf()
     bl, bt, mo = Backlight(conf), Battery(conf), Motor(conf)
     card = audio_card()

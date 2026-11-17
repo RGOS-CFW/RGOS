@@ -1,4 +1,3 @@
-"""rgos-input: stick calibration, the live stick feed for the wizard, and the button translation basics."""
 import json
 import os
 import unittest
@@ -11,7 +10,6 @@ FULL = (-32768, 32767)
 
 
 def value_of(events):
-    """The single EV_ABS value in a translator result."""
     assert len(events) == 1 and events[0][0] == hub.EV_ABS, events
     return events[0][2]
 
@@ -108,7 +106,6 @@ class FakeSource:
 
 
 class StickFeedTests(unittest.TestCase):
-    """KeyProbe.sticks(): what the wizard sees while it runs."""
     def setUp(self):
         d = helpers.sandbox()
         self.flag, self.out = os.path.join(d, "keys.probe"), os.path.join(d, "sticks.raw")

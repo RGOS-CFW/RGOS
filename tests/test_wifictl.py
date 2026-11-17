@@ -1,4 +1,3 @@
-"""wifictl: a damaged or hand-edited wifi.json must not break Wi-Fi."""
 import json
 import os
 import shutil

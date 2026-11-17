@@ -1,4 +1,3 @@
-"""rgos-launch: in-game performance helpers (governor, verbose log toggle, game flag) against a fake sysfs."""
 import os
 import unittest
 from unittest import mock

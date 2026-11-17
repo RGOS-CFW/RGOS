@@ -1,4 +1,3 @@
-"""Menu navigation with the left stick: the stick acts like the D-pad (hold, auto-repeat, hysteresis)."""
 import unittest
 from unittest import mock
 

@@ -1,4 +1,3 @@
-"""filemanager: the protected boot files stay protected, whatever the name looks like."""
 import os
 import shutil
 import sys

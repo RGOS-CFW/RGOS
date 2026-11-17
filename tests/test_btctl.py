@@ -1,4 +1,3 @@
-"""btctl: the saved Bluetooth on/off setting is applied at boot."""
 import json
 import os
 import shutil

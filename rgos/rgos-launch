@@ -1,21 +1,4 @@
 #!/usr/bin/env python3
-"""rgos-launch TARGET: run what the menu chose (called by rgos-session after the menu exits with code 10).
-
-TARGET is the text the menu wrote to /run/rgos/launch:
-  /media/roms/roms/gba/Game.gba   a ROM: the system is the folder under roms/, the core is the one picked in
-                                  Settings > Emulators (state.json) or the system's default (menu.default_core)
-  @tool:retroarch                 the RetroArch menu without content
-  anything else (ports, PortMaster) is not supported by this build and is only logged.
-
-What it does for a ROM: pick an installed core, create <ROMS>/saves/<system>, <ROMS>/states/<system>, <ROMS>/bios,
-write /run/rgos/retroarch-run.cfg (those folders + the ALSA device) and start RetroArch with
-  --config /etc/rgos/retroarch.cfg --appendconfig run.cfg[|<ROMS>/config/retroarch.cfg]
-If RetroArch dies within a few seconds with an error, the last log lines are put on the console (tty1) so the failure is
-visible on the device; the full log stays in /var/log/rgos-retroarch.log. Always returns 0: the session goes back to the menu.
-
-Testing on a PC: RGOS_RA_BIN, RGOS_RA_CFG, RGOS_RUN, RGOS_ROMS, RGOS_CORE_DIRS, RGOS_STATE, RGOS_RA_LOG, RGOS_NO_HW=1
-override the device paths.
-"""
 import gc, glob, shutil, json, os, re, signal, subprocess, sys, time
 
 RA_BIN = os.environ.get("RGOS_RA_BIN", "retroarch")
@@ -36,7 +19,7 @@ HEAVY_SYSTEMS = frozenset(("psx", "gc", "n64", "dreamcast", "saturn", "psp"))
 DOLPHIN_SYS_SRC = os.environ.get("RGOS_DOLPHIN_SYS", "/usr/local/share/rgos/dolphin-emu/Sys")
 RELEASE_FILE = os.environ.get("RGOS_RELEASE_FILE", "/etc/rgos-release")
 SYS_MARK = ".rgos-sys-stamp"
-GC_RETRY_S = 30.0          # a GameCube launch that dies sooner than this is retried with the next video driver
+GC_RETRY_S = 30.0
 GC_VIDEO_DRIVERS = ("glcore", "gl")
 
 FALLBACK_DEFAULT = {"gba": "mgba", "gb": "gambatte", "gbc": "gambatte", "nes": "nestopia"}
@@ -49,7 +32,6 @@ def log(msg):
 
 
 def system_of(path):
-    """'/media/roms/roms/gba/x.gba' -> 'gba' (the folder directly under the last 'roms' component); '' if none."""
     parts = os.path.normpath(path).split(os.sep)
     for i in range(len(parts) - 2, 0, -1):
         if parts[i - 1] == "roms":
@@ -58,7 +40,6 @@ def system_of(path):
 
 
 def core_file(core, dirs=None):
-    """Full path of <core>_libretro.so in the first core directory that has it, else ''."""
     for d in (CORE_DIRS if dirs is None else dirs):
         p = os.path.join(d, core + "_libretro.so")
         if os.path.isfile(p):
@@ -75,7 +56,6 @@ def load_json(path, default):
 
 
 def menu_api():
-    """(default_core, compatible_cores) from the menu module so there is one table of truth; fallback tables otherwise."""
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import menu
@@ -86,7 +66,6 @@ def menu_api():
 
 
 def pick_core(sid, state, default_core, compatible_cores):
-    """The user's choice for this system if installed, else the system default if installed, else the first compatible core."""
     emus = state.get("emulators") if isinstance(state, dict) else None
     wanted = emus.get(sid) if isinstance(emus, dict) else None
     if not isinstance(wanted, str) or not wanted:
@@ -101,7 +80,6 @@ def pick_core(sid, state, default_core, compatible_cores):
 
 
 def alsa_device():
-    """plughw:<card>,0 for the card hwctl considers the speaker (first non-HDMI card); also un-mutes its outputs."""
     if os.environ.get("RGOS_NO_HW"):
         return "default"
     try:
@@ -119,7 +97,6 @@ def alsa_device():
 
 
 def pad_nodes():
-    """[(index N of /dev/input/jsN, device name)] sorted by N. RetroArch's linuxraw/udev joypad index is this N."""
     out = []
     for d in glob.glob(os.path.join(SYS_INPUT, "js[0-9]*")):
         m = re.fullmatch(r"js(\d+)", os.path.basename(d))
@@ -134,8 +111,6 @@ def pad_nodes():
 
 
 def hub_index(pads=None):
-    """jsN of the hub's pad, else None. Without udevd nothing hides the raw (grabbed, silent) pad js0, so player 1 must
-    be pointed at the hub explicitly or RetroArch listens to a dead device."""
     for n, name in (pad_nodes() if pads is None else pads):
         if name == HUB_NAME:
             return n
@@ -143,8 +118,6 @@ def hub_index(pads=None):
 
 
 def joypad_driver():
-    """RetroArch joypad driver. Default linuxraw (reads /dev/input/jsN directly: no udev, no SDL device classification).
-    Put one word (linuxraw, sdl2 or udev) in /boot/retroarch-joypad.txt to try another one without rebuilding."""
     try:
         with open(os.path.join(BOOT_DIR, "retroarch-joypad.txt")) as f:
             w = f.read().split()
@@ -160,13 +133,10 @@ OSD_FONTS = ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", "/usr/s
 
 
 def osd_font():
-    """A TrueType font for RetroArch's on-screen messages (the volume indicator), '' if none is installed. Without one
-    RetroArch falls back to its tiny built-in font, so only a font that really exists is passed on."""
     return next((p for p in OSD_FONTS if os.path.isfile(p)), "")
 
 
 def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, font="", video_driver=None):
-    """Text of the per-launch appendconfig. Folders are per system and live on the ROMS card so saves survive updates."""
     q = lambda p: '"%s"' % p
     lines = ['audio_device = %s' % q(audio_device)]
     if font:
@@ -208,9 +178,6 @@ def _release_stamp():
 
 
 def copy_tree(src, dst):
-    """Copy src into dst file by file (dst may already exist). Plain content copy only: shutil.copytree/copy2 also copy the
-    permission bits, which the exFAT ROMS card refuses (EPERM), and that left a half-copied Sys folder behind. Returns the
-    list of errors; broken symlinks in the source are skipped."""
     errs = []
     for root, _dirs, files in os.walk(src):
         rel = os.path.relpath(root, src)
@@ -232,10 +199,6 @@ def copy_tree(src, dst):
 
 
 def ensure_dolphin_sys(roms_root, src=None):
-    """The Dolphin core wants <system dir>/dolphin-emu/Sys. The image ships a copy; put it on the ROMS card (exFAT: no symlinks).
-    A stamp file written only after a COMPLETE copy says the folder is good, so an interrupted or failed copy is redone on the
-    next launch (before, the mere existence of the folder counted as done and the core then died on missing files), and a new
-    image build refreshes the shipped files. Files the user added (IPL.bin) are never touched. Returns (ok, message)."""
     src = src or DOLPHIN_SYS_SRC
     dst = os.path.join(roms_root, "bios", "dolphin-emu", "Sys")
     if not os.path.isdir(src):
@@ -260,7 +223,6 @@ def ensure_dolphin_sys(roms_root, src=None):
 
 
 def missing_libs(path):
-    """Shared libraries that `ldd path` cannot find (names only). [] when ldd is not available or the file is fine."""
     ldd = shutil.which("ldd")
     if not ldd or not path:
         return []
@@ -281,9 +243,6 @@ def rc_text(rc):
 
 
 def video_attempts(sid, boot_dir=None):
-    """Video drivers to try in order. Only the GameCube core needs a real GL context (the 2D cores run on whatever RetroArch
-    picks), so only gc is pinned: glcore, then gl if the first launch dies at once. One word in /boot/retroarch-gc-video.txt
-    (glcore, gl, vulkan, ...) forces a single choice. [None] = leave RetroArch's own driver."""
     if sid != "gc":
         return [None]
     try:
@@ -315,8 +274,6 @@ def show_error(title, detail):
 
 
 def device_cfg():
-    """/etc/rgos/retroarch-<device>.cfg (device = /etc/rgos-device) if the image ships one, else None. Per-device RetroArch binds,
-    e.g. the RG34XXSP's analog sticks; it comes first in the append list so run.cfg and the user's retroarch.cfg can still override it."""
     try:
         with open(os.environ.get("RGOS_DEVICE_FILE", "/etc/rgos-device")) as f:
             dev = f.read().strip()
@@ -327,10 +284,6 @@ def device_cfg():
 
 
 def perf_governor(sid):
-    """Governor to force while the game runs, or '' to leave the system's own (battery-friendly) choice alone.
-    Heavy systems (PSX, GameCube, N64, Dreamcast, Saturn, PSP) get 'performance' so the CPU/GPU/DRAM never sit at a low clock
-    while a frame is being rendered. Put one word in /boot/rgos-governor.txt to override for every system
-    (performance, schedutil, ondemand, ...; 'default' = never touch the governor)."""
     try:
         with open(os.path.join(BOOT_DIR, "rgos-governor.txt")) as f:
             w = f.read().split()
@@ -355,9 +308,6 @@ def _read(path):
 
 
 def set_governor(gov):
-    """Set `gov` on every cpufreq policy and devfreq device (GPU, DRAM) that offers it. Returns {node: previous governor}
-    for restore_governor(). All previous values are read BEFORE anything is written: cores of one cpufreq policy share a
-    governor, so reading cpu1 after writing cpu0 would record 'performance' as its original."""
     if not gov:
         return {}
     todo = {}
@@ -399,13 +349,10 @@ def set_game_flag(on):
 
 
 def ra_verbose():
-    """RetroArch's --verbose log costs CPU and SD-card writes every frame it logs. Off by default; touch
-    /boot/retroarch-verbose.txt (or set RGOS_RA_VERBOSE=1) to get the full log for a bug report."""
     return bool(os.environ.get("RGOS_RA_VERBOSE")) or os.path.exists(os.path.join(BOOT_DIR, "retroarch-verbose.txt"))
 
 
 def game_priority():
-    """preexec for RetroArch: a higher scheduling priority than the background daemons (Wi-Fi, Bluetooth, input hub)."""
     try:
         os.setpriority(os.PRIO_PROCESS, 0, -5)
     except OSError:
@@ -413,8 +360,6 @@ def game_priority():
 
 
 def unload_menu():
-    """menu.py is only imported for its core tables. Drop it (and pygame) before RetroArch starts: this process stays alive
-    for the whole game and would otherwise keep the Python heap of a 168 KB module plus pygame resident on a 1 GB device."""
     for name in [m for m in sys.modules if m == "menu" or m == "pygame" or m.startswith("pygame.")]:
         del sys.modules[name]
     gc.collect()
@@ -439,7 +384,6 @@ def build_command(core_path, content, roms_root, cfg_run, verbose=None):
 
 
 def kernel_hints(n=40):
-    """The last kernel lines that explain a silent death of the emulator (segfault, out-of-memory kill, GPU errors)."""
     if os.environ.get("RGOS_NO_HW"):
         return ""
     try:
@@ -451,7 +395,6 @@ def kernel_hints(n=40):
 
 
 def save_report(pads, idx, drv, cmd, rc, history=(), core_path=""):
-    """Copy what a PC needs to see why a game does not start to <boot>/rgos-retroarch.txt (the boot FAT partition)."""
     try:
         with open(os.path.join(BOOT_DIR, "rgos-retroarch.txt"), "w") as f:
             f.write("== %s rc=%s (%s)\ncmd: %s\npads (jsN, name): %s\nhub pad: %s   joypad driver: %s\n"
@@ -492,7 +435,6 @@ def launch_retroarch(sid, core, core_path, content):
     for n, video in enumerate(attempts):
         with open(cfg_run, "w") as f:
             f.write(run_config(sid, ROMS_ROOT, audio, idx, drv, font, video))
-        # The GameCube core always runs with RetroArch's verbose log: without it a core that fails to start leaves nothing to read.
         cmd = build_command(core_path, content, ROMS_ROOT, cfg_run, verbose=True if sid == "gc" else None)
         log("starting%s: %s" % (" (video_driver %s)" % video if video else "", " ".join(cmd)))
         t0 = time.monotonic()

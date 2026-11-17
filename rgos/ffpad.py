@@ -1,14 +1,3 @@
-"""ffpad - force-feedback (rumble) support for the rgos-input virtual pad.
-
-RetroArch (udev driver) and SDL2 (haptics) rumble a gamepad by uploading an FF_RUMBLE effect to its evdev node and
-playing it. For a uinput device the kernel hands those requests to the process that created it, which is the input
-hub. FFHandler answers them and drives the vibration motor (hwctl.Motor, an on/off motor: strong and weak magnitude
-are folded into one level, on above `threshold`).
-
-Protocol (linux/uinput.h): the hub reads struct input_event records from the uinput fd. EV_UINPUT/UI_FF_UPLOAD and
-UI_FF_ERASE carry a request id that must be answered with UI_BEGIN_* / UI_END_* ioctls (the caller of EVIOCSFF blocks
-until then); EV_FF events with code = effect id and value = repeat count (0 = stop) play and stop effects.
-"""
 import ctypes, fcntl, os, struct, time
 
 EV_FF, EV_UINPUT = 0x15, 0x0101
@@ -90,9 +79,6 @@ UI_END_FF_ERASE = _ioc(1, "U", 203, ctypes.sizeof(EraseReq))
 
 
 class FFHandler:
-    """Answers the uinput FF handshake on `ufd` and runs the motor. Call service() when ufd is readable and tick()
-    regularly (next_deadline() says when the next effect ends)."""
-
     def __init__(self, ufd, motor, threshold=0.15, max_ms=3000, clock=time.monotonic):
         self.ufd, self.motor, self.threshold, self.max_s, self.clock = ufd, motor, threshold, max_ms / 1000.0, clock
         self.effects = {}
@@ -142,7 +128,6 @@ class FFHandler:
                 self.playing.pop(code, None)
 
     def service(self):
-        """Drain the uinput fd (non-blocking)."""
         while True:
             try:
                 data = os.read(self.ufd, EVFMT.size * 16)
@@ -170,7 +155,6 @@ class FFHandler:
             self.motor_on = want
 
     def next_deadline(self, default=0.25):
-        """Seconds until tick() must run again (bounded by default)."""
         if not self.playing:
             return default
         soonest = min(d for d in self.playing.values() if d is not None)

@@ -357,8 +357,6 @@ KEEP
   rm -rf "$ROOTFS/tmp/core-src" "$ROOTFS/etc/resolv.conf"
 fi
 if [[ "$DEVICE" == "rg-rotate" && -e "$LRDIR/dolphin_libretro.so" ]]; then
-  # A prebuilt core (cores/) or a purged toolchain can leave the core linked against libraries the image does not have; the core
-  # then fails to load and the game "just closes". Check with ldd, try to install what is missing, and say so if something stays missing.
   gc_missing() { chroot "$ROOTFS" sh -c 'ldd /usr/local/lib/libretro/dolphin_libretro.so 2>&1 | grep "not found"' || true; }
   GC_GONE="$(gc_missing)"
   if [[ -n "$GC_GONE" ]]; then

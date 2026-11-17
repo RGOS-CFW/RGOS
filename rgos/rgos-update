@@ -59,7 +59,6 @@ def log(msg):
 
 
 def say(msg):
-    """Log a line and show it on the console (the framebuffer text console, before the menu is up)."""
     log(msg)
     try:
         with open(TTY, "w") as t:
@@ -82,7 +81,6 @@ def _natural(s):
 
 
 def partitions():
-    """Block devices that can hold files: mmcblkNpM / sdXN, or a whole disk that has no partition table."""
     try:
         names = os.listdir("/sys/class/block")
     except OSError:
@@ -132,7 +130,6 @@ def is_boot(d):
 
 
 def find_boot(parts):
-    """The RG OS boot partition (has SYSTEM + rgos-initrd.cpio + extlinux/extlinux.conf), mounted read-write on /boot."""
     if os.path.ismount(BOOT_MNT) and is_boot(BOOT_MNT):
         return BOOT_MNT, None
     probe = os.path.join(RUN, "probe")
@@ -147,7 +144,6 @@ def find_boot(parts):
 
 
 def _subdir(base, name):
-    """Case-insensitive lookup of a sub-folder (FAT/exFAT folders may be called Update, UPDATE, ...)."""
     try:
         return next((os.path.join(base, e) for e in os.listdir(base) if e.lower() == name and os.path.isdir(os.path.join(base, e))), None)
     except OSError:
@@ -155,10 +151,6 @@ def _subdir(base, name):
 
 
 def find_update(parts):
-    """First partition with update/*.tar (or roms/update/*.tar) -> (dev, mountpoint, we_mounted_it, update_dir, tar_path), newest name wins.
-
-    roms/update matters when there is no ROMS partition: rgos-session then bind-mounts /boot/roms on /media/roms and creates
-    /media/roms/update there, i.e. <boot partition>/roms/update."""
     for dev in parts:
         mp = mounted_at(dev)
         ours = mp is None
@@ -188,7 +180,6 @@ def find_update(parts):
 
 
 def sane(name, head):
-    """Cheap magic-number check so a wrong file is never installed as system / kernel / initramfs / device tree."""
     if name == "SYSTEM":
         return head[:4] == b"hsqs"
     if name == "KERNEL":
@@ -201,7 +192,6 @@ def sane(name, head):
 
 
 def read_tar(path):
-    """Open and validate the tar. Returns (tarfile, manifest, {boot file name: member})."""
     try:
         tf = tarfile.open(path, "r:*")
         members = {}
@@ -276,7 +266,6 @@ def _cleanup(bootdir):
 
 
 def ensure_writable(bootdir):
-    """The initramfs may have had to mount the FAT partition read-only (dirty flag). Try to fix that, else say so clearly."""
     probe = os.path.join(bootdir, ".rgos-w")
     for attempt in (0, 1):
         try:
@@ -293,7 +282,6 @@ def ensure_writable(bootdir):
 
 
 def apply_tar(tar, bootdir):
-    """Install one update tar. Returns 'installed' or 'same'; raises UpdateError (boot partition untouched until all is verified)."""
     tf, man, payload = read_tar(tar)
     uid = str(man["id"])
     try:

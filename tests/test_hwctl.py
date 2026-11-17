@@ -1,4 +1,3 @@
-"""hwctl.Motor: GPIO selection."""
 import json
 import os
 import sys

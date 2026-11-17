@@ -1,4 +1,3 @@
-"""splash.read_conf: a bad splash.json next to the video must fall back to the defaults."""
 import json
 import os
 import shutil

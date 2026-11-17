@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""RG OS SSH / file transfer: a Dropbear SSH server with SFTP (WinSCP, FileZilla, `scp`, `sftp`, `ssh root@<ip>`).
-
-Login:  user root, password "rgos" (the image's default). Change it by putting a file ssh-password.txt (one line) on the
-        card's FAT boot partition; it is applied at every boot. To log in with a key instead, put your public key in a file
-        named authorized_keys on the same partition.
-Files:  /var/lib/rgos/ssh.json   on/off (default on)
-        /var/lib/rgos/ssh/       host keys, generated on first start (so the fingerprint stays the same)
-        /var/log/rgos-ssh.log    log (copied to rgos-logs.txt on the card)
-The ROMS partition is at /media/roms, the boot partition at /boot.
-"""
 import hashlib, json, os, re, shutil, subprocess, sys, time
 
 CONF = os.environ.get("RGOS_SSH_CONF", "/var/lib/rgos/ssh.json")
@@ -99,8 +89,6 @@ def info():
 
 
 def read_password(path):
-    """First line of ssh-password.txt, or None if unreadable. utf-8-sig: Notepad on the FAT boot partition writes a BOM,
-    which strip() keeps and which would become part of the password."""
     try:
         with open(path, encoding="utf-8-sig", errors="replace") as f:
             lines = f.read().splitlines()
@@ -145,7 +133,6 @@ def apply_password():
 
 
 def prepare_home():
-    """/root is on the read-only system image: give root a RAM home with ~/.ssh/authorized_keys (Dropbear insists on modes)."""
     if not os.path.ismount("/root"):
         run(["mount", "-t", "tmpfs", "-o", "mode=700", "tmpfs", "/root"])
     os.makedirs("/root/.ssh", exist_ok=True)

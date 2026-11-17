@@ -1,4 +1,3 @@
-"""rgos-volume: choosing the ALSA card from hw.json."""
 import importlib.machinery
 import importlib.util
 import os

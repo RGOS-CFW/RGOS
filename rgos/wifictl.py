@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""RG OS Wi-Fi: saved networks, scanning, wpa_supplicant config, status, and the connection daemon.
-
-Used by three things: the menu (Settings > Wi-Fi), the `rgos-wifi` command line tool, and the `rgos-wifi` systemd service
-(`rgos-wifi daemon`). Everything is built on the usual userspace tools (wpa_supplicant + wpa_cli, busybox udhcpc, ip,
-rfkill) and is discovery based: the adapter is whatever wireless interface the kernel shows in /sys/class/net.
-
-Files:  /var/lib/rgos/wifi.json   saved networks + on/off (mode 600, kept across firmware updates)
-        /etc/rgos/wifi.json       defaults: country, module names to try, firmware folder
-        /run/rgos/wifi.status     what the daemon sees right now (the menu and `rgos-wifi status` read it)
-        /var/log/rgos-wifi.log    daemon, wpa_supplicant and DHCP log
-Passwords are never stored: only the 256-bit WPA-PSK derived from SSID + passphrase (still enough to join the network).
-"""
 import hashlib, json, os, re, shutil, signal, subprocess, sys, threading, time
 
 CONF_FILE = os.environ.get("RGOS_WIFI_CONF", "/var/lib/rgos/wifi.json")
@@ -42,7 +30,6 @@ def _read_json(path, default):
 
 
 def _int(v, default=0):
-    """int(v), or `default` for anything that is not a number (a hand-edited wifi.json must not break Wi-Fi)."""
     try:
         return int(v)
     except (TypeError, ValueError, OverflowError):
@@ -79,7 +66,6 @@ def sys_conf():
 
 
 def derive_psk(ssid, password):
-    """WPA/WPA2-Personal pre-shared key as 64 hex digits (PBKDF2-HMAC-SHA1, 4096 rounds, SSID as salt)."""
     return hashlib.pbkdf2_hmac("sha1", password.encode(), ssid.encode(), 4096, 32).hex()
 
 
@@ -88,7 +74,6 @@ def password_ok(password):
 
 
 def add_network(ssid, password=None, hidden=False):
-    """Save (or replace) a network and make it the preferred one. password None = open network. Returns True if saved."""
     conf = load_conf()
     conf["prio"] += 1
     net = {"ssid": ssid, "psk": derive_psk(ssid, password) if password is not None else "", "hidden": bool(hidden),
@@ -119,7 +104,6 @@ def set_enabled(on):
 
 
 def make_wpa_conf(conf, country=""):
-    """wpa_supplicant.conf text. SSIDs go in as hex and keys as the derived PSK, so no quoting/escaping problems."""
     out = ["ctrl_interface=%s" % CTRL_DIR, "update_config=0", "ap_scan=1"]
     country = (conf.get("country") or country or "").strip().upper()
     if re.fullmatch(r"[A-Z]{2}", country):
@@ -149,7 +133,6 @@ def write_wpa_conf(conf=None):
 
 
 def unescape_ssid(s):
-    """wpa_cli prints SSIDs with \\xNN escapes for non-printable bytes."""
     out, i, b = bytearray(), 0, s.encode("utf-8", "surrogateescape")
     while i < len(b):
         m = re.match(rb"\\x([0-9a-fA-F]{2})", b[i:i + 4])
@@ -163,8 +146,6 @@ def unescape_ssid(s):
 
 
 def parse_scan(text):
-    """`wpa_cli scan_results` -> [{ssid, rssi, secured, unsupported}] strongest first, one entry per SSID.
-    unsupported = WEP or WPA3-only (SAE without PSK), which this build does not join."""
     best = {}
     for line in text.splitlines():
         p = line.split("\t")
@@ -215,7 +196,6 @@ def wpa(iface, *args, timeout=8):
 
 
 def scan(iface, wait=4.0):
-    """Trigger a scan and return (networks, error message or '')."""
     rc, out = wpa(iface, "scan")
     if rc != 0 or ("FAIL" in out and "BUSY" not in out):
         return [], "Wi-Fi is not ready yet"
@@ -225,7 +205,6 @@ def scan(iface, wait=4.0):
 
 
 def apply():
-    """Regenerate the wpa_supplicant config and tell a running supplicant to pick up the change and re-select."""
     ok = write_wpa_conf()
     iface = find_iface()
     if iface and os.path.exists(os.path.join(CTRL_DIR, iface)):
@@ -235,7 +214,6 @@ def apply():
 
 
 def join(ssid, password=None, hidden=False):
-    """Save a new network and connect to it."""
     return add_network(ssid, password, hidden) and apply()
 
 
@@ -250,7 +228,6 @@ def connect(ssid):
 
 
 def status():
-    """What the daemon last reported: {state: off|no-adapter|disconnected|connecting|connected, ssid, ip, rssi, iface}."""
     try:
         if time.time() - os.path.getmtime(STATUS_FILE) > STALE_S:
             raise OSError
@@ -271,7 +248,6 @@ def status_text(st):
 
 
 class Scanner:
-    """Background scans for the menu: kick(), then read .nets / .err / .busy. Retries while the supplicant is starting."""
     def __init__(self):
         self.nets, self.err, self.busy, self.seen = [], "", False, False
 
@@ -298,7 +274,6 @@ class Scanner:
             self.busy = False
 
     def rows(self, conf):
-        """Visible networks plus saved ones that are out of range: [{ssid, rssi, secured, saved, unsupported}]."""
         saved = {n["ssid"]: n for n in conf["networks"]}
         out = [dict(n, saved=n["ssid"] in saved) for n in self.nets]
         seen = {n["ssid"] for n in self.nets}
@@ -329,7 +304,6 @@ WIFI_PAT = re.compile(r"(cfg80211|mac80211|libarc4|sprd|uwe|sc23|unisoc|wcn|marl
 
 
 def wifi_module_files():
-    """[(name, path)] of every module that looks wireless: in a 'wireless' folder, or with a Wi-Fi-ish file name."""
     out = []
     for root, _d, files in os.walk("/lib/modules"):
         for f in files:
@@ -342,8 +316,6 @@ def wifi_module_files():
 
 
 def load_modules(cfg):
-    """Best effort: point the kernel's firmware loader at <ROMS>/firmware too, then modprobe the usual Wi-Fi drivers and every
-    module that looks wireless (modprobe pulls in dependencies from modules.dep). Failures are logged, one line each."""
     fw = cfg.get("firmware_dir", "")
     if fw:
         try:
@@ -365,15 +337,12 @@ def load_modules(cfg):
 
 
 def brute_force_insmod(found):
-    """If modules.dep is missing/stale modprobe cannot place anything: insmod the wireless modules directly, a few passes so
-    dependencies settle (an insmod that fails for an unmet dependency is simply retried)."""
     for _ in range(3):
         for _n, path in found:
             run(["insmod", path], timeout=20)
 
 
 def diag(tag):
-    """Everything useful for 'no Wi-Fi adapter' in one block of the log."""
     log("---- diagnostics (%s)" % tag)
     try:
         log("net interfaces: %s" % " ".join(sorted(os.listdir(SYSNET))))

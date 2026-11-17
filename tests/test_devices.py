@@ -1,4 +1,3 @@
-"""Every device build.sh can build is wired in everywhere: menu canvas, CI workflow, README, update-tar manifest docs."""
 import os
 import re
 import unittest

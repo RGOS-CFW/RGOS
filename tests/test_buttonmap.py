@@ -1,8 +1,3 @@
-"""Settings > Map buttons wizard (menu.ButtonMap), including the first-boot setup, stick calibration and step retry.
-
-The wizard talks to the input hub through two files in the run dir (keys.raw: last raw key press, sticks.raw: live stick
-values). FakeHub writes them, and a fake clock replaces time.time() so every test runs instantly and deterministically.
-"""
 import json
 import math
 import os
@@ -18,7 +13,6 @@ RANGE = (-32768, 32767)
 
 
 class Clock:
-    """Stands in for the `time` module inside menu.py (the wizard only calls time.time())."""
     def __init__(self):
         self.t = 1000.0
 
@@ -45,17 +39,14 @@ class WizardCase(unittest.TestCase):
         self.has_sticks = False
 
     def hub_sticks(self, present=True):
-        """Switch the hub's analog output on/off (it only publishes sticks.raw on devices with sticks)."""
         self.has_sticks = present
         self.flush()
 
     def write_sticks(self, **over):
-        """Hold the given axes (a0=..., a1=...) where told; everything else rests. No arguments = let go."""
         self.over = {int(k[1:]): v for k, v in over.items()}
         self.flush()
 
     def flush(self):
-        """What the real hub does ~20 times a second while the wizard runs: publish the live stick values."""
         if not self.has_sticks:
             return
         vals = dict(self.rest)
@@ -90,7 +81,6 @@ class WizardCase(unittest.TestCase):
             wiz.update()
 
     def run_buttons(self, wiz, skip=()):
-        """Press every button prompt except the labels starting with a string in `skip` (those time out)."""
         code = 0x200
         while wiz.state == "prompt":
             label = wiz.PROMPTS[wiz.step][0]
@@ -111,7 +101,6 @@ class WizardCase(unittest.TestCase):
             return json.load(f)
 
     def roll(self, wiz, axes, centre, rx, ry, seconds=2.0):
-        """Move a stick round a circle of radius (rx, ry) around `centre`."""
         end, i = self.clock.t + seconds, 0
         while self.clock.t < end and wiz.state == "sroll":
             i += 1

@@ -1,9 +1,3 @@
-"""Direct evdev button reader for RG OS (no SDL / udev classification needed).
-
-Button codes (the canonical codes published by rgos-input):
-physical A = BTN_EAST (0x131), B = BTN_SOUTH (0x130), X = BTN_NORTH (0x133), Y = BTN_WEST (0x134)  (same as RetroArch's X/Y binds and the Map buttons wizard, so the launcher and games agree),
-L = BTN_TL (0x136), R = BTN_TR (0x137), SELECT = 0x13a, START = 0x13b, MENU/FN = BTN_MODE (0x13c), D-pad = BTN_DPAD_* (0x220-0x223).
-"""
 import fcntl, glob, os, select, struct, time
 
 EVFMT = struct.Struct("llHHi")
@@ -23,7 +17,6 @@ GAMEPAD_RANGE = range(0x100, 0x140)
 
 
 def make_profile(keys):
-    """{source key code: menu code} for a device whose key bitmap is `keys` (a set of codes). Pure logic."""
     prof = {c: c for c in keys if c in CODES}
     pad = sorted(c for c in keys if c in GAMEPAD_RANGE)
     known_pad = [c for c in pad if c in CODES or c in BTN_ALIASES]
@@ -78,7 +71,6 @@ class EvPads:
             self.keybits[path] = keys
 
     def wait(self, timeout):
-        """Block until an input device has events or `timeout` seconds pass (instead of polling with sleep())."""
         timeout = max(0.0, timeout)
         if self.fds:
             try:
@@ -89,7 +81,6 @@ class EvPads:
         time.sleep(timeout)
 
     def read(self):
-        """Return a list of (type, code, value) events from all input devices."""
         self.scan()
         out = []
         for path, fd in list(self.fds.items()):
@@ -115,7 +106,6 @@ class EvPads:
 
 
 def diag_lines(pads):
-    """Three short status lines for the on-screen debug strip."""
     def rd(p):
         try:
             with open(p) as f:

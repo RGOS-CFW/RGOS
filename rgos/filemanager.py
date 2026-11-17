@@ -1,12 +1,3 @@
-"""RG OS file manager: browsing and file operations (no pygame here, so it can be tested on any PC).
-
-menu.py draws the screen and feeds buttons into a FileManager. All paths stay inside the "roots", listed in
-this order: the RGOS boot partition, the optional second SD card, then ROMS. The boot files the device needs to
-start (SYSTEM, KERNEL, extlinux, ...) are listed in "protected" and can't be deleted, renamed or moved from here.
-
-Operations: copy, cut/move, paste, rename, new folder, delete, with multi-select (mark) and a
-background worker so a long copy never freezes the menu.
-"""
 import os
 import shutil
 import threading
@@ -16,7 +7,6 @@ MAX_NAME = 120
 
 
 def human_size(n):
-    """1536 -> '1.5 KB'."""
     n = float(n)
     for unit in ("B", "KB", "MB", "GB"):
         if round(n, 1) < 1024 or unit == "GB":
@@ -25,7 +15,6 @@ def human_size(n):
 
 
 def valid_name(name):
-    """A single path component the user may create or rename to."""
     name = name.strip()
     if not name or name in (".", "..") or len(name) > MAX_NAME:
         return False
@@ -33,13 +22,11 @@ def valid_name(name):
 
 
 def inside(path, root):
-    """True if path is root or below it (after resolving symlinks and '..')."""
     path, root = os.path.realpath(path), os.path.realpath(root)
     return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
 
 
 def same_entry(a, b):
-    """True if a and b are the very same directory entry (a case-only rename target on a case-insensitive filesystem)."""
     try:
         return os.path.samestat(os.lstat(a), os.lstat(b))
     except OSError:
@@ -47,7 +34,6 @@ def same_entry(a, b):
 
 
 def unique_name(folder, name):
-    """name, or 'name (copy)', 'name (copy 2)', ... so a paste never overwrites anything."""
     if not os.path.lexists(os.path.join(folder, name)):
         return name
     stem, ext = os.path.splitext(name) if not os.path.isdir(os.path.join(folder, name)) else (name, "")
@@ -60,7 +46,6 @@ def unique_name(folder, name):
 
 
 def list_dir(path):
-    """Entries of a folder: folders first, then files, each sorted without regard to case. Hidden files are skipped."""
     out = []
     try:
         names = os.listdir(path)
@@ -81,7 +66,6 @@ def list_dir(path):
 
 
 def tree_size(path):
-    """Total bytes below path without following symlinks into other trees."""
     try:
         if os.path.islink(path):
             return os.lstat(path).st_size
@@ -113,12 +97,6 @@ def tree_size(path):
 
 
 def copy_item(src, dst_folder):
-    """Copy a file or folder into dst_folder (never overwrites). Returns the new path.
-
-    Treat a symlink itself as the item, even when it points to a directory. Otherwise
-    copytree() would follow a directory symlink passed as the source and could copy
-    data from outside the file manager's storage roots.
-    """
     src_is_link = os.path.islink(src)
     src_is_dir = not src_is_link and os.path.isdir(src)
     if src_is_dir and inside(dst_folder, src):
@@ -134,7 +112,6 @@ def copy_item(src, dst_folder):
 
 
 def move_item(src, dst_folder):
-    """Move a file or folder into dst_folder (never overwrites). Returns the new path."""
     if not os.path.islink(src) and os.path.isdir(src) and inside(dst_folder, src):
         raise OSError("Cannot move a folder into itself")
     if os.path.realpath(os.path.dirname(src)) == os.path.realpath(dst_folder):
@@ -152,8 +129,6 @@ def delete_item(path):
 
 
 class FileManager:
-    """Browser state. cwd None = the list of storage roots; otherwise a folder inside one of the roots."""
-
     def __init__(self, roots, labels=None, protected=None):
         self.roots = [r for r in roots if r and os.path.isdir(r)]
         self.labels = dict(labels or {})
@@ -175,7 +150,6 @@ class FileManager:
         return self.labels.get(root) or os.path.basename(root.rstrip("/")) or root
 
     def is_protected(self, path):
-        """True for a protected top-level item of a root (or anything inside it)."""
         rp = os.path.realpath(path)
         for root, names in self.protected.items():
             rel = os.path.relpath(rp, os.path.realpath(root))
@@ -216,7 +190,6 @@ class FileManager:
         return False
 
     def at_top(self):
-        """True when 'up' would leave the file manager (we are on the storage list, or inside the only root)."""
         if self.cwd is None:
             return True
         return len(self.roots) == 1 and os.path.realpath(self.cwd) == os.path.realpath(self.roots[0])
@@ -259,7 +232,6 @@ class FileManager:
             self.move_cursor(1)
 
     def targets(self):
-        """Marked items, or the item under the cursor if nothing is marked."""
         if self.marked:
             return [e for e in self.entries if e["path"] in self.marked]
         e = self.current()
@@ -383,7 +355,6 @@ class FileManager:
         return True
 
     def info(self):
-        """Lines describing the item under the cursor (for the details popup)."""
         e = self.current()
         if not e:
             return []

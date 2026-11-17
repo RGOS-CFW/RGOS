@@ -1,5 +1,3 @@
-"""RG Flow carousel smoothness: covers are prebuilt at a fixed set of sizes (flow_warm) so a glide never resizes with smoothscale,
-caches are LRU instead of wiped whole, and a frame draws without building levels."""
 import unittest
 from unittest import mock
 

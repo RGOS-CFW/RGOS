@@ -1,4 +1,3 @@
-"""rgos-wifi-dhcp: the udhcpc lease script must leave the interface with its subnet route and a default route."""
 import os
 import shutil
 import subprocess

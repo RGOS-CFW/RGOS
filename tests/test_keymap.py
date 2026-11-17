@@ -1,4 +1,3 @@
-"""rgos-input load_keymap: a damaged input.json / button-map.json must not stop the hub or drop good mappings."""
 import json
 import os
 import shutil

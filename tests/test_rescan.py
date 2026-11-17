@@ -1,4 +1,3 @@
-"""The X rescan runs on a worker thread: start() returns at once, take() delivers the result once, a failed scan keeps the old list."""
 import threading
 import time
 import unittest

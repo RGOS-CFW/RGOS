@@ -1,4 +1,3 @@
-"""Settings > Information: the text helpers and the list of rows (the page scrolls, so the list may be longer than the screen)."""
 import unittest
 from unittest import mock
 
@@ -8,7 +7,6 @@ menu = helpers.load_menu()
 
 
 def files(mapping):
-    """A replacement for menu.rd_file that serves fake /proc and /sys files."""
     return lambda path: mapping.get(path, "")
 
 

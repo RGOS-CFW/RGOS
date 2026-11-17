@@ -1,25 +1,4 @@
 #!/usr/bin/env python3
-"""RG OS second SD card support (devices with two card slots).
-
-The card RG OS boots from (the disk that holds the root partition) is "card 1": its ROMS partition is mounted on
-/media/roms by fstab and holds saves, states, BIOS files, scraper media and settings. Any OTHER mmcblk disk is "card 2":
-this module mounts its best partition on /media/roms2 and the menu lists the games in <card 2>/roms/<system>/ together
-with the games of card 1 (same folder names: roms/gba, roms/nes, ..., roms/ports).
-
-Nothing here assumes a device name: the kernel numbers cards (mmcblk0, mmcblk1, ...) in the order it finds them, so
-either slot may end up as mmcblk0. The boot card is found from what is mounted on / (and /boot, /media/roms); every other
-mmcblk disk is a candidate. On a device with one slot there is simply never a second disk and nothing happens.
-
-Saves, states, screenshots and scraper media always go to card 1 (RetroArch's directories do not change), so pulling
-card 2 never takes progress with it.
-
-Commands (rgos-sdcard):
-  sync      mount card 2 if there is one, unmount it if it is gone, fix a wrong ROMS mount (default; udev and boot call this)
-  status    print what is mounted (JSON), exit 1 if there is no card 2
-  roots     print the extra ROM roots, one per line (for scripts)
-  bootdisk  print the boot card's disk name (mmcblk0 or mmcblk1) for scripts that need its partitions
-Settings: /etc/rgos/sdcard.json (your own overrides in /var/lib/rgos/sdcard.json, kept across updates). Log: /var/log/rgos-sdcard.log.
-"""
 import fcntl, json, os, re, subprocess, sys, time
 
 CONF_FILES = [os.environ.get("RGOS_SDCARD_CONF", "/etc/rgos/sdcard.json"), "/var/lib/rgos/sdcard.json"]
@@ -55,7 +34,6 @@ def log(msg):
 
 
 def sh(args, timeout=15):
-    """Run a command; returns (returncode, stdout). Never raises (timeouts and missing programs count as failure)."""
     try:
         p = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, universal_newlines=True)
         return p.returncode, p.stdout
@@ -103,7 +81,6 @@ def load_conf():
 
 
 def mounts():
-    """[(source, mountpoint, fstype, options)] from /proc/mounts (octal escapes such as \\040 decoded)."""
     out = []
     try:
         with open(PROC_MOUNTS) as f:
@@ -118,13 +95,11 @@ def mounts():
 
 
 def disk_of(name):
-    """'/dev/mmcblk1p2' -> 'mmcblk1', 'mmcblk0' -> 'mmcblk0', anything else -> None."""
     m = re.match(r"^(?:/dev/)?(mmcblk\d+)(?:p\d+)?$", name or "")
     return m.group(1) if m else None
 
 
 def _disk_of_path(path):
-    """The mmcblk disk behind a mounted path, through its device number (works when /proc/mounts says /dev/root)."""
     try:
         st = os.stat(path)
         real = os.path.realpath("%s/%d:%d" % (SYS_DEV_BLOCK, os.major(st.st_dev), os.minor(st.st_dev)))
@@ -137,7 +112,6 @@ def _disk_of_path(path):
 
 
 def disk_backing(mountpoint, table=None):
-    """The mmcblk disk mounted on mountpoint, or None."""
     for src, mnt, _fs, _o in (mounts() if table is None else table):
         if mnt == mountpoint and disk_of(src):
             return disk_of(src)
@@ -145,7 +119,6 @@ def disk_backing(mountpoint, table=None):
 
 
 def boot_disk(table=None):
-    """The card the system runs from: the disk behind /, else /boot, else mmcblk0."""
     table = mounts() if table is None else table
     for mp in ("/", "/boot"):
         d = disk_backing(mp, table)
@@ -168,7 +141,6 @@ def _read_int(path):
 
 
 def candidate_disks(table=None):
-    """mmcblk disks that are not the boot card (and not the disk behind /media/roms), lowest number first."""
     table = mounts() if table is None else table
     system = {d for d in (disk_backing(mp, table) for mp in SYSTEM_MOUNTS) if d}
     system.add(boot_disk(table))
@@ -185,7 +157,6 @@ def candidate_disks(table=None):
 
 
 def partitions(disk):
-    """[(device path, size in sectors)] of a disk's partitions; the whole disk if it has none (card formatted without a table)."""
     parts = []
     try:
         for n in os.listdir(os.path.join(SYS_BLOCK, disk)):
@@ -199,7 +170,6 @@ def partitions(disk):
 
 
 def probe(dev):
-    """blkid -o export of a device as a dict (TYPE, LABEL, ...); {} if it has no recognisable filesystem."""
     rc, out = sh(["blkid", "-o", "export", dev], 8)
     info = {}
     if rc == 0:
@@ -211,7 +181,6 @@ def probe(dev):
 
 
 def pick_partition(disk, conf):
-    """The partition of `disk` to use as game storage, or None. A partition labelled ROMS wins, else the biggest usable one."""
     best = None
     for dev, sectors in partitions(disk):
         if sectors * 512 < conf["min_mb"] * 1048576:
@@ -229,7 +198,6 @@ def pick_partition(disk, conf):
 
 
 def mount_dev(dev, fstype, mountpoint, readonly=False):
-    """Mount dev on mountpoint. Returns (ok, read_only). Falls back to a read-only mount if read-write fails."""
     os.makedirs(mountpoint, exist_ok=True)
     for mod in {"exfat": "exfat", "vfat": "vfat", "ntfs": "ntfs3"}.get(fstype, "").split():
         sh(["modprobe", mod], 10)
@@ -275,8 +243,6 @@ def write_status(info):
 
 
 def heal_primary(table, conf):
-    """If LABEL=ROMS resolved to a partition of another card (two RG OS cards both carry that label) put the ROMS of the
-    boot card back on /media/roms. Only acts when the boot card really has a ROMS partition; never formats anything."""
     cur = disk_backing(PRIMARY_MOUNT, table)
     boot = boot_disk(table)
     if cur is None or cur == boot:
@@ -292,7 +258,6 @@ def heal_primary(table, conf):
 
 
 def sync():
-    """Make the mount state match the cards that are inserted. Safe to run at any time, from any number of callers."""
     conf = load_conf()
     mp = conf["mountpoint"]
     table = mounts()
@@ -350,7 +315,6 @@ def load_status_file():
 
 
 def status():
-    """The card-2 record from the last sync if that card is still mounted, else None."""
     st = load_status_file()
     if not st or not st.get("mount"):
         return None
@@ -360,13 +324,11 @@ def status():
 
 
 def extra_roots():
-    """Mount points of additional ROM cards whose roms/ folder can be listed (today: at most card 2)."""
     st = status()
     return [st["mount"]] if st else []
 
 
 def usage(mountpoint):
-    """(free_bytes, total_bytes) of a mounted card or None."""
     try:
         s = os.statvfs(mountpoint)
         return s.f_bavail * s.f_frsize, s.f_blocks * s.f_frsize

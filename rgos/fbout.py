@@ -1,16 +1,3 @@
-"""Framebuffer output for RG OS (used when SDL's kmsdrm video driver cannot start; always on the TrimUI Smart Pro).
-
-Renders a pygame Surface straight into /dev/fb0 (the Linux fbdev interface; on the TSP it is the Allwinner BSP `disp2`
-framebuffer, 1280x720), so the menu shows up even without SDL/EGL/GBM or a GPU driver. Also switches tty1 into graphics
-mode so the kernel console stops drawing text over the menu.
-
-Features (all optional, each falls back silently if the driver refuses):
-  * aspect-preserving fit: the menu canvas (720x720, 1:1, for the RG Rotate's square screen) is scaled uniformly into the screen, never stretched; a square panel is filled exactly, anything else gets black bars
-  * double buffering through pan (FBIOPUT_VSCREENINFO yres_virtual = 2*yres, FBIOPAN_DISPLAY) + FBIO_WAITFORVSYNC
-  * skips frames that did not change (the menu redraws at 30 fps, but mostly shows a static screen)
-  * RGOS_FB_ROTATE=0|90|180|270 (degrees, clockwise) for panels whose native scan-out is rotated
-  * RGOS_FB_DEV=/dev/fbN, RGOS_FB_DBUF=0 (force single buffer), RGOS_FB_VSYNC=0
-"""
 import fcntl, mmap, os, struct, zlib
 
 FBIOGET_VSCREENINFO, FBIOPUT_VSCREENINFO, FBIOGET_FSCREENINFO, FBIOPAN_DISPLAY = 0x4600, 0x4601, 0x4602, 0x4606
@@ -19,7 +6,6 @@ KDSETMODE, KD_TEXT, KD_GRAPHICS = 0x4B3A, 0, 1
 
 
 def set_graphics(on):
-    """Stop (on=True) / resume (on=False) the kernel text console on tty1."""
     try:
         fd = os.open("/dev/tty1", os.O_RDWR | os.O_NOCTTY)
         try:
@@ -31,7 +17,6 @@ def set_graphics(on):
 
 
 def fit_rect(src, dst):
-    """Largest rectangle (x, y, w, h) with the aspect ratio of `src` (w, h) centred inside `dst` (w, h)."""
     sw, sh = src
     dw, dh = dst
     if sw <= 0 or sh <= 0 or dw <= 0 or dh <= 0:
@@ -100,7 +85,6 @@ class FbOut:
         return struct.unpack_from("<7I", self._raw_var(), 0)
 
     def _flip(self, page):
-        """Show `page` (pan the display) and wait for vertical blank where the driver supports it."""
         if self.pages < 2:
             try:
                 vv = self._raw_var()
@@ -142,7 +126,6 @@ class FbOut:
         self.last = None
 
     def _scaled(self, canvas):
-        """canvas scaled (aspect preserved) and rotated, as a surface of exactly the screen size, black bars included."""
         pg = self.pg
         src = canvas
         if self.rotate:
