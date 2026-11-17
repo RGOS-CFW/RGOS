@@ -15,7 +15,7 @@ RG OS is an open source Linux emulation distribution for retro handhelds built o
     sudo ./build.sh rg35xxh         # out/rg35xxh-rgos.img
     sudo ./build.sh rg35xxsp        # out/rg35xxsp-rgos.img
     sudo ./build.sh rg-rotate       # out/rg-rotate-rgos.img
-    sudo ./build.sh all             # both
+    sudo ./build.sh all             # builds all of the above
 
 RG34XXSP / RG35XX H / RG35XX SP: the stock U-Boot on the card is built per RAM type, so `H700_RAM=DDR4` (default) or `H700_RAM=DDR3` must match the console, and `RG35XXH_DTB=sun50i-h700-anbernic-rg35xx-h-rev6-panel` (or the `RG34XXSP_DTB` / `RG35XXSP_DTB` equivalents) selects the other panel revision. A black screen at boot is almost always one of these two; see `docs/TROUBLESHOOTING.md`.
 
