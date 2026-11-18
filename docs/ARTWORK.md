@@ -56,3 +56,7 @@ Everything lives on the ROMS card, so you can look at it or edit it from a PC:
 - *"The API key was rejected"*: re-enter the key, or check it still exists in your SteamGridDB
   preferences.
 - *"No internet connection"*: connect Wi-Fi in *Settings > Wi-Fi*.
+- *"No internet connection (DNS lookup failed)"* while Wi-Fi shows connected: the image must be built with
+  the `/etc/resolv.conf -> /run/rgos/resolv.conf` link (`build.sh` does this). The scraper also asks DNS
+  directly as a fallback. Details of every failed request are written to `/var/log/rgos-artwork.log`, which
+  is included in `rgos-logs.txt`.

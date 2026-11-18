@@ -474,6 +474,11 @@ if ! chroot "$ROOTFS" python3 -c 'import pygame; print("pygame", pygame.version.
   chroot "$ROOTFS" python3 -c 'import pygame; print("pygame", pygame.version.ver)' \
     || { echo "!! pygame still cannot be imported: the RG OS launcher would not start. Aborting the build." >&2; exit 1; }
 fi
+# DNS: the root is read-only squashfs, so /etc/resolv.conf must be baked in as a link to the file the Wi-Fi DHCP
+# script writes at runtime (/run/rgos/resolv.conf). Without it every host lookup fails and downloads (artwork,
+# PortMaster) always report "No internet". This also drops any build-host resolv.conf that apt left behind.
+rm -f "$ROOTFS/etc/resolv.conf"
+ln -s /run/rgos/resolv.conf "$ROOTFS/etc/resolv.conf"
 rm -rf "$ROOTFS/var/cache/apt" "$ROOTFS/var/lib/apt/lists" "$ROOTFS/usr/share/doc" "$ROOTFS/usr/share/man" "$ROOTFS/usr/share/info" "$ROOTFS/usr/share/lintian"
 find "$ROOTFS/usr/share/locale" -mindepth 1 -maxdepth 1 ! -name 'en*' ! -name locale.alias -exec rm -rf {} + 2>/dev/null || true
 

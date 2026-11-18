@@ -10,6 +10,7 @@ mountpoint -q /dev  || mount -t devtmpfs devtmpfs /dev
 mountpoint -q /run  || mount -t tmpfs tmpfs /run
 mountpoint -q /tmp  || mount -t tmpfs tmpfs /tmp
 mkdir -p /run/rgos /var/lib/rgos /var/log /media/roms /dev/pts /boot
+[ -s /run/rgos/resolv.conf ] || printf 'nameserver 1.1.1.1\nnameserver 9.9.9.9\n' > /run/rgos/resolv.conf
 [ "$(id -u)" = 0 ] || echo "WARNING: rgos-session is not running as root (uid $(id -u))" >> /var/log/rgos-state.log
 fixperms() {
     chown -R 0:0 /opt/rgos /etc/rgos /var/lib/rgos 2>/dev/null
@@ -163,7 +164,7 @@ python3 /opt/rgos/rgos-input >> /var/log/rgos-input.log 2>&1 &
     { echo "== $(date) kernel $(uname -r) t=$t"; echo "--- pygame"
       T=""; command -v timeout >/dev/null 2>&1 && T="timeout 4"
       $T python3 -c 'import pygame; print("pygame", pygame.version.ver)' 2>&1
-      for f in /var/log/rgos-menu.log /var/log/rgos-input.log /var/log/rgos-launch.log /var/log/rgos-native.log /var/log/rgos-retroarch.log /var/log/rgos-roms.log /var/log/rgos-volume.log /var/log/rgos-overlay.log /var/log/rgos-gamemenu.log /var/log/rgos-audio.log /var/log/rgos-audio-prep.log /var/log/rgos-audio-load.log /var/log/rgos-wifi.log /var/log/rgos-bt.log /var/log/rgos-ssh.log; do echo "--- $f"; tail -n 100 "$f" 2>&1; done
+      for f in /var/log/rgos-menu.log /var/log/rgos-input.log /var/log/rgos-launch.log /var/log/rgos-native.log /var/log/rgos-retroarch.log /var/log/rgos-roms.log /var/log/rgos-artwork.log /var/log/rgos-volume.log /var/log/rgos-overlay.log /var/log/rgos-gamemenu.log /var/log/rgos-audio.log /var/log/rgos-audio-prep.log /var/log/rgos-audio-load.log /var/log/rgos-wifi.log /var/log/rgos-bt.log /var/log/rgos-ssh.log; do echo "--- $f"; tail -n 100 "$f" 2>&1; done
       echo "--- settings dir"; id; grep -E ' (/|/var|/var/lib|/var/lib/rgos) ' /proc/mounts; ls -ld /var /var/lib /var/lib/rgos 2>&1
       ls -la /var/lib/rgos 2>&1; { touch /var/lib/rgos/.w && rm -f /var/lib/rgos/.w && echo "write test: ok"; } 2>&1 || echo "write test: FAILED"
       cat /var/log/rgos-state.log 2>&1

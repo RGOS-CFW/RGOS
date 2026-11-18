@@ -20,6 +20,12 @@ case "$1" in
     mkdir -p "$run"
     : > "$run/resolv.conf"
     for d in $dns; do echo "nameserver $d" >> "$run/resolv.conf"; done
+    # a lease without DNS (or none usable) would leave every host lookup failing: use the router, then public resolvers
+    if [ -z "$dns" ]; then
+      for r in $router; do echo "nameserver $r" >> "$run/resolv.conf"; done
+      echo "nameserver 1.1.1.1" >> "$run/resolv.conf"
+      echo "nameserver 9.9.9.9" >> "$run/resolv.conf"
+    fi
     [ -n "$domain" ] && echo "search $domain" >> "$run/resolv.conf"
     ;;
 esac

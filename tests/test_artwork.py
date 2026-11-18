@@ -294,5 +294,35 @@ class MenuWiringTests(unittest.TestCase):
         menu._FLOW["cards"].clear()
 
 
+class DnsFallbackTests(unittest.TestCase):
+    def test_parse_a_record_with_compressed_name(self):
+        qid = b"\x12\x34"
+        q = b"\x03www\x03foo\x03com\x00\x00\x01\x00\x01"
+        ans = b"\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04\x01\x02\x03\x04"
+        pkt = qid + b"\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00" + q + ans
+        self.assertEqual(artwork.parse_dns_a(pkt, qid), ["1.2.3.4"])
+        self.assertEqual(artwork.parse_dns_a(pkt, b"\x00\x00"), [])
+
+    def test_nameservers_skip_loopback_and_add_public_fallbacks(self):
+        d = tempfile.mkdtemp(prefix="rgos-dns-")
+        f = os.path.join(d, "resolv.conf")
+        open(f, "w").write("nameserver 127.0.0.53\nnameserver 192.168.1.1\nnameserver fe80::1\nsearch lan\n")
+        with mock.patch.object(artwork, "RESOLV_FILES", (f, os.path.join(d, "missing"))):
+            ns = artwork.nameservers()
+        self.assertEqual(ns[0], "192.168.1.1")
+        self.assertNotIn("127.0.0.53", ns)
+        self.assertIn("1.1.1.1", ns)
+
+    def test_dns_failure_is_reported_as_net_with_reason(self):
+        gai = artwork.socket.gaierror(-3, "Temporary failure in name resolution")
+        with mock.patch.object(artwork.socket, "getaddrinfo", side_effect=gai), \
+             mock.patch.object(artwork, "_dns_query", side_effect=OSError("no route")), \
+             mock.patch.object(artwork, "LOG_FILE", os.devnull):
+            with self.assertRaises(artwork.ApiError) as cm:
+                artwork._open("https://www.steamgriddb.com/api/v2/x", "", 1000, 2)
+        self.assertEqual(cm.exception.kind, "net")
+        self.assertIn("DNS", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

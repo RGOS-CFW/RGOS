@@ -40,6 +40,11 @@ class BoundTests(unittest.TestCase):
         with open(os.path.join(self.dir, "run", "resolv.conf")) as f:
             self.assertEqual(f.read().split("\n")[:3], ["nameserver 1.1.1.1", "nameserver 9.9.9.9", "search lan"])
 
+    def test_lease_without_dns_falls_back_to_router_then_public_resolvers(self):
+        self.run_script("bound", ip="10.0.0.2", mask="8", router="10.0.0.1")
+        with open(os.path.join(self.dir, "run", "resolv.conf")) as f:
+            self.assertEqual(f.read().split("\n")[:3], ["nameserver 10.0.0.1", "nameserver 1.1.1.1", "nameserver 9.9.9.9"])
+
 
 if __name__ == "__main__":
     unittest.main()

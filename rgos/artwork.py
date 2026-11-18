@@ -18,12 +18,14 @@ The API key is read from (first hit wins): $RGOS_SGDB_KEY, /etc/rgos/steamgriddb
 ({"api_key": "...", "shape": "portrait|square|any"}), or steamgriddb-key.txt on the ROMS card.
 """
 import difflib
+import http.client
 import json
 import os
 import re
 import shutil
 import socket
 import ssl
+import struct
 import threading
 import time
 import unicodedata
@@ -46,6 +48,18 @@ SHAPES = {
     "any": "",
 }
 KEY_RE = re.compile(r"[A-Za-z0-9]{16,64}")
+LOG_FILE = os.environ.get("RGOS_ART_LOG", "/var/log/rgos-artwork.log")
+RESOLV_FILES = ("/etc/resolv.conf", os.environ.get("RGOS_RESOLV", "/run/rgos/resolv.conf"))
+FALLBACK_DNS = ("1.1.1.1", "9.9.9.9", "8.8.8.8")
+
+
+def _log(msg):
+    """Append to the artwork log (collected into rgos-logs.txt). Never raises."""
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write("%s artwork: %s\n" % (time.strftime("%H:%M:%S"), msg))
+    except OSError:
+        pass
 
 
 # --------------------------------------------------------------------- key / config
@@ -245,15 +259,131 @@ def _ctx():
     return _SSL[0]
 
 
+# The root filesystem is read-only, and /etc/resolv.conf is only a symlink to the file the Wi-Fi
+# DHCP script writes. When that link is missing (or the lease carried no DNS), the C resolver has no
+# nameserver and every lookup fails, so artwork asks DNS itself as a fallback.
+
+def nameservers():
+    out = []
+    for path in RESOLV_FILES:
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[0] == "nameserver":
+                        out.append(parts[1])
+        except OSError:
+            pass
+    out += FALLBACK_DNS
+    res, seen = [], set()
+    for ns in out:
+        try:
+            socket.inet_aton(ns)
+        except OSError:
+            continue  # IPv6 / junk: the fallback speaks IPv4 only
+        if ns.startswith("127.") or ns in seen:
+            continue
+        seen.add(ns)
+        res.append(ns)
+    return res
+
+
+def _skip_name(data, pos):
+    while pos < len(data):
+        n = data[pos]
+        if n == 0:
+            return pos + 1
+        if n & 0xC0 == 0xC0:
+            return pos + 2
+        pos += n + 1
+    return pos
+
+
+def parse_dns_a(data, qid):
+    """IPv4 addresses in a DNS response packet (empty when it is not an answer to qid)."""
+    if len(data) < 12 or data[:2] != qid or data[3] & 0x0F != 0:
+        return []
+    qd, an = struct.unpack(">HH", data[4:8])
+    pos = 12
+    for _ in range(qd):
+        pos = _skip_name(data, pos) + 4
+    ips = []
+    for _ in range(an):
+        pos = _skip_name(data, pos)
+        if pos + 10 > len(data):
+            break
+        typ, _cls, _ttl, rdlen = struct.unpack(">HHIH", data[pos:pos + 10])
+        pos += 10
+        if typ == 1 and rdlen == 4 and pos + 4 <= len(data):
+            ips.append(".".join(str(b) for b in data[pos:pos + 4]))
+        pos += rdlen
+    return ips
+
+
+def _dns_query(host, server, timeout):
+    qid = os.urandom(2)
+    q = qid + b"\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00"
+    for label in host.rstrip(".").split("."):
+        b = label.encode("idna")
+        q += bytes([len(b)]) + b
+    q += b"\x00\x00\x01\x00\x01"
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.settimeout(timeout)
+        sock.sendto(q, (server, 53))
+        return parse_dns_a(sock.recv(1500), qid)
+    finally:
+        sock.close()
+
+
+def dns_lookup(host, timeout=3):
+    for server in nameservers():
+        try:
+            ips = _dns_query(host, server, timeout)
+        except (OSError, UnicodeError):
+            continue
+        if ips:
+            return ips
+    return []
+
+
+class _Conn(http.client.HTTPSConnection):
+    def connect(self):
+        try:
+            return http.client.HTTPSConnection.connect(self)
+        except socket.gaierror as e:
+            _log("system DNS failed for %s (%s); asking %s directly" % (self.host, e, ", ".join(nameservers()[:3])))
+            ips = dns_lookup(self.host)
+            if not ips:
+                raise
+            last = None
+            for ip in ips:
+                try:
+                    sock = socket.create_connection((ip, self.port), self.timeout)
+                    break
+                except OSError as err:
+                    last = err
+            else:
+                raise last
+            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+class _Handler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_Conn, req, context=self._context)
+
+
 def _open(url, key, limit, timeout):
     headers = {"User-Agent": USER_AGENT}
     if key:
         headers["Authorization"] = "Bearer " + key
     req = urllib.request.Request(url, headers=headers)
+    opener = urllib.request.build_opener(_Handler(context=_ctx()))
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=_ctx()) as r:
+        with opener.open(req, timeout=timeout) as r:
             data = r.read(limit + 1)
     except urllib.error.HTTPError as e:
+        _log("HTTP %d for %s" % (e.code, urllib.parse.urlparse(url).path[:60]))
         if e.code in (401, 403):
             raise ApiError("auth", "The API key was rejected")
         if e.code == 404:
@@ -267,12 +397,17 @@ def _open(url, key, limit, timeout):
         raise ApiError("server" if e.code >= 500 else "other", "HTTP %d" % e.code)
     except urllib.error.URLError as e:
         reason = getattr(e, "reason", None)
+        _log("request failed: %r" % (reason or e))
         if isinstance(reason, ssl.SSLError):
             raise ApiError("tls", "Secure connection failed (is the clock set correctly?)")
+        if isinstance(reason, socket.gaierror):
+            raise ApiError("net", "No internet connection (DNS lookup failed)")
         raise ApiError("net", "No internet connection")
-    except ssl.SSLError:
+    except ssl.SSLError as e:
+        _log("TLS failed: %r" % (e,))
         raise ApiError("tls", "Secure connection failed (is the clock set correctly?)")
-    except (socket.timeout, TimeoutError, OSError):
+    except (socket.timeout, TimeoutError, OSError) as e:
+        _log("request failed: %r" % (e,))
         raise ApiError("net", "No internet connection")
     if len(data) > limit:
         raise ApiError("other", "Response too large")
@@ -437,6 +572,7 @@ class Scraper:
         return _read_json(os.path.join(art_dir(self.root), "overrides.json"), {})
 
     def _finish(self, state, msg=""):
+        _log("scrape %s: %s" % (state, msg))
         self._save_misses()
         self._set(state=state, msg=msg, current="")
 
@@ -488,7 +624,8 @@ class Scraper:
                 if e.kind == "net":
                     net_fail += 1
                     if net_fail >= 3:
-                        return self._finish("error", "No internet connection. Connect Wi-Fi in Settings > Wi-Fi")
+                        return self._finish("error", "%s. Check Wi-Fi in Settings > Wi-Fi" % e)
+                _log("%s: %s (%s)" % (g["title"], e, e.kind))
                 self._bump(failed=1, done=1)
                 continue
             except OSError:
