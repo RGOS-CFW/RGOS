@@ -35,7 +35,7 @@ mapping for the built-in "RG OS Gamepad". It is exported as
 Layout (positional, like an Xbox pad): A bottom, B right, X left, Y top,
 L1/R1 shoulders, L2/R2 triggers, Select = back, Start, Menu = guide, L3/R3 stick
 clicks, d-pad. The sticks are included only when analog sticks are enabled in
-`/etc/rgos/input.json`. The Settings > Swap A / B option applies before SDL sees
+`/etc/rgos/input.json` or the per-device `/etc/rgos/input-<device>.json` (which wins, as for the input hub; the build sets it per device). The Settings > Swap A / B option applies before SDL sees
 the pad, so ports follow it automatically.
 
 To change the mapping, add lines in SDL_GameControllerDB format to

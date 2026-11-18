@@ -76,6 +76,21 @@ class EnvTests(unittest.TestCase):
             json.dump({"analog": True}, f)
         self.assertIn("leftx:a0", self.env()["SDL_GAMECONTROLLERCONFIG"])
 
+    def test_per_device_file_enables_sticks_like_the_hub(self):
+        devfile = os.path.join(self.dir, "rgos-device")
+        with open(devfile, "w") as f:
+            f.write("rg34xxsp\n")
+        base = os.path.join(self.dir, "input.json")
+        with open(os.path.join(self.dir, "input-rg34xxsp.json"), "w") as f:
+            json.dump({"analog": True}, f)
+        old = portpad.INPUT_CONF
+        portpad.INPUT_CONF = base
+        self.addCleanup(setattr, portpad, "INPUT_CONF", old)
+        self.assertTrue(portpad.analog_enabled(None, devfile))
+        with open(os.path.join(self.dir, "input-rg34xxsp.json"), "w") as f:
+            json.dump({"analog": False}, f)
+        self.assertFalse(portpad.analog_enabled(None, devfile))
+
     def test_bad_input_json_means_no_sticks(self):
         with open(self.conf, "w") as f:
             f.write("{nope")

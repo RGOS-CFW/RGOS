@@ -17,6 +17,7 @@ HUB_NAME = "RG OS Gamepad"
 # Must match make_uinput() in rgos-input: bus, vendor, product, version of the virtual pad.
 BUS, VENDOR, PRODUCT, VERSION = 0x19, 0x484B, 0x14DF, 0x0100
 INPUT_CONF = os.environ.get("RGOS_INPUT_CONF", "/etc/rgos/input.json")
+DEVICE_FILE = os.environ.get("RGOS_DEVICE_FILE", "/etc/rgos-device")
 USER_DB_NAME = "rgos-gamecontrollerdb.txt"
 MAX_USER_BYTES = 256 * 1024
 
@@ -37,12 +38,32 @@ def sdl_guid():
     return struct.pack("<8H", BUS, 0, VENDOR, 0, PRODUCT, 0, VERSION, 0).hex()
 
 
-def analog_enabled(conf=None):
+def _load_json(path):
     try:
-        with open(conf or INPUT_CONF) as f:
-            return bool(json.load(f).get("analog", False))
-    except (OSError, ValueError, AttributeError):
-        return False
+        with open(path) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def analog_enabled(conf=None, devfile=None):
+    """Whether the hub publishes stick axes. Mirrors rgos-input's load_input_conf().
+
+    The hub merges /etc/rgos/input-<device>.json over input.json, and the build writes the analog flag
+    only into the per-device file, so reading input.json alone left ports without stick axes. An explicit
+    conf (tests) is read on its own.
+    """
+    if conf:
+        return bool(_load_json(conf).get("analog", False))
+    out = _load_json(INPUT_CONF)
+    try:
+        with open(devfile or DEVICE_FILE) as f:
+            dev = f.read().strip()
+        out.update(_load_json(os.path.join(os.path.dirname(INPUT_CONF), "input-%s.json" % dev)))
+    except OSError:
+        pass
+    return bool(out.get("analog", False))
 
 
 def mapping_line(analog=False):
