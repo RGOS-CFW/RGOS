@@ -394,15 +394,48 @@ def restore_governor(saved):
             pass
 
 
-def set_game_flag(on):
+def set_game_flag(on, **info):
+    """Create / remove the "a game is running" flag. The info (kind, title, pid) is read by gamemenu.py."""
     try:
         if on:
             os.makedirs(RUN_DIR, exist_ok=True)
-            open(GAME_FLAG, "w").close()
+            with open(GAME_FLAG, "w") as f:
+                if info:
+                    json.dump(info, f)
         else:
             os.remove(GAME_FLAG)
     except OSError:
         pass
+
+
+def set_game_pid(pid):
+    """Add the port's pid to the flag (only while the flag exists), so the in-game menu can pause and stop it."""
+    try:
+        with open(GAME_FLAG) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return
+    if isinstance(data, dict):
+        data["pid"] = pid
+        try:
+            with open(GAME_FLAG, "w") as f:
+                json.dump(data, f)
+        except OSError:
+            pass
+
+
+def consume_restart():
+    """True once if the in-game menu asked for a restart (and clears the request)."""
+    path = os.path.join(RUN_DIR, "restart")
+    try:
+        os.remove(path)
+        return True
+    except OSError:
+        return False
+
+
+def game_title(path):
+    return os.path.splitext(os.path.basename(path or ""))[0]
 
 
 def ra_verbose():
@@ -554,6 +587,7 @@ def call_native(cmd, prio=False, **kw):
         if prio:
             game_priority()
     proc = subprocess.Popen(cmd, start_new_session=True, preexec_fn=child, **kw)
+    set_game_pid(proc.pid)
     watcher = None
     try:
         import portexit
@@ -605,15 +639,21 @@ def launch_native(target):
     log("native port starting: %s (cwd=%s)" % (" ".join(cmd), cwd))
     hw = not os.environ.get("RGOS_NO_HW") or os.environ.get("RGOS_SYSFS")
     saved = set_governor(perf_governor("native")) if hw else {}
-    set_game_flag(True)
+    consume_restart()
+    set_game_flag(True, kind="native", title=game_title(target))
     started = time.monotonic()
     try:
         trim_log(NATIVE_LOG)
         with open(NATIVE_LOG, "a") as out:
             out.write("\n[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), " ".join(cmd)))
             out.flush()
-            rc, stopped = call_native(cmd, prio=not os.environ.get("RGOS_NO_HW"), cwd=cwd, env=env,
-                                      stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
+            while True:
+                rc, stopped = call_native(cmd, prio=not os.environ.get("RGOS_NO_HW"), cwd=cwd, env=env,
+                                          stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
+                if not consume_restart():
+                    break
+                log("native port restarted from the in-game menu")
+                started = time.monotonic()
     except OSError as e:
         log("native port failed: %s" % e)
         show_error("RG OS: native port failed to start", str(e))
@@ -654,7 +694,7 @@ def launch_retroarch(sid, core, core_path, content):
         log("starting%s: %s" % (" (video_driver %s)" % video if video else "", " ".join(cmd)))
         t0 = time.monotonic()
         saved = set_governor(perf_governor(sid)) if hw else {}
-        set_game_flag(True)
+        set_game_flag(True, kind="retroarch", title=game_title(content) or "RetroArch")
         try:
             rc = subprocess.call(cmd, env=env, stdin=subprocess.DEVNULL,
                                  preexec_fn=None if os.environ.get("RGOS_NO_HW") else game_priority)
