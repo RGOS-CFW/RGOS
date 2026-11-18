@@ -107,7 +107,7 @@ GC_REPO="${GC_REPO:-https://github.com/libretro/dolphin.git}"
 RGOS_INITRD="${RGOS_INITRD:-1}"
 [[ "$RGOS_INITRD" == 0 || "$RGOS_INITRD" == 1 ]] || { echo "RGOS_INITRD must be 0 or 1" >&2; exit 1; }
 NGP_SRC="${NGP_SRC:-https://github.com/libretro/beetle-ngp-libretro/archive/refs/heads/master.tar.gz}"
-EMU_PKGS="retroarch,libretro-gambatte,libretro-mgba,libretro-snes9x,libretro-nestopia,libretro-beetle-wswan,libretro-core-info,liblzo2-2,libgl1-mesa-dri,libegl1,libegl-mesa0,libgles2,libgbm1,libsdl2-2.0-0"
+EMU_PKGS="retroarch,libretro-gambatte,libretro-mgba,libretro-snes9x,libretro-nestopia,libretro-beetle-wswan,libretro-core-info,liblzo2-2,libgl1-mesa-dri,libegl1,libegl-mesa0,libgles2,libgbm1,libsdl2-2.0-0,libopenal1"
 EXTRA_PKGS="${EXTRA_PKGS:-}"
 
 WORK="$HERE/work/$DEVICE"; OUT="$HERE/out"; IMG="$OUT/$DEVICE-rgos.img"
@@ -276,6 +276,20 @@ if [[ "$PORTMASTER" == 1 ]]; then
     fi
   else
     echo "!! no PortMaster zip: the image will NOT come with PortMaster (set PORTMASTER_ZIP=<file> to build offline)"
+  fi
+fi
+# PortMaster's GUI runs on its LOVE 11.5 runtime (love.aarch64), which links the system libopenal.so.1 and does not bundle it;
+# without it PortMaster dies at start with "error while loading shared libraries: libopenal.so.1". libopenal1 is in EMU_PKGS;
+# the rest are the libraries LOVE commonly links, installed best-effort.
+if [[ "$PORTMASTER" == 1 ]]; then
+  cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf" 2>/dev/null || true
+  chroot "$ROOTFS" apt-get update >/dev/null 2>&1 || true
+  for pkg in libopenal1 libmpg123-0t64 libvorbisfile3 libvorbis0a libogg0 libtheora0 libmodplug1 libfreetype6 libsdl2-2.0-0 zlib1g; do
+    chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg" >/dev/null 2>&1 || true
+  done
+  rm -f "$ROOTFS/etc/resolv.conf"
+  if ! chroot "$ROOTFS" sh -c 'ldconfig -p 2>/dev/null | grep -q "libopenal.so.1"' && ! ls "$ROOTFS"/usr/lib/*/libopenal.so.1 >/dev/null 2>&1; then
+    echo "!! libopenal.so.1 is not in the image: PortMaster will not start (install libopenal1 with EXTRA_PKGS=libopenal1)"; exit 1
   fi
 fi
 printf 'BUILD_ID=%s\n' "$(date +%Y%m%d-%H%M)" > "$ROOTFS/etc/rgos-release"

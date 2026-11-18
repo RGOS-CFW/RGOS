@@ -48,3 +48,7 @@ Read it from the top: it lists the kernel command line, the partition the boot f
 
 * `cannot mount /flash/SYSTEM as squashfs`: the file listing, `/proc/filesystems`, loop devices and the kernel log tail are included. A missing `squashfs` or `loop` entry means the kernel cannot mount SYSTEM; a damaged `SYSTEM` means re-flash the card.
 * `switch_root to /usr/sbin/rgos-init` is the last line and there is no `rgos-bootinfo.txt`: the new root started but PID 1 died. Check `rgos-logs.txt` if it exists, otherwise rebuild with a fresh image.
+
+## PortMaster shows "libopenal.so.1: cannot open shared object file" and returns to the menu
+
+PortMaster's GUI runs on its LOVE 11.5 runtime, which needs the system `libopenal1` package. Images built before this was added do not have it. Rebuild (or run an offline update built) with the current `build.sh`; `libopenal1` is now part of the base package list and the build stops if `libopenal.so.1` is missing from the rootfs. To add other missing libraries without editing the script, use `EXTRA_PKGS="pkg1 pkg2"`. `rgos-native.log` on the device shows the exact library that failed to load.
