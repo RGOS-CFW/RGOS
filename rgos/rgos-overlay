@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""RG OS system overlay: shows the volume bar on top of whatever is on screen.
+
+rgos-volume writes "<percent> <stamp>" to /run/rgos/volume on every volume key press. This daemon watches that file
+and, for a moment after each change, paints a small bar straight into the framebuffer. It is a separate process, so it
+works the same in the launcher, in RetroArch and in native ports.
+
+How it behaves around a program that is also drawing to the framebuffer:
+  * the pixels under the bar are saved before it is drawn;
+  * while it is visible it is checked 30 times a second: if the program repainted the area, the new pixels are saved
+    and the bar is drawn again on top;
+  * when it times out the saved pixels are put back, unless the program already painted over the bar itself.
+The bar's colours follow the launcher theme (the launcher writes /run/rgos/theme).
+
+Environment: RGOS_FB_DEV (/dev/fb0), RGOS_FB_ROTATE (same meaning as for the launcher), RGOS_RUN (/run/rgos),
+RGOS_VOLUME_FILE, RGOS_THEME_FILE, RGOS_OVERLAY_HOLD (seconds the bar stays, default 1.5).
+"""
+import fcntl, os, struct, sys, time
+
+RUN_DIR = os.environ.get("RGOS_RUN", "/run/rgos")
+VOLUME_FILE = os.environ.get("RGOS_VOLUME_FILE", os.path.join(RUN_DIR, "volume"))
+THEME_FILE = os.environ.get("RGOS_THEME_FILE", os.path.join(RUN_DIR, "theme"))
+FB_DEV = os.environ.get("RGOS_FB_DEV", "/dev/fb0")
+FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+HOLD = float(os.environ.get("RGOS_OVERLAY_HOLD", "1.5") or 1.5)
+BOOT_QUIET = 15.0            # seconds after start in which an unchanged volume (boot-time republish) is not announced
+FAST, SLOW = 1 / 30.0, 0.1   # poll interval while the bar is visible / while idle
+FBIOGET_VSCREENINFO, FBIOGET_FSCREENINFO = 0x4600, 0x4602
+DEFAULT_THEME = {"BG": (13, 15, 26), "PANEL": (24, 28, 46), "ACCENT": (255, 99, 71), "TEXT": (232, 235, 245)}
+BAR_W, BAR_H, BASE_W = 260, 44, 720       # bar size and the canvas width it was designed for (the launcher's)
+
+
+def log(*a):
+    print(time.strftime("%H:%M:%S"), *a, flush=True)
+
+
+# ---- pure helpers -------------------------------------------------------------------------------------------------
+
+def parse_volume(text):
+    try:
+        v, stamp = text.split()[:2]
+        return max(0, min(100, int(v))), stamp
+    except (ValueError, AttributeError):
+        return None
+
+
+def read_volume():
+    try:
+        with open(VOLUME_FILE) as f:
+            return parse_volume(f.read())
+    except OSError:
+        return None
+
+
+def parse_theme(text):
+    """'r,g,b r,g,b r,g,b r,g,b' (BG PANEL ACCENT TEXT) -> dict; anything malformed gives the default theme."""
+    try:
+        cols = [tuple(max(0, min(255, int(c))) for c in part.split(",")) for part in text.split()]
+        if len(cols) == 4 and all(len(c) == 3 for c in cols):
+            return dict(zip(("BG", "PANEL", "ACCENT", "TEXT"), cols))
+    except (ValueError, AttributeError):
+        pass
+    return dict(DEFAULT_THEME)
+
+
+def read_theme():
+    try:
+        with open(THEME_FILE) as f:
+            return parse_theme(f.read())
+    except OSError:
+        return dict(DEFAULT_THEME)
+
+
+def logical_size(xres, yres, rotate):
+    return (yres, xres) if rotate in (90, 270) else (xres, yres)
+
+
+def bar_geometry(lw, lh):
+    """Bar size and position (x, y, w, h) in the upright (logical) screen, scaled to the screen width."""
+    s = max(0.6, min(1.6, lw / float(BASE_W)))
+    w, h = int(BAR_W * s), int(BAR_H * s)
+    return (lw - w) // 2, lh - h - int(36 * s), w, h
+
+
+def to_fb_rect(rect, lw, lh, rotate):
+    """Map a rectangle of the upright screen onto the framebuffer, whose content is the screen rotated clockwise by rotate."""
+    x, y, w, h = rect
+    if rotate == 90:
+        return lh - y - h, x, h, w
+    if rotate == 180:
+        return lw - x - w, lh - y - h, w, h
+    if rotate == 270:
+        return y, lw - x - w, h, w
+    return x, y, w, h
+
+
+# ---- the overlay state machine (screen access is injected, so it can be tested without a framebuffer) ----------------
+
+class Overlay:
+    def __init__(self, screen, clock=time.monotonic):
+        self.screen, self.clock = screen, clock
+        self.pct, self.until = 0, 0.0
+        self.saved = self.drawn = self.key = None
+
+    def show(self, pct):
+        self.pct, self.until = pct, self.clock() + HOLD
+        self._paint()
+
+    def _paint(self):
+        scr = self.screen
+        key = scr.position()
+        cur = scr.read()
+        if self.key != key or self.saved is None:
+            self.saved = cur
+        elif self.drawn is not None and cur != self.drawn:
+            self.saved = cur       # the program repainted underneath us: that is the picture to restore later
+        self.key = key
+        self.drawn = scr.compose(self.saved, self.pct)
+        scr.write(self.drawn)
+
+    def tick(self):
+        """Call regularly; returns True while the bar is on screen."""
+        if self.until <= 0:
+            return False
+        if self.clock() >= self.until:
+            self.hide()
+            return False
+        scr = self.screen
+        if scr.position() != self.key or scr.read() != self.drawn:
+            self._paint()
+        return True
+
+    def hide(self):
+        if self.drawn is not None and self.saved is not None:
+            try:
+                if self.screen.position() == self.key and self.screen.read() == self.drawn:
+                    self.screen.write(self.saved)
+            except OSError as e:
+                log("restore failed: %r" % e)
+        self.saved = self.drawn = self.key = None
+        self.until = 0.0
+
+
+# ---- the real framebuffer ------------------------------------------------------------------------------------------
+
+class FbScreen:
+    def __init__(self, dev=FB_DEV):
+        import pygame
+        self.pg = pygame
+        pygame.display.init()
+        pygame.font.init()
+        self.fd = os.open(dev, os.O_RDWR)
+        self.rotate = int(os.environ.get("RGOS_FB_ROTATE", "0") or 0) % 360
+        if self.rotate not in (0, 90, 180, 270):
+            self.rotate = 0
+        raw = self._var()
+        self.xres, self.yres, self.xvirt, self.yvirt, self.xoff, self.yoff, self.bpp = struct.unpack_from("<7I", raw, 0)
+        if self.bpp not in (16, 24, 32):
+            raise RuntimeError("unsupported framebuffer depth %d" % self.bpp)
+        ro, rl, _, go, gl, _, bo, bl, _, to, tl, _ = struct.unpack_from("<12I", raw, 32)
+        f = bytearray(80)
+        fcntl.ioctl(self.fd, FBIOGET_FSCREENINFO, f)
+        self.line = struct.unpack_from("<I", f, 48)[0]
+        mask = lambda o, l: ((1 << l) - 1) << o
+        self.masks = (mask(ro, rl), mask(go, gl), mask(bo, bl), mask(to, tl) if tl else 0)
+        self.bpx = self.bpp // 8
+        self.lw, self.lh = logical_size(self.xres, self.yres, self.rotate)
+        self.scale = max(0.6, min(1.6, self.lw / float(BASE_W)))
+        self.rect = to_fb_rect(bar_geometry(self.lw, self.lh), self.lw, self.lh, self.rotate)
+        self.theme = dict(DEFAULT_THEME)
+        self.font = self._font(int(14 * self.scale))
+
+    def _font(self, size):
+        pg = self.pg
+        try:
+            return pg.font.Font(FONT_PATH, size) if os.path.exists(FONT_PATH) else pg.font.Font(None, int(size * 1.3))
+        except Exception:
+            return pg.font.Font(None, int(size * 1.3))
+
+    def _var(self):
+        v = bytearray(160)
+        fcntl.ioctl(self.fd, FBIOGET_VSCREENINFO, v)
+        return v
+
+    def position(self):
+        """Which part of video memory is on screen (a game that flips pages moves it)."""
+        a, b = struct.unpack_from("<2I", self._var(), 16)
+        return a, b
+
+    def _offset(self, y):
+        xo, yo = self.position()
+        return (yo + self.rect[1] + y) * self.line + (xo + self.rect[0]) * self.bpx
+
+    def read(self):
+        x, y, w, h = self.rect
+        return [os.pread(self.fd, w * self.bpx, self._offset(r)) for r in range(h)]
+
+    def write(self, rows):
+        for r, data in enumerate(rows):
+            off, n = self._offset(r), 0
+            while n < len(data):
+                n += os.pwrite(self.fd, data[n:], off + n)
+
+    def _surface_from(self, rows, w, h):
+        pg = self.pg
+        sf = pg.Surface((w, h), 0, self.bpp, self.masks)
+        pitch, buf = sf.get_pitch(), sf.get_buffer()
+        for r, data in enumerate(rows):
+            buf.write(data, r * pitch)
+        del buf
+        return sf
+
+    def _rows_of(self, sf, w, h):
+        pitch, buf = sf.get_pitch(), sf.get_buffer()
+        raw = buf.raw
+        del buf
+        return [bytes(raw[r * pitch:r * pitch + w * self.bpx]) for r in range(h)]
+
+    def compose(self, saved, pct):
+        """The saved pixels with the bar drawn over them, as framebuffer rows."""
+        pg, s = self.pg, self.scale
+        self.theme = read_theme()
+        c = self.theme
+        _, _, w, h = bar_geometry(self.lw, self.lh)
+        bar = pg.Surface((w, h), pg.SRCALPHA)
+        rad = max(4, int(10 * s))
+        pg.draw.rect(bar, c["PANEL"], (0, 0, w, h), border_radius=rad)
+        pg.draw.rect(bar, c["ACCENT"], (0, 0, w, h), max(1, int(2 * s)), border_radius=rad)
+        lab = self.font.render("VOL", True, c["TEXT"])
+        pct_t = self.font.render("%d%%" % pct, True, c["TEXT"])
+        ty = (h - lab.get_height()) // 2
+        bar.blit(lab, (int(14 * s), ty))
+        bx, bw_, bh_ = int(56 * s), int(140 * s), max(4, int(10 * s))
+        by = (h - bh_) // 2
+        pg.draw.rect(bar, c["BG"], (bx, by, bw_, bh_), border_radius=bh_ // 2)
+        if pct:
+            pg.draw.rect(bar, c["ACCENT"], (bx, by, max(bh_ + 1, bw_ * pct // 100), bh_), border_radius=bh_ // 2)
+        bar.blit(pct_t, (w - pct_t.get_width() - int(12 * s), ty))
+        if self.rotate:
+            bar = pg.transform.rotate(bar, -self.rotate)
+        fw, fh = bar.get_size()
+        sf = self._surface_from(saved, fw, fh)
+        sf.blit(bar, (0, 0))
+        return self._rows_of(sf, fw, fh)
+
+
+# ---- daemon --------------------------------------------------------------------------------------------------------
+
+def run():
+    start = time.monotonic()
+    ov, last = None, read_volume()
+    seen_stamp, seen_pct = (last[1], last[0]) if last else (None, None)
+    log("overlay started (volume %s)" % (seen_pct if last else "unknown"))
+    while True:
+        if ov is None:
+            try:
+                ov = Overlay(FbScreen())
+                log("framebuffer %dx%d %dbpp rotate %d" % (ov.screen.xres, ov.screen.yres, ov.screen.bpp, ov.screen.rotate))
+            except Exception as e:
+                log("framebuffer not available: %r" % e)
+                time.sleep(3.0)
+                continue
+        try:
+            v = read_volume()
+            if v and v[1] != seen_stamp:
+                quiet = time.monotonic() - start < BOOT_QUIET and v[0] == seen_pct
+                seen_stamp, seen_pct = v[1], v[0]
+                if not quiet:
+                    ov.show(v[0])
+            busy = ov.tick()
+        except Exception as e:           # a bad frame must never kill the overlay; rebuild the screen access next time
+            log("overlay error: %r" % e)
+            try:
+                os.close(ov.screen.fd)
+            except Exception:
+                pass
+            ov = None
+            time.sleep(1.0)
+            continue
+        time.sleep(FAST if busy else SLOW)
+
+
+def main(argv):
+    if len(argv) > 1 and argv[1] in ("-h", "--help"):
+        sys.stdout.write(__doc__)
+        return 0
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

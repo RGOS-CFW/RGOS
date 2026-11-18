@@ -103,7 +103,27 @@ def apply_theme(tid):
     tid, _name, c = THEMES[theme_index(tid)]
     BG, PANEL, SEL_BG, ACCENT, TEXT, DIM = c["BG"], c["PANEL"], c["SEL_BG"], c["ACCENT"], c["TEXT"], c["DIM"]
     XMB_TOP, XMB_LOW, XMB_SILK = XMB_COLORS.get(tid, (BG, ACCENT, TEXT))
+    publish_theme()
     return tid
+
+
+_theme_pub = [None]
+
+
+def publish_theme():
+    """Hand the colours to rgos-overlay (the volume bar), which runs outside the launcher."""
+    line = " ".join("%d,%d,%d" % tuple(c) for c in (BG, PANEL, ACCENT, TEXT))
+    if line == _theme_pub[0]:
+        return
+    _theme_pub[0] = line
+    try:
+        os.makedirs(RUN_DIR, exist_ok=True)
+        tmp = os.path.join(RUN_DIR, "theme.tmp")
+        with open(tmp, "w") as f:
+            f.write(line + "\n")
+        os.replace(tmp, os.path.join(RUN_DIR, "theme"))
+    except OSError:
+        pass
 
 
 apply_theme(DEFAULT_THEME)
@@ -2517,13 +2537,10 @@ def main():
     rows, list_x, list_w, top_y, row_h = 8 + DY // 44, 20, 450 + DX, 84, 44
     PH = 352 + DY
     clock = pygame.time.Clock()
-    rd_vol, rd_bri, rd_bat = throttled(read_volume, 0.1), throttled(read_brightness, 0.1), throttled(read_battery, 10.0)
+    rd_bri, rd_bat = throttled(read_brightness, 0.1), throttled(read_battery, 10.0)
     last_act, clk_at, clk = time.monotonic(), 0, ""
     IDLE_VIEWS = ("home", "systems", "games", "recents", "tools", "settings")
     code = None
-    vol_seen = read_volume()
-    vol_seen = vol_seen[1] if vol_seen else None
-    vol_show_until, vol_pct = 0.0, 0
     bri_seen, bri_show_until, bri_pct = None, 0.0, 0
     _b = read_brightness()
     if _b:
@@ -3871,19 +3888,6 @@ def main():
             hint += "   [" + inp.last_raw + "]"
         canvas.blit(f_small.render(hint, True, DIM), (20, H - 28))
 
-        vol = rd_vol()
-        if vol and vol[1] != vol_seen:
-            vol_seen, vol_pct, vol_show_until = vol[1], vol[0], time.time() + 1.5
-        if time.time() < vol_show_until:
-            bx, by, bw, bh = W // 2 - 130, H - 100, 260, 44
-            pygame.draw.rect(canvas, PANEL, (bx, by, bw, bh), border_radius=10)
-            pygame.draw.rect(canvas, ACCENT, (bx, by, bw, bh), 2, border_radius=10)
-            canvas.blit(f_small.render("VOL", True, TEXT), (bx + 14, by + 14))
-            pygame.draw.rect(canvas, BG, (bx + 56, by + 17, 140, 10), border_radius=5)
-            if vol_pct:
-                pygame.draw.rect(canvas, ACCENT, (bx + 56, by + 17, max(6, 140 * vol_pct // 100), 10), border_radius=5)
-            canvas.blit(f_small.render("%d%%" % vol_pct, True, TEXT), (bx + 208, by + 14))
-
         bri = rd_bri()
         if bri and bri[1] != bri_seen:
             if bri_seen is not None:
@@ -3902,7 +3906,7 @@ def main():
         if flow_on:
             flow_warm(fcards, flow_t, 0.004 if anim_moving else 0.012)
         idle = (view in IDLE_VIEWS and not forced and time.monotonic() - last_act > 3.0
-                and time.time() >= max(vol_show_until, bri_show_until))
+                and time.time() >= bri_show_until)
         clock.tick(60 if anim_moving or (launcher_id in ("xmb", "flow") and time.monotonic() - last_act < 0.5) else (15 if idle else 30))
 
     try:

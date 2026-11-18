@@ -14,7 +14,7 @@ mkdir -p /run/rgos /var/lib/rgos /var/log /media/roms /dev/pts /boot
 fixperms() {
     chown -R 0:0 /opt/rgos /etc/rgos /var/lib/rgos 2>/dev/null
     chmod -R a+rwX /etc/rgos /var/lib/rgos 2>/dev/null
-    chmod 755 /usr/bin/systemctl /opt/rgos/rgos-audio-prep /opt/rgos/rgos-session /opt/rgos/rgos-input /opt/rgos/rgos-volume /opt/rgos/rgos-update /opt/rgos/rgos-launch /opt/rgos/menu.py 2>/dev/null
+    chmod 755 /usr/bin/systemctl /opt/rgos/rgos-audio-prep /opt/rgos/rgos-session /opt/rgos/rgos-input /opt/rgos/rgos-volume /opt/rgos/rgos-overlay /opt/rgos/rgos-update /opt/rgos/rgos-launch /opt/rgos/menu.py 2>/dev/null
     chmod a+rw /dev/input/* /dev/uinput /dev/fb* /dev/snd/* /dev/dri/* /dev/tty1 2>/dev/null
 }
 if ! { touch /var/lib/rgos/.w && rm -f /var/lib/rgos/.w; } 2>/dev/null; then
@@ -154,6 +154,7 @@ python3 /opt/rgos/wifictl.py daemon >> /var/log/rgos-wifi.log 2>&1 &
 python3 /opt/rgos/btctl.py start >> /var/log/rgos-bt.log 2>&1 &
 python3 /opt/rgos/sshctl.py boot >> /var/log/rgos-ssh.log 2>&1 &
 python3 /opt/rgos/rgos-volume >> /var/log/rgos-volume.log 2>&1 &
+python3 /opt/rgos/rgos-overlay >> /var/log/rgos-overlay.log 2>&1 &
 python3 /opt/rgos/rgos-input >> /var/log/rgos-input.log 2>&1 &
 ( command -v renice >/dev/null 2>&1 && renice -n 19 -p "$(sh -c 'echo $PPID')" >/dev/null 2>&1; prev=0; for t in 8 28 58; do sleep $((t-prev)); prev=$t
     if ! mountpoint -q /boot; then for d in /dev/mmcblk*p1; do [ -b "$d" ] && mount -t vfat "$d" /boot 2>/dev/null && break; done; fi
@@ -161,7 +162,7 @@ python3 /opt/rgos/rgos-input >> /var/log/rgos-input.log 2>&1 &
     { echo "== $(date) kernel $(uname -r) t=$t"; echo "--- pygame"
       T=""; command -v timeout >/dev/null 2>&1 && T="timeout 4"
       $T python3 -c 'import pygame; print("pygame", pygame.version.ver)' 2>&1
-      for f in /var/log/rgos-menu.log /var/log/rgos-input.log /var/log/rgos-launch.log /var/log/rgos-native.log /var/log/rgos-retroarch.log /var/log/rgos-roms.log /var/log/rgos-volume.log /var/log/rgos-audio.log /var/log/rgos-audio-prep.log /var/log/rgos-audio-load.log /var/log/rgos-wifi.log /var/log/rgos-bt.log /var/log/rgos-ssh.log; do echo "--- $f"; tail -n 100 "$f" 2>&1; done
+      for f in /var/log/rgos-menu.log /var/log/rgos-input.log /var/log/rgos-launch.log /var/log/rgos-native.log /var/log/rgos-retroarch.log /var/log/rgos-roms.log /var/log/rgos-volume.log /var/log/rgos-overlay.log /var/log/rgos-audio.log /var/log/rgos-audio-prep.log /var/log/rgos-audio-load.log /var/log/rgos-wifi.log /var/log/rgos-bt.log /var/log/rgos-ssh.log; do echo "--- $f"; tail -n 100 "$f" 2>&1; done
       echo "--- settings dir"; id; grep -E ' (/|/var|/var/lib|/var/lib/rgos) ' /proc/mounts; ls -ld /var /var/lib /var/lib/rgos 2>&1
       ls -la /var/lib/rgos 2>&1; { touch /var/lib/rgos/.w && rm -f /var/lib/rgos/.w && echo "write test: ok"; } 2>&1 || echo "write test: FAILED"
       cat /var/log/rgos-state.log 2>&1
