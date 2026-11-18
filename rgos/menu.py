@@ -890,11 +890,15 @@ _XIT = {}
 _XBG = {}
 _XBG_RAW = [None]
 _XSILK = {}
-_XFRAME = [None, -1.0]
-# The silk is redrawn in pure Python (~20+ ms on the H700). While the menu is scrolling the last frame is reused,
-# so navigation never pays for a silk redraw (that used to land every 0.5 s as a stutter); idle it refreshes at 15 fps.
+_XFRAME = [None, -1.0, None, None, -1.0]  # front surface, its time, in-flight redraw job, back surface, that job's time
+# The silk is redrawn in pure Python (~20+ ms on the H700). That used to land in a single frame, right as navigation
+# settled (or every few seconds while a direction was held), and showed up as a hitch. Now the redraw is time-sliced:
+# one ribbon bundle per frame into a back buffer that is swapped in when complete, and it is paused entirely while the
+# menu is animating or was just touched, so scrolling never pays for the silk. Idle it still refreshes at 15 fps.
 XMB_BG_INTERVAL = 1.0 / 15.0
-XMB_BG_MOVING_MAX = 4.0
+XMB_BG_MOVING_MAX = 8.0
+XMB_BG_SETTLE = 0.6
+XMB_BG_BUDGET = 0.008
 
 
 def xmb_icon(kind, size, color, alpha=1.0):
@@ -984,7 +988,7 @@ def xmb_bg(c, t, moving=False):
     if g is None:
         _XBG.clear()
         _XBG_RAW[0] = None
-        _XFRAME[0] = None
+        _XFRAME[:] = [None, -1.0, None, None, -1.0]
         gw, gh = 24, 16
         small = pygame.Surface((gw, gh))
         top, low = XMB_TOP, XMB_LOW
@@ -1006,25 +1010,40 @@ def xmb_bg(c, t, moving=False):
                 _XMB_SPARKS.append((r.uniform(0, W), (r.uniform(0.10, 0.98) if i % 3 else r.uniform(0.40, 0.85)) * H,
                                     r.uniform(3, 12), r.uniform(0, 6.28), 2 if r.random() < 0.8 else 3))
     fr = _XFRAME
-    age = t - fr[1]
-    if fr[0] is not None and 0.0 <= age < (XMB_BG_MOVING_MAX if moving else XMB_BG_INTERVAL):
-        f = fr[0]
+    if fr[0] is None:
+        fr[0] = g.copy()
+        for _ in _xmb_silk_steps(g, fr[0], t):
+            pass
+        fr[1] = t
     else:
-        f = _xmb_silk_draw(g, t)
-    c.blit(f, (0, 0))
+        age = t - fr[1]
+        if fr[2] is None and not 0.0 <= age < (XMB_BG_MOVING_MAX if moving else XMB_BG_INTERVAL):
+            if fr[3] is None:
+                fr[3] = g.copy()
+            fr[2], fr[4] = _xmb_silk_steps(g, fr[3], t), t
+        # Advance an in-flight redraw: at rest as many bundles as fit in a small time budget (a fast CPU finishes in one
+        # frame, the H700 spreads it over a few); while navigating only one bundle per frame, and only once the frame is stale.
+        if fr[2] is not None and (not moving or not 0.0 <= age < XMB_BG_MOVING_MAX):
+            budget = 0.0 if moving else XMB_BG_BUDGET
+            t0 = time.perf_counter()
+            try:
+                while True:
+                    next(fr[2])
+                    if time.perf_counter() - t0 >= budget:
+                        break
+            except StopIteration:
+                fr[0], fr[3] = fr[3], fr[0]
+                fr[1], fr[2] = fr[4], None
+    c.blit(fr[0], (0, 0))
     for x0, y0, spd, ph, sz in _XMB_SPARKS:
         x, y = (x0 + t * spd) % W, y0 + 4 * math.sin(t * 0.4 + ph)
         pygame.draw.rect(c, xmb_tint(x, y, 0.22 + 0.55 * (0.5 + 0.5 * math.sin(t * 1.6 + ph))), (int(x), int(y), sz, sz))
 
 
-def _xmb_silk_draw(g, t):
-    fr = _XFRAME
-    if fr[0] is None:
-        fr[0] = g.copy()
-    else:
-        fr[0].blit(g, (0, 0))
-    fr[1] = t
-    f = fr[0]
+def _xmb_silk_steps(g, f, t):
+    """Draw the silk for time t onto f, yielding after the background reset and after each bundle."""
+    f.blit(g, (0, 0))
+    yield
     xs, (sx0, cx0), bundles = _XSILK["geo"]
     cw, sw = math.cos(t * 0.35), math.sin(t * 0.35)
     S = [a * cw + b * sw for a, b in zip(sx0, cx0)]
@@ -1044,7 +1063,7 @@ def _xmb_silk_draw(g, t):
         for sf, sck, ssk, col in strands:
             pygame.draw.aalines(f, col, False, [(x, yc + h * sf + hs * sck + hc * ssk) for x, yc, h, hs, hc in rows])
         pygame.draw.lines(f, edge_col, False, upper, 2)
-    return f
+        yield
 
 
 def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade):
@@ -3191,7 +3210,7 @@ def main():
         if flow_on or classic_on:
             pass
         elif launcher_id == "xmb":
-            xmb_bg(canvas, time.time(), anim_moving or time.monotonic() - last_act < 0.35)
+            xmb_bg(canvas, time.time(), anim_moving or time.monotonic() - last_act < XMB_BG_SETTLE)
         else:
             canvas.fill(BG)
             pygame.draw.rect(canvas, PANEL, (0, 0, W, 64))
