@@ -50,3 +50,15 @@ class LoadConfTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnescapeSsidTests(unittest.TestCase):
+    def test_wpa_cli_control_character_escapes(self):
+        self.assertEqual(wifictl.unescape_ssid(r"a\tb\nc\rd\ee"), "a\tb\nc\rd\x1be")
+
+    def test_existing_escapes_still_decode(self):
+        self.assertEqual(wifictl.unescape_ssid(r"caf\xc3\xa9 \\ \""), 'caf\u00e9 \\ "')
+
+    def test_plain_ssid_and_lone_backslash_are_untouched(self):
+        self.assertEqual(wifictl.unescape_ssid("Home WiFi"), "Home WiFi")
+        self.assertEqual(wifictl.unescape_ssid("odd\\"), "odd\\")

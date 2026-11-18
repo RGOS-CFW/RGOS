@@ -132,6 +132,9 @@ def write_wpa_conf(conf=None):
         return False
 
 
+_SSID_CTRL_ESC = {b"\\n": 10, b"\\r": 13, b"\\t": 9, b"\\e": 27}
+
+
 def unescape_ssid(s):
     out, i, b = bytearray(), 0, s.encode("utf-8", "surrogateescape")
     while i < len(b):
@@ -140,6 +143,8 @@ def unescape_ssid(s):
             out.append(int(m.group(1), 16)); i += 4
         elif b[i:i + 2] in (b"\\\\", b'\\"'):
             out.append(b[i + 1]); i += 2
+        elif b[i:i + 2] in _SSID_CTRL_ESC:
+            out.append(_SSID_CTRL_ESC[b[i:i + 2]]); i += 2
         else:
             out.append(b[i]); i += 1
     return out.decode("utf-8", "replace")
