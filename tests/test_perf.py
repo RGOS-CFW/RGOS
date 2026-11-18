@@ -34,7 +34,7 @@ class GovernorTests(unittest.TestCase):
         write(self.gpu + "/available_governors", "simple_ondemand performance powersave")
 
     def test_heavy_systems_get_performance_light_ones_do_not(self):
-        for sid in ("psx", "gc", "n64", "dreamcast", "saturn", "psp"):
+        for sid in ("psx", "gc", "n64", "dreamcast", "saturn", "psp", "native"):
             self.assertEqual(self.launch.perf_governor(sid), "performance", sid)
         for sid in ("gb", "gba", "nes", "snes", "genesis", ""):
             self.assertEqual(self.launch.perf_governor(sid), "", sid)

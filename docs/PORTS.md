@@ -24,6 +24,12 @@ Console ROM folders continue to use the emulator/core configured for their
 system. See `rgos-native.log` on the device for native-port output when a port
 fails to start.
 
+## Performance
+
+While a native port runs, RG OS switches the CPU and GPU/DDR governors to `performance` and restores
+them when the port exits, and the port runs at a raised scheduling priority. To change the governor,
+put its name in `rgos-governor.txt` on the boot partition (`default` keeps the stock governor).
+
 ## Controller mapping
 
 SDL ports only treat a joystick as a game controller when a controller database

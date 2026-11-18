@@ -74,7 +74,8 @@ class ExitWatcher(threading.Thread):
         try:
             while not self._stop_evt.is_set() and self.fds:
                 try:
-                    ready, _, _ = select.select(self.fds, [], [], 0.1)
+                    # Only the hold timer needs fast wakeups; otherwise sleep until a pad event arrives.
+                    ready, _, _ = select.select(self.fds, [], [], 0.1 if down >= {BTN_SELECT, BTN_START} else 0.5)
                 except (OSError, ValueError):
                     break
                 for fd in ready:
