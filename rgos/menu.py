@@ -786,8 +786,10 @@ _XBG = {}
 _XBG_RAW = [None]
 _XSILK = {}
 _XFRAME = [None, -1.0]
-XMB_BG_INTERVAL = 1.0 / 30.0
-XMB_BG_MOVING_MAX = 0.5
+# The silk is redrawn in pure Python (~20+ ms on the H700). While the menu is scrolling the last frame is reused,
+# so navigation never pays for a silk redraw (that used to land every 0.5 s as a stutter); idle it refreshes at 15 fps.
+XMB_BG_INTERVAL = 1.0 / 15.0
+XMB_BG_MOVING_MAX = 4.0
 
 
 def xmb_icon(kind, size, color, alpha=1.0):
