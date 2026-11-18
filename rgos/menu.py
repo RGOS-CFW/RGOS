@@ -1032,7 +1032,8 @@ def draw_xmb_dropdown(c, f_small, dd, opts):
 FONT_PATH = [None]
 FLOW_LEVELS = (1.0, 0.88, 0.77, 0.69, 0.62, 0.55, 0.50, 0.45)
 FLOW_CACHE_CARDS = 20
-_FLOW = {"fonts": {}, "cards": {}, "bg": (None, None), "bar": (None, None), "glow": {}, "shadow": {}, "S": 0, "warm": None}
+_FLOW = {"fonts": {}, "cards": {}, "bg": (None, None), "bar": (None, None), "glow": {}, "shadow": {}, "S": 0, "warm": None,
+         "jobs": {}, "op": 0.0}
 
 
 def _lru_get(d, key):
@@ -1135,31 +1136,40 @@ def _flow_gradient_card(hue, tag, abbr, S, icon=None):
     return surf
 
 
-def _flow_art_card(path, S):
-    """Square card made from a cover image: fitted whole, over a blurred copy of itself."""
+def _flow_art_steps(path, S):
+    """Square card made from a cover image: fitted whole, over a blurred copy of itself.
+
+    A generator that yields after every heavy step (decode, each scale, blur), so flow_warm can spread a
+    card over several frames instead of stalling one frame for the whole build. Returns the card, or None.
+    """
     try:
         img = pygame.image.load(path)
         try:
             img = img.convert_alpha()
         except Exception:
             pass
+        yield
         iw, ih = img.get_size()
         if iw < 2 or ih < 2:
             return None
         surf = pygame.Surface((S, S), pygame.SRCALPHA)
         if abs(iw / float(ih) - 1.0) < 0.06:
             surf.blit(pygame.transform.smoothscale(img, (S, S)), (0, 0))
+            yield
         else:
             kc = max(S / float(iw), S / float(ih))
             cw, ch = max(S, int(iw * kc + 0.5)), max(S, int(ih * kc + 0.5))
             surf.blit(pygame.transform.smoothscale(img, (cw, ch)), ((S - cw) // 2, (S - ch) // 2))
+            yield
             surf = _flow_blur(surf, 8)
+            yield
             shade = pygame.Surface((S, S), pygame.SRCALPHA)
             shade.fill((0, 0, 0, 110))
             surf.blit(shade, (0, 0))
             kf = min(S / float(iw), S / float(ih))
             fw, fh = max(1, int(iw * kf + 0.5)), max(1, int(ih * kf + 0.5))
             surf.blit(pygame.transform.smoothscale(img, (fw, fh)), ((S - fw) // 2, (S - fh) // 2))
+            yield
         r = max(8, S // 10)
         mask = pygame.Surface((S, S), pygame.SRCALPHA)
         pygame.draw.rect(mask, (255, 255, 255, 255), (0, 0, S, S), border_radius=r)
@@ -1169,6 +1179,15 @@ def _flow_art_card(path, S):
     except Exception as e:
         log("artwork: cannot use %s: %s" % (path, e))
         return None
+
+
+def _flow_art_card(path, S):
+    gen = _flow_art_steps(path, S)
+    while True:
+        try:
+            next(gen)
+        except StopIteration as e:
+            return e.value
 
 
 def _flow_key(hue, tag, abbr, S, icon=None, art=None):
@@ -1186,6 +1205,42 @@ def _flow_base(hue, tag, abbr, S, icon=None, art=None):
         lv = [surf] + [None] * (len(FLOW_LEVELS) - 1)
         _lru_put(cards, key, lv, FLOW_CACHE_CARDS)
     return key, lv
+
+
+def _flow_draw_base(hue, tag, abbr, S, icon=None, art=None):
+    """Card for the draw loop. A cover that is not built yet shows the cheap gradient card for now.
+
+    Decoding and scaling a cover inside the frame is what made scrolling stutter; flow_warm builds it
+    over the next frames and the cover appears as soon as it is ready.
+    """
+    key = _flow_key(hue, tag, abbr, S, icon, art)
+    lv = _lru_get(_FLOW["cards"], key)
+    if lv is not None:
+        return key, lv
+    if art:
+        return _flow_base(hue, tag, abbr, S, icon)
+    return _flow_base(hue, tag, abbr, S, icon, art)
+
+
+def _flow_art_advance(k, end):
+    """Advance the build of cover card k until it is finished or time `end` passes; None while unfinished."""
+    jobs = _FLOW["jobs"]
+    job = jobs.get(k)
+    if job is None:
+        job = jobs[k] = _flow_art_steps(k[5], k[3])
+    while True:
+        try:
+            next(job)
+        except StopIteration as e:
+            jobs.pop(k, None)
+            surf = e.value
+            if surf is None:
+                surf = _flow_gradient_card(k[0], k[1], k[2], k[3], k[4])
+            lv = [surf] + [None] * (len(FLOW_LEVELS) - 1)
+            _lru_put(_FLOW["cards"], k, lv, FLOW_CACHE_CARDS)
+            return lv
+        if time.perf_counter() >= end:
+            return None
 
 
 def _flow_build_level(lv, S, li):
@@ -1247,6 +1302,11 @@ def _flow_title(title, compact):
 
 
 def flow_warm(cards, centre, budget):
+    """Build cards, glows and scaled levels near the centre, never running past `budget` seconds.
+
+    While scrolling the budget is a few milliseconds, so an operation is only started when the measured
+    cost of the last one still fits; the first one of a call always runs so warming cannot stall.
+    """
     n, S = len(cards), _FLOW["S"]
     if not n or S <= 0:
         return
@@ -1254,6 +1314,7 @@ def flow_warm(cards, centre, budget):
     if _FLOW["warm"] == sig:
         return
     t0 = time.perf_counter()
+    end = t0 + budget
     compact = H < 600
     order, seen = [], set()
     for dist in range(5):
@@ -1266,31 +1327,62 @@ def flow_warm(cards, centre, budget):
             if i not in seen:
                 seen.add(i)
                 order.append((dist, i))
+    keys = [_flow_key(cards[i]["hue"], cards[i]["tag"], cards[i]["abbr"], S, cards[i].get("icon"), cards[i].get("art"))
+            for _d, i in order]
+    for k in [k for k in _FLOW["jobs"] if k not in keys]:
+        del _FLOW["jobs"][k]  # scrolled far away: drop half-built covers
     levels = []
-    for dist, i in order:
+    for (dist, i), k in zip(order, keys):
         g = cards[i]
-        k = _flow_key(g["hue"], g["tag"], g["abbr"], S, g.get("icon"), g.get("art"))
-        fresh = k not in _FLOW["cards"]
-        lv = _flow_base(*k)[1]
+        lv = _lru_get(_FLOW["cards"], k)
+        if lv is None:
+            if len(k) > 5:
+                lv = _flow_art_advance(k, end)
+                if lv is None:
+                    return
+            else:
+                lv = _flow_base(*k)[1]
+            if time.perf_counter() >= end:
+                if dist <= 2:
+                    levels.append(lv)
+                return
         if dist <= 2:
             levels.append(lv)
         if dist <= 3:
             _flow_title(g["title"], compact)
-        if fresh and time.perf_counter() - t0 >= budget:
-            return
+
+    ops = [0]
+
+    def room():
+        """True if another scale operation may start now."""
+        if ops[0] == 0:
+            if budget >= 0.010 or _FLOW["op"] <= 2 * budget:
+                return True
+            _FLOW["skip"] = _FLOW.get("skip", 0) + 1
+            return _FLOW["skip"] % 4 == 0  # an op too big for a scrolling frame still runs now and then
+        return time.perf_counter() + _FLOW["op"] <= end
+
+    def timed(fn, *a):
+        t = time.perf_counter()
+        r = fn(*a)
+        dt = time.perf_counter() - t
+        _FLOW["op"] = dt if dt > _FLOW["op"] else _FLOW["op"] * 0.9 + dt * 0.1
+        ops[0] += 1
+        return r
+
     for li in (0, 1):
         if _flow_glow_level(S, li, False) is None:
-            _flow_glow_level(S, li)
-            if time.perf_counter() - t0 >= budget:
+            if not room():
                 return
+            timed(_flow_glow_level, S, li)
     rest = (4, 7)
     for tier in (rest, [li for li in range(1, len(FLOW_LEVELS)) if li not in rest]):
         for lv in levels:
             for li in tier:
                 if lv[li] is None:
-                    _flow_build_level(lv, S, li)
-                    if time.perf_counter() - t0 >= budget:
+                    if not room():
                         return
+                    timed(_flow_build_level, lv, S, li)
     _FLOW["warm"] = sig
 
 
@@ -1371,7 +1463,7 @@ def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk
             alpha = 255 - 55 * min(a, 1.0) - 110 * max(0.0, a - 1.0) if a < 2 else 90
             tw_ = S * scale
             w = max(16, int(round(tw_)))
-            key, lv = _flow_base(g["hue"], g["tag"], g["abbr"], S, g.get("icon"), g.get("art"))
+            key, lv = _flow_draw_base(g["hue"], g["tag"], g["abbr"], S, g.get("icon"), g.get("art"))
             li = flow_level_index(tw_, S)
             src = _flow_cover(lv, S, li)
             surf = src if src.get_width() == w else pygame.transform.scale(src, (w, w))

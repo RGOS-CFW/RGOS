@@ -126,5 +126,64 @@ class CarouselTests(unittest.TestCase):
             self.draw(0.0)
 
 
+class CoverTests(unittest.TestCase):
+    """Cover art must never be decoded and scaled inside a frame."""
+
+    def setUp(self):
+        p = mock.patch.object(menu, "pygame", fake_pygame())
+        self.pg = p.start()
+        self.addCleanup(p.stop)
+        for name in ("cards", "glow", "shadow", "fonts", "jobs"):
+            menu._FLOW[name].clear()
+        menu._FLOW["warm"] = None
+        menu._FLOW["S"] = 300
+        menu.FONT_PATH[0] = None
+        self.cards = [{"title": "Game %d" % i, "sub": "x", "hue": i * 20, "tag": "GBA", "abbr": "G%d" % i, "icon": None,
+                       "fav": False, "art": "/art/%d.png" % i} for i in range(8)]
+        self.steps = []
+
+    def fake_steps(self, path, S, n=3, result="surface"):
+        self.steps.append(path)
+        for _ in range(n):
+            yield
+        return FakeSurface((S, S)) if result == "surface" else None
+
+    def key(self, i):
+        g = self.cards[i]
+        return menu._flow_key(g["hue"], g["tag"], g["abbr"], 300, None, g["art"])
+
+    def test_draw_shows_the_gradient_and_never_builds_a_cover(self):
+        with mock.patch.object(menu, "_flow_art_steps", side_effect=AssertionError("decoded in a frame")):
+            c = FakeSurface((menu.W, menu.H))
+            menu.draw_flow_level(c, FakeFont(), FakeFont(), self.cards, 0.0, 1.0, "", [("A", "Open")], ("", ""), "12:00", None, False)
+        self.assertNotIn(self.key(0), menu._FLOW["cards"])
+
+    def test_warm_builds_a_cover_a_step_at_a_time(self):
+        with mock.patch.object(menu, "_flow_art_steps", side_effect=self.fake_steps):
+            menu.flow_warm(self.cards, 0, 0.0)
+            self.assertNotIn(self.key(0), menu._FLOW["cards"])  # one step per call, not the whole cover
+            self.assertIn(self.key(0), menu._FLOW["jobs"])
+            for _ in range(10):
+                menu.flow_warm(self.cards, 0, 0.0)
+            self.assertIn(self.key(0), menu._FLOW["cards"])
+            self.assertNotIn(self.key(0), menu._FLOW["jobs"])
+        self.assertEqual(self.steps.count("/art/0.png"), 1)  # built once, not restarted every call
+
+    def test_a_cover_that_cannot_be_read_falls_back_to_the_gradient(self):
+        with mock.patch.object(menu, "_flow_art_steps", side_effect=lambda p, S: self.fake_steps(p, S, 1, None)):
+            for _ in range(6):
+                menu.flow_warm(self.cards, 0, 0.0)
+        lv = menu._FLOW["cards"][self.key(0)]
+        self.assertIsNotNone(lv[0])
+
+    def test_half_built_covers_are_dropped_when_you_scroll_away(self):
+        with mock.patch.object(menu, "_flow_art_steps", side_effect=lambda p, S: self.fake_steps(p, S, 50)):
+            menu.flow_warm(self.cards, 0, 0.0)
+            self.assertIn(self.key(0), menu._FLOW["jobs"])
+            self.cards = self.cards + [dict(c, art="/art/new%d.png" % i, abbr="N%d" % i) for i, c in enumerate(self.cards)] * 3
+            menu.flow_warm(self.cards, 12, 0.0)
+        self.assertNotIn(self.key(0), menu._FLOW["jobs"])
+
+
 if __name__ == "__main__":
     unittest.main()

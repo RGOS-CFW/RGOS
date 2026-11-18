@@ -144,22 +144,45 @@ class FbOut:
                             else pg.transform.scale(src, (w, h)), (x, y))
         return self.cache
 
+    @staticmethod
+    def _view(buf):
+        """Zero-copy byte view of a pygame buffer; falls back to .raw (a full copy) if that is not possible."""
+        try:
+            mv = memoryview(buf)
+            return mv if mv.ndim == 1 and mv.format == "B" else mv.cast("B")
+        except (TypeError, ValueError, AttributeError):
+            return buf.raw
+
     def present(self, canvas):
-        h = zlib.adler32(canvas.get_buffer().raw)
+        # .raw copied the whole frame (1+ MB) several times per frame; views read the pixels in place.
+        buf = canvas.get_buffer()
+        mv = self._view(buf)
+        try:
+            h = zlib.adler32(mv)
+        finally:
+            if isinstance(mv, memoryview):
+                mv.release()
+            del mv, buf
         if h == self.last:
             return
         self.last = h
         self.surf.blit(self._scaled(canvas), (0, 0))
-        raw = self.surf.get_buffer().raw
+        buf = self.surf.get_buffer()
+        raw = self._view(buf)
         pitch, rowlen = self.surf.get_pitch(), self.xres * self.bytes_pp
         back = (1 - self.page) if self.pages > 1 else 0
         base = back * self.yres * self.line + self.xoff * self.bytes_pp
         if self.pages < 2:
             base += self.yoff * self.line
-        if pitch == rowlen == self.line:
-            self._put(base, raw[:rowlen * self.yres])
-        else:
-            for y in range(self.yres):
-                self._put(base + y * self.line, raw[y * pitch:y * pitch + rowlen])
+        try:
+            if pitch == rowlen == self.line:
+                self._put(base, raw[:rowlen * self.yres])
+            else:
+                for y in range(self.yres):
+                    self._put(base + y * self.line, raw[y * pitch:y * pitch + rowlen])
+        finally:
+            if isinstance(raw, memoryview):
+                raw.release()
+            del raw, buf
         self.page = back
         self._flip(back)
