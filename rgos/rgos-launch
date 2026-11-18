@@ -14,6 +14,7 @@ SYS_INPUT = os.environ.get("RGOS_SYS_INPUT", "/sys/class/input")
 BOOT_DIR = os.environ.get("RGOS_BOOT_DIR", "/boot")
 HUB_NAME = "RG OS Gamepad"
 EARLY_FAIL_S = 6.0
+PORTMASTER_EARLY_FAIL_S = 60.0
 SYS_ROOT = os.environ.get("RGOS_SYSFS", "/sys")
 GAME_FLAG = os.path.join(RUN_DIR, "ingame")
 # "native" = Linux ports (PortMaster etc.): usually 3D/SDL games that stutter on the default governor.
@@ -754,6 +755,12 @@ def _portmaster_in(ports):
 
 
 def launch_portmaster():
+    """Run PortMaster like any native port: its output goes to rgos-native.log, and an early exit is shown.
+
+    PortMaster's own output used to go to the console / rgos-launch.log, so when its GUI died right after
+    the splash the menu simply came back with no trace of why. Now everything it prints (including the
+    Python traceback of a crashing GUI) is kept in rgos-native.log and its tail is shown on screen.
+    """
     script = portmaster_script()
     if not script:
         show_error("RG OS: PortMaster is not installed",
@@ -762,17 +769,41 @@ def launch_portmaster():
         return 1
     shell = shutil.which("bash") or "/bin/sh"
     os.makedirs(RUN_DIR, exist_ok=True)
-    env = native_env()
+    cwd = os.path.dirname(script)
+    env = native_env(cwd=cwd)
+    # OpenAL Soft (LOVE) probes PipeWire first and prints errors because this image runs no PipeWire; ALSA is what is there.
+    env.setdefault("ALSOFT_DRIVERS", "alsa")
     link_roms_alias()
+    cmd = [shell, fix_crlf(script)]
     log("starting PortMaster: %s" % script)
+    hw = not os.environ.get("RGOS_NO_HW") or os.environ.get("RGOS_SYSFS")
+    saved = set_governor(perf_governor("native")) if hw else {}
+    set_game_flag(True, kind="native", title="PortMaster")
+    started = time.monotonic()
     try:
-        rc, stopped = call_native([shell, fix_crlf(script)], cwd=os.path.dirname(script), env=env,
-                                  stdin=subprocess.DEVNULL)
+        os.makedirs(os.path.dirname(NATIVE_LOG) or ".", exist_ok=True)
+        trim_log(NATIVE_LOG)
+        with open(NATIVE_LOG, "a") as out:
+            out.write("\n[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), " ".join(cmd)))
+            out.flush()
+            rc, stopped = call_native(cmd, prio=not os.environ.get("RGOS_NO_HW"), cwd=cwd, env=env,
+                                      stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
+            out.write("[PortMaster exited rc=%s (%s)]\n" % (rc, rc_text(rc)))
     except OSError as e:
         show_error("RG OS: cannot start PortMaster", str(e))
         return 1
-    log("PortMaster exited rc=%s (%s)%s" % (rc, rc_text(rc), " after the Select+Start hold" if stopped else ""))
-    return 0 if stopped else rc
+    finally:
+        set_game_flag(False)
+        restore_governor(saved)
+    dt = time.monotonic() - started
+    log("PortMaster exited rc=%s (%s) after %.1fs%s" % (rc, rc_text(rc), dt, " after the Select+Start hold" if stopped else ""))
+    if stopped:
+        return 0
+    # PortMaster that quits within seconds, even with rc 0, crashed or could not start its GUI: say why.
+    if (rc != 0 and dt < PORTMASTER_EARLY_FAIL_S) or dt < EARLY_FAIL_S:
+        show_error("RG OS: PortMaster closed after %.0f s (%s)" % (dt, rc_text(rc)),
+                   "%s\nLog: %s" % (tail(NATIVE_LOG, 10), NATIVE_LOG))
+    return rc
 
 
 def main(argv):

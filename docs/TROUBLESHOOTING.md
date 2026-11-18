@@ -52,3 +52,7 @@ Read it from the top: it lists the kernel command line, the partition the boot f
 ## PortMaster shows "libopenal.so.1: cannot open shared object file" and returns to the menu
 
 PortMaster's GUI runs on its LOVE 11.5 runtime, which needs the system `libopenal1` package. Images built before this was added do not have it. Rebuild (or run an offline update built) with the current `build.sh`; `libopenal1` is now part of the base package list and the build stops if `libopenal.so.1` is missing from the rootfs. To add other missing libraries without editing the script, use `EXTRA_PKGS="pkg1 pkg2"`. `rgos-native.log` on the device shows the exact library that failed to load.
+
+## PortMaster shows its splash and then returns to the menu
+
+PortMaster's output is written to `rgos-native.log` (on the device: `/var/log/rgos-native.log`), and when PortMaster quits within a few seconds the last lines of that log are shown on screen for a moment. Read the lines after the last `PortMaster.sh` header in the log: a Python traceback means PortMaster's GUI (pugwash/harbourmaster) crashed, `error while loading shared libraries` names a missing system package (add it with `EXTRA_PKGS`), and a network error means the first start could not download its runtime. `ALSOFT ... PipeWire` warnings are harmless; the launcher now sets `ALSOFT_DRIVERS=alsa` to avoid them.
