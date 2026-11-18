@@ -1313,6 +1313,35 @@ def _flow_art_card(path, S):
         except StopIteration as e:
             return e.value
 
+_DETAIL_ART = {}
+
+
+def _detail_cover(path, w, h):
+    """Cover scaled to fit inside w x h (aspect kept) for the game list details panel, or None.
+
+    Cached, because the panel is redrawn every frame; failures are cached too so a broken file is
+    not decoded again on every frame.
+    """
+    key = (path, w, h)
+    hit = _lru_get(_DETAIL_ART, key)
+    if hit is not None:
+        return hit or None
+    surf = False
+    try:
+        img = pygame.image.load(path)
+        try:
+            img = img.convert_alpha()
+        except Exception:
+            pass
+        iw, ih = img.get_size()
+        if iw >= 2 and ih >= 2:
+            k = min(w / float(iw), h / float(ih))
+            surf = pygame.transform.smoothscale(img, (max(1, int(iw * k + 0.5)), max(1, int(ih * k + 0.5))))
+    except Exception as e:
+        log("artwork: cannot use %s: %s" % (path, e))
+    _lru_put(_DETAIL_ART, key, surf, 12)
+    return surf or None
+
 
 def _flow_key(hue, tag, abbr, S, icon=None, art=None):
     return (hue, tag, abbr, S, icon) + ((art,) if art else ())
@@ -3523,7 +3552,7 @@ def main():
             _rows = [("SteamGridDB API key", ("Set: " + artwork.key_hint(art["key"]) + "   A changes it") if artwork.valid_key(art["key"]) else "Not set   A types it (free key: steamgriddb.com, Preferences, API)"),
                      ("Download missing artwork", ("Downloading...   A stops" if _run else "%d of %d games have artwork   A starts" % (_have, _all))),
                      ("Retry games with no match", "Ask SteamGridDB again about games it could not find   A starts"),
-                     ("Show artwork on game cards", ("On" if art_on() else "Off") + "   A toggles (RG Flow launcher)")]
+                     ("Show artwork on game cards", ("On" if art_on() else "Off") + "   A toggles")]
             for i, (nm, sub) in enumerate(_rows):
                 by, sel = top_y + i * 64, i == art_idx
                 draw_button(canvas, (list_x, by, W - 2 * list_x, 58), SEL_BG if sel else PANEL, 12, 3, sel)
@@ -3890,9 +3919,17 @@ def main():
             g = games[idx]
             px = 500 + DX
             ui_rect(canvas, PANEL, (px, top_y, 200, PH), 10)
-            ui_rect(canvas, SEL_BG, (px + 20, top_y + 14, 160, 130 + DY // 2), 8)
-            ini = f_logo.render(g["title"][:1].upper(), True, ACCENT)
-            canvas.blit(ini, (px + 100 - ini.get_width() // 2, top_y + 62 + DY // 4))
+            tile_w, tile_h = 160, 130 + DY // 2
+            ui_rect(canvas, SEL_BG, (px + 20, top_y + 14, tile_w, tile_h), 8)
+            cover = None
+            if art_on():
+                _ap = art_index.lookup(g["sid"], g["path"])
+                cover = _detail_cover(_ap, tile_w - 8, tile_h - 8) if _ap else None
+            if cover is not None:
+                canvas.blit(cover, (px + 20 + (tile_w - cover.get_width()) // 2, top_y + 14 + (tile_h - cover.get_height()) // 2))
+            else:
+                ini = f_logo.render(g["title"][:1].upper(), True, ACCENT)
+                canvas.blit(ini, (px + 100 - ini.get_width() // 2, top_y + 62 + DY // 4))
             ty_ = top_y + 152 + DY // 2
             for line in wrap_n(f_row, g["title"], 170, 2):
                 canvas.blit(f_row.render(line, True, TEXT), (px + 15, ty_))
