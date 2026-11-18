@@ -139,3 +139,17 @@ class MenuTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DisplayDirTests(unittest.TestCase):
+    def test_folder_inside_roms_is_shown_under_the_label(self):
+        self.assertEqual(biosctl.display_dir("/media/roms/bios", "/media/roms"), "ROMS/bios")
+
+    def test_roms_root_itself_has_no_trailing_dot(self):
+        self.assertEqual(biosctl.display_dir("/media/roms", "/media/roms"), "ROMS")
+
+    def test_folder_outside_roms_keeps_its_full_path(self):
+        self.assertEqual(biosctl.display_dir("/etc/rgos/bios", "/media/roms"), "/etc/rgos/bios")
+
+    def test_folder_whose_name_starts_with_two_dots_is_still_inside_roms(self):
+        self.assertEqual(biosctl.display_dir("/media/roms/..bios", "/media/roms"), "ROMS/..bios")

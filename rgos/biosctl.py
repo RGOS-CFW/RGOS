@@ -162,7 +162,9 @@ def display_dir(bios_dir, roms_root, label="ROMS"):
         rel = os.path.relpath(bios_dir, roms_root)
     except ValueError:
         return bios_dir
-    return label + "/" + rel.replace(os.sep, "/") if not rel.startswith("..") else bios_dir
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep):
+        return bios_dir
+    return label if rel == os.curdir else label + "/" + rel.replace(os.sep, "/")
 
 
 def build_lines(rows, show_all, where):
