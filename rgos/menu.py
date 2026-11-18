@@ -108,6 +108,91 @@ def apply_theme(tid):
 
 apply_theme(DEFAULT_THEME)
 
+
+def _mix(a, b, t):
+    return tuple(int(a[i] + (b[i] - a[i]) * t + 0.5) for i in range(3))
+
+
+def _lum(c):
+    return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+
+
+class ThemedClassic(rgclassic.Classic):
+    """RG Classic launcher recoloured from the active RG OS theme.
+
+    rgclassic.py keeps its palette in module globals, so apply() swaps those
+    out and rebuilds the cached background gradient and icons when the theme
+    changes.
+    """
+    _ramp = ((6, 0, 2), (24, 2, 7), (46, 4, 12), (76, 8, 18), (112, 12, 26), (150, 18, 34))
+
+    def __init__(self, w, h):
+        self._theme = None
+        self._tones = {}
+        super().__init__(w, h)
+
+    def _bake_bg(self):
+        # dither levels are baked once into an 8-bit surface; a theme change only swaps its palette
+        lw, lh = rgclassic.LW, self.LH
+        bay = ((0, 8, 2, 10), (12, 4, 14, 6), (3, 11, 1, 9), (15, 7, 13, 5))
+        self._idx = pygame.Surface((lw, lh), 0, 8)
+        self._idx.set_palette([(i, i, i) for i in range(6)])
+        for y in range(lh):
+            for x in range(lw):
+                f = 1.0 - (x * 0.85 + y) / (lw * 0.85 + lh) * 1.55
+                v = max(0.0, min(1.0, f)) * 5.0
+                lv = int(v)
+                if lv < 5 and (v - lv) * 16.0 > bay[y & 3][x & 3] + 0.5:
+                    lv += 1
+                self._idx.set_at((x, y), (lv, lv, lv))
+        self.bg = pygame.Surface((lw, lh))
+        self._paint_bg()
+
+    def _paint_bg(self):
+        self._idx.set_palette(self._ramp)
+        self.bg.blit(self._idx, (0, 0))
+
+    def apply(self, bg, panel, sel_bg, accent, text, dim):
+        key = (bg, panel, sel_bg, accent, text, dim)
+        if key == self._theme:
+            return
+        self._theme = key
+        dark = _lum(bg) < 128
+        rc = rgclassic
+        rc.BLACK = _mix(bg, (0, 0, 0), 0.7)
+        rc.WHITE, rc.DIM, rc.PANEL = text, dim, panel
+        rc.RED = accent
+        rc.REDL = _mix(accent, (255, 255, 255), 0.35)
+        rc.REDM = _mix(sel_bg, accent, 0.35)
+        lo, hi = (_mix(bg, (0, 0, 0), 0.55), _mix(bg, accent, 0.5)) if dark else (_mix(bg, (0, 0, 0), 0.08), _mix(bg, accent, 0.3))
+        self._ramp = tuple(_mix(lo, hi, i / 5.0) for i in range(6))
+        self._paint_bg()
+        # icon tones (1 fill, 2 shade, 3 outline): selected tile sits on the accent, others on the panel
+        la = _lum(accent)
+        on = text if abs(_lum(text) - la) * 1.5 >= abs(_lum(bg) - la) else bg
+        c1 = _mix(text, panel, 0.2)
+        self._tones = {False: (None, on, _mix(on, accent, 0.55), _mix(accent, (0, 0, 0), 0.55)),
+                       True: (None, c1, _mix(accent, c1, 0.4), _mix(accent, panel, 0.45))}
+        self._ic.clear()
+
+    def _icon(self, hid, dim):
+        k = (hid, dim)
+        sf = self._ic.get(k)
+        if sf is None:
+            tone = self._tones[dim]
+            sf = pygame.Surface((16, 16), pygame.SRCALPHA)
+            for y, row in enumerate(rgclassic.ICON_DATA[hid]):
+                for x in range(16):
+                    v = (row >> (30 - 2 * x)) & 3
+                    if v:
+                        sf.set_at((x, y), tone[v])
+            self._ic[k] = sf
+        return sf
+
+    def text(self, t, x, y, col=None, sc=1, align=0, bold=False):
+        # the base class binds its default colour at import time, so resolve it here
+        super().text(t, x, y, rgclassic.WHITE if col is None else col, sc, align, bold)
+
 DEFAULT_INPUT = {"debug": False}
 KEYMAP = {pygame.K_UP: "up", pygame.K_DOWN: "down", pygame.K_LEFT: "left",
           pygame.K_RIGHT: "right", pygame.K_RETURN: "a", pygame.K_z: "a",
@@ -2207,7 +2292,7 @@ def main():
         mk = lambda s: CFont(pygame.font.Font(None, int(s * 1.3)))
     f_logo, f_big, f_row, f_small, f_tiny = mk(30), mk(22), mk(19), mk(14), mk(11)
 
-    classic_ui = rgclassic.Classic(W, H)
+    classic_ui = ThemedClassic(W, H)
     inp = Input()
     all_games = scan_roms()
     rescan = Rescan()
@@ -3207,6 +3292,7 @@ def main():
                       "tools": "Files, ports, RetroArch",
                       "settings": "Theme, Wi-Fi, info, controls",
                       "power": "Shut down RG OS"}
+            classic_ui.apply(BG, PANEL, SEL_BG, ACCENT, TEXT, DIM)
             classic_ui.draw(canvas, HOME_ITEMS, cdescs, home_idx, clk, rd_bat(),
                             [("A", "Open"), ("X", "Rescan")], 3)
             hint = ""
