@@ -15,7 +15,8 @@ Any image dropped into artwork/<system>/ with the right name is used as-is, so
 hand-picked covers always work, with or without a key.
 
 The API key is read from (first hit wins): $RGOS_SGDB_KEY, /etc/rgos/steamgriddb.json
-({"api_key": "...", "shape": "portrait|square|any"}), or steamgriddb-key.txt on the ROMS card.
+({"api_key": "...", "shape": "portrait|square|any"}), or rgos-data/steamgriddb-key.txt on the ROMS card
+(a steamgriddb-key.txt in the ROMS root from older versions is still read).
 """
 import difflib
 import http.client
@@ -37,6 +38,7 @@ API = "https://www.steamgriddb.com/api/v2"
 USER_AGENT = "RGOS-artwork/1.0"
 CONF_FILE = os.environ.get("RGOS_SGDB_CONF", "/etc/rgos/steamgriddb.json")
 KEY_FILE_NAME = "steamgriddb-key.txt"
+DATA_DIR_NAME = "rgos-data"
 ART_EXTS = (".png", ".jpg", ".jpeg")
 MISS_RETRY_S = 30 * 86400
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
@@ -81,6 +83,19 @@ def load_conf():
     return _read_json(CONF_FILE, {})
 
 
+def key_file_path(roms_root):
+    """Where the key file lives: <ROMS>/rgos-data/steamgriddb-key.txt."""
+    return os.path.join(roms_root, DATA_DIR_NAME, KEY_FILE_NAME)
+
+
+def _read_key_file(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.readline().strip()
+    except OSError:
+        return ""
+
+
 def load_key(roms_root):
     key = os.environ.get("RGOS_SGDB_KEY", "").strip()
     if valid_key(key):
@@ -88,12 +103,12 @@ def load_key(roms_root):
     key = str(load_conf().get("api_key", "")).strip()
     if valid_key(key):
         return key
-    try:
-        with open(os.path.join(roms_root, KEY_FILE_NAME), "r", encoding="utf-8", errors="ignore") as f:
-            key = f.readline().strip()
-    except OSError:
-        return ""
-    return key if valid_key(key) else ""
+    # New location first, then the legacy ROMS-root file so existing setups keep working.
+    for path in (key_file_path(roms_root), os.path.join(roms_root, KEY_FILE_NAME)):
+        key = _read_key_file(path)
+        if valid_key(key):
+            return key
+    return ""
 
 
 def save_key(roms_root, key):
@@ -116,7 +131,8 @@ def save_key(roms_root, key):
     except OSError:
         pass
     try:
-        with open(os.path.join(roms_root, KEY_FILE_NAME), "w", encoding="utf-8") as f:
+        os.makedirs(os.path.join(roms_root, DATA_DIR_NAME), exist_ok=True)
+        with open(key_file_path(roms_root), "w", encoding="utf-8") as f:
             f.write(key + "\n")
         return True
     except OSError:

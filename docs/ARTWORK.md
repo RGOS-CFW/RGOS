@@ -12,8 +12,8 @@ The other launchers are unchanged.
 3. Open *Settings > Game artwork*.
 4. Choose **SteamGridDB API key** and type the key with the on-screen keyboard.
    Typing 32 characters on a handheld is slow, so there is a shortcut: put a text file called
-   `steamgriddb-key.txt` (key on the first line) in the root of the ROMS card and it is picked up
-   automatically.
+   `steamgriddb-key.txt` (key on the first line) in the `rgos-data` folder of the ROMS card and it
+   is picked up automatically. (A file in the ROMS root from older versions still works.)
 5. Choose **Download missing artwork**. Progress is shown on screen; X stops it and a later run
    carries on where it stopped.
 

@@ -86,13 +86,35 @@ class KeyTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.conf))
 
     def test_key_file_on_roms_card(self):
-        with open(os.path.join(self.tmp, "steamgriddb-key.txt"), "w") as f:
+        os.makedirs(os.path.join(self.tmp, "rgos-data"))
+        with open(os.path.join(self.tmp, "rgos-data", "steamgriddb-key.txt"), "w") as f:
             f.write(KEY + "\r\nsecond line ignored\n")
         self.assertEqual(artwork.load_key(self.tmp), KEY)
 
+    def test_legacy_key_file_in_roms_root_still_read(self):
+        with open(os.path.join(self.tmp, "steamgriddb-key.txt"), "w") as f:
+            f.write(KEY + "\n")
+        self.assertEqual(artwork.load_key(self.tmp), KEY)
+
+    def test_new_location_wins_over_legacy(self):
+        os.makedirs(os.path.join(self.tmp, "rgos-data"))
+        with open(os.path.join(self.tmp, "steamgriddb-key.txt"), "w") as f:
+            f.write("o" * 32 + "\n")
+        with open(os.path.join(self.tmp, "rgos-data", "steamgriddb-key.txt"), "w") as f:
+            f.write(KEY + "\n")
+        self.assertEqual(artwork.load_key(self.tmp), KEY)
+
     def test_falls_back_to_roms_card_when_etc_is_read_only(self):
-        with mock.patch.object(artwork.os, "makedirs", side_effect=OSError("ro")):
+        real_makedirs = os.makedirs
+
+        def ro_etc(path, *a, **kw):
+            if os.path.dirname(self.conf) == str(path):
+                raise OSError("ro")
+            return real_makedirs(path, *a, **kw)
+
+        with mock.patch.object(artwork.os, "makedirs", side_effect=ro_etc):
             self.assertTrue(artwork.save_key(self.tmp, KEY))
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "rgos-data", "steamgriddb-key.txt")))
         self.assertEqual(artwork.load_key(self.tmp), KEY)
 
     def test_env_wins(self):
