@@ -58,6 +58,16 @@ on:
           - standard
           - alt
         default: standard
+      portmaster:
+        description: preinstall PortMaster (and the libraries its LOVE runtime needs, such as libopenal1); off builds without it
+        required: true
+        type: boolean
+        default: true
+      extra_pkgs:
+        description: optional extra Debian packages to install in the image, space separated (for a library a port reports as missing)
+        required: false
+        type: string
+        default: ''
       rocknix_url:
         description: override the stock ROCKNIX image URL (blank uses the build.sh default; not allowed with device=all, the devices use different images)
         required: false
@@ -132,8 +142,12 @@ jobs:
           ROCKNIX_URL_INPUT: ${{ inputs.rocknix_url }}
           H700_RAM_INPUT: ${{ inputs.h700_ram }}
           H700_PANEL_INPUT: ${{ inputs.h700_panel }}
+          PORTMASTER_INPUT: ${{ inputs.portmaster }}
+          EXTRA_PKGS_INPUT: ${{ inputs.extra_pkgs }}
         run: |
           set -euo pipefail
+          [[ "$PORTMASTER_INPUT" == "true" ]] && export PORTMASTER=1 || export PORTMASTER=0
+          [[ -z "$EXTRA_PKGS_INPUT" ]] || export EXTRA_PKGS="$EXTRA_PKGS_INPUT"
           [[ "$BUILD_PSX" == "true" ]] || export PSX_REPO=none
           [[ "$BUILD_GC" == "true" ]] || export GC_REPO=none
           [[ -z "$ROCKNIX_URL_INPUT" ]] || export ROCKNIX_URL="$ROCKNIX_URL_INPUT"
@@ -191,6 +205,41 @@ jobs:
             all)       verify out/rg-rotate-rgos.img gpt; verify out/rg34xxsp-rgos.img dos; verify out/rg35xxh-rgos.img dos; verify out/rg35xxsp-rgos.img dos ;;
           esac
 
+      - name: Verify PortMaster runtime libraries
+        if: inputs.artifact == 'img' && inputs.portmaster
+        env:
+          ARTIFACT: ${{ inputs.artifact }}
+          BUILD_ID: ${{ steps.metadata.outputs.build_id }}
+        run: |
+          set -euo pipefail
+          check_system() {
+            local sys="$1" label="$2" listing
+            listing="$(unsquashfs -l "$sys")"
+            grep -q 'libopenal\.so\.1$' <<<"$listing" || { echo "$label: SYSTEM has no libopenal.so.1: PortMaster would fail with 'error while loading shared libraries'" >&2; return 1; }
+            grep -q 'opt/rgos/seed/PortMaster/PortMaster\.sh$' <<<"$listing" || { echo "$label: SYSTEM has no PortMaster seed" >&2; return 1; }
+            echo "Validated $label: libopenal.so.1 and the PortMaster seed are in SYSTEM."
+          }
+          if [[ "$ARTIFACT" == img ]]; then
+            for img in out/*-rgos.img; do
+              loop="$(sudo losetup -Pfr --show "$img")"
+              mnt="$(mktemp -d)"
+              sudo partprobe "$loop" 2>/dev/null || true
+              for _ in 1 2 3 4 5; do [[ -b "${loop}p1" ]] && break; sleep 1; done
+              sudo mount -o ro "${loop}p1" "$mnt"
+              rc=0; check_system "$mnt/SYSTEM" "$img" || rc=$?
+              sudo umount "$mnt"; sudo losetup -d "$loop"
+              (( rc == 0 )) || exit 1
+            done
+          else
+            for tar in out/rgos-update-*-"$BUILD_ID".tar; do
+              tmp="$(mktemp)"
+              tar -xOf "$tar" boot/SYSTEM > "$tmp"
+              rc=0; check_system "$tmp" "$tar" || rc=$?
+              rm -f "$tmp"
+              (( rc == 0 )) || exit 1
+            done
+          fi
+
       - name: Compress disk image
         if: inputs.artifact == 'img'
         working-directory: out
@@ -209,8 +258,12 @@ jobs:
           ROCKNIX_URL_INPUT: ${{ inputs.rocknix_url }}
           H700_RAM_INPUT: ${{ inputs.h700_ram }}
           H700_PANEL_INPUT: ${{ inputs.h700_panel }}
+          PORTMASTER_INPUT: ${{ inputs.portmaster }}
+          EXTRA_PKGS_INPUT: ${{ inputs.extra_pkgs }}
         run: |
           set -euo pipefail
+          [[ "$PORTMASTER_INPUT" == "true" ]] && export PORTMASTER=1 || export PORTMASTER=0
+          [[ -z "$EXTRA_PKGS_INPUT" ]] || export EXTRA_PKGS="$EXTRA_PKGS_INPUT"
           [[ "$BUILD_PSX" == "true" ]] || export PSX_REPO=none
           [[ "$BUILD_GC" == "true" ]] || export GC_REPO=none
           [[ "$INCLUDE_EXTLINUX" != "true" ]] || export UPDATE_EXTLINUX=1
@@ -264,6 +317,41 @@ jobs:
                           raise SystemExit(path + ': SHA-256 mismatch: ' + name)
               print('Validated update archive: ' + path)
           PY
+
+      - name: Verify PortMaster runtime libraries
+        if: inputs.artifact == 'update-tar' && inputs.portmaster
+        env:
+          ARTIFACT: ${{ inputs.artifact }}
+          BUILD_ID: ${{ steps.metadata.outputs.build_id }}
+        run: |
+          set -euo pipefail
+          check_system() {
+            local sys="$1" label="$2" listing
+            listing="$(unsquashfs -l "$sys")"
+            grep -q 'libopenal\.so\.1$' <<<"$listing" || { echo "$label: SYSTEM has no libopenal.so.1: PortMaster would fail with 'error while loading shared libraries'" >&2; return 1; }
+            grep -q 'opt/rgos/seed/PortMaster/PortMaster\.sh$' <<<"$listing" || { echo "$label: SYSTEM has no PortMaster seed" >&2; return 1; }
+            echo "Validated $label: libopenal.so.1 and the PortMaster seed are in SYSTEM."
+          }
+          if [[ "$ARTIFACT" == img ]]; then
+            for img in out/*-rgos.img; do
+              loop="$(sudo losetup -Pfr --show "$img")"
+              mnt="$(mktemp -d)"
+              sudo partprobe "$loop" 2>/dev/null || true
+              for _ in 1 2 3 4 5; do [[ -b "${loop}p1" ]] && break; sleep 1; done
+              sudo mount -o ro "${loop}p1" "$mnt"
+              rc=0; check_system "$mnt/SYSTEM" "$img" || rc=$?
+              sudo umount "$mnt"; sudo losetup -d "$loop"
+              (( rc == 0 )) || exit 1
+            done
+          else
+            for tar in out/rgos-update-*-"$BUILD_ID".tar; do
+              tmp="$(mktemp)"
+              tar -xOf "$tar" boot/SYSTEM > "$tmp"
+              rc=0; check_system "$tmp" "$tar" || rc=$?
+              rm -f "$tmp"
+              (( rc == 0 )) || exit 1
+            done
+          fi
 
       - name: Upload disk image
         if: inputs.artifact == 'img'
