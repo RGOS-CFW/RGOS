@@ -202,8 +202,9 @@ class FileManager:
             self.marked.clear()
             self.refresh()
             return True
-        came_from = os.path.basename(self.cwd)
-        self.cwd = os.path.dirname(self.cwd)
+        cwd = self.cwd.rstrip(os.sep) or os.sep
+        came_from = os.path.basename(cwd)
+        self.cwd = os.path.dirname(cwd)
         self.marked.clear()
         self.refresh(keep=came_from)
         return True

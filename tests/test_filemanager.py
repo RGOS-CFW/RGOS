@@ -93,3 +93,23 @@ class HumanSizeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GoUpTests(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="rgos-fm-up-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        for n in ("a", "b", "c"):
+            os.makedirs(os.path.join(self.root, n, "inner"))
+        self.fm = filemanager.FileManager([self.root])
+
+    def test_go_up_restores_cursor_when_cwd_has_trailing_slash(self):
+        self.fm.enter(os.path.join(self.root, "b") + os.sep)
+        self.assertTrue(self.fm.go_up())
+        self.assertEqual(self.fm.cwd, self.root)
+        self.assertEqual(self.fm.current()["name"], "b")
+
+    def test_go_up_restores_cursor_without_trailing_slash(self):
+        self.fm.enter(os.path.join(self.root, "c"))
+        self.fm.go_up()
+        self.assertEqual(self.fm.current()["name"], "c")
