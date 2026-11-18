@@ -16,6 +16,18 @@ Tap the **Menu** button (the hub's Mode button) while a game is running and a pa
   hotkey combos (Menu is its hotkey-enable button).
 - Select+Start held for 2 s still force-stops a native port.
 
+## Why RetroArch uses its own menu and volume message
+
+RetroArch renders through DRM/KMS, so pixels written into `/dev/fb0` never show over a running game. While RetroArch
+is the foreground program (`/run/rgos/ingame` has `"kind": "retroarch"`):
+
+* **Volume** is shown with RetroArch's on-screen message (`SHOW_MSG` network command) by `rgos-overlay`.
+* **Menu tap** sends `MENU_TOGGLE`, which opens RetroArch's own RGUI menu above the game (paused); tap Menu again to
+  close it. Use its Quick Menu for Resume, Save State, Load State, Restart and Close Content.
+
+Set `RGOS_GAMEMENU_FB=1` for `gamemenu.py` to bring the old framebuffer panel back. The launcher and native ports still
+use the framebuffer panel and bar described below.
+
 ## How it works
 
 `rgos-launch` writes `/run/rgos/ingame` as JSON (`kind`, `title`, and for native ports the `pid`). `gamemenu.py daemon`

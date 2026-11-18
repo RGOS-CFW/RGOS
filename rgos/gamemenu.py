@@ -457,6 +457,26 @@ class GameControl:
 
 # ---- one open/close cycle ------------------------------------------------------------------------------------------
 
+class RetroArchMenu:
+    """In-game menu for RetroArch: RetroArch's own menu (RGUI) is opened and closed with its MENU_TOGGLE command.
+
+    RetroArch renders through DRM/KMS, so a panel painted into /dev/fb0 is never visible over the game. RGUI is drawn by
+    RetroArch itself (above the picture, game paused) and has Resume / Save State / Load State / Restart / Close Content
+    in its Quick Menu. The pad is not grabbed, so RetroArch reads it directly.
+    """
+
+    def __init__(self, udp=udp_cmd):
+        self.udp, self.open = udp, False
+
+    def toggle(self):
+        self.udp("MENU_TOGGLE")
+        self.open = not self.open
+        return self.open
+
+    def reset(self):
+        self.open = False
+
+
 class MenuSession:
     """Slide in, handle input, slide out, then act. `screen` needs: rw rh s canvas theme() open() draw(layer, x)
     repainted() rebase() close(). `read_events(dt)` returns menu input names (blocking up to dt)."""
@@ -642,7 +662,7 @@ def open_menu(info, pads, screen):
 
 def daemon():
     log("in-game menu started")
-    pads, screen, tap = [], None, TapDetector()
+    pads, screen, tap, ra_menu = [], None, TapDetector(), RetroArchMenu()
     while True:
         info = read_game()
         if info is None:
@@ -652,6 +672,7 @@ def daemon():
                 except OSError:
                     pass
             pads = []
+            ra_menu.reset()
             time.sleep(0.5)
             continue
         if not pads:
@@ -671,6 +692,9 @@ def daemon():
                 continue
             for etype, code, value in parse_events(data):
                 if tap.feed(etype, code, value, time.monotonic()):
+                    if info.get("kind") == "retroarch" and not os.environ.get("RGOS_GAMEMENU_FB"):
+                        log("retroarch menu %s" % ("opened" if ra_menu.toggle() else "closed"))
+                        break
                     try:
                         screen = screen or FbMenuScreen()
                         open_menu(info, pads, screen)

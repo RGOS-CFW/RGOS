@@ -129,3 +129,36 @@ class OverlayTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RetroArchOverlayTests(unittest.TestCase):
+    def test_volume_text(self):
+        ov = load_overlay()
+        self.assertEqual(ov.volume_text(0), "Volume   0%  [" + "-" * 20 + "]")
+        self.assertEqual(ov.volume_text(100), "Volume 100%  [" + "#" * 20 + "]")
+        self.assertEqual(ov.volume_text(500).count("#"), 20)
+
+    def test_retroarch_running_reads_flag(self):
+        import json, tempfile
+        ov = load_overlay()
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "ingame")
+            self.assertFalse(ov.retroarch_running(p))
+            for kind, want in (("retroarch", True), ("native", False)):
+                with open(p, "w") as f:
+                    json.dump({"kind": kind}, f)
+                self.assertEqual(ov.retroarch_running(p), want)
+            open(p, "w").close()
+            self.assertFalse(ov.retroarch_running(p))
+
+    def test_ra_message_sends_show_msg(self):
+        import socket
+        ov = load_overlay()
+        srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        srv.bind(("127.0.0.1", 0))
+        srv.settimeout(2)
+        try:
+            self.assertTrue(ov.ra_message("Volume  50%", addr=srv.getsockname()))
+            self.assertEqual(srv.recvfrom(256)[0], b"SHOW_MSG Volume  50%")
+        finally:
+            srv.close()

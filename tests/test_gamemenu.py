@@ -380,3 +380,14 @@ class LaunchFlagTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RetroArchMenuTests(unittest.TestCase):
+    def test_toggle_sends_menu_toggle_and_tracks_state(self):
+        sent = []
+        m = gm.RetroArchMenu(udp=sent.append)
+        self.assertTrue(m.toggle())
+        self.assertFalse(m.toggle())
+        m.toggle(); m.reset()
+        self.assertFalse(m.open)
+        self.assertEqual(sent, ["MENU_TOGGLE"] * 3)

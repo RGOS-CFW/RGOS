@@ -10,12 +10,14 @@ How it behaves around a program that is also drawing to the framebuffer:
   * while it is visible it is checked 30 times a second: if the program repainted the area, the new pixels are saved
     and the bar is drawn again on top;
   * when it times out the saved pixels are put back, unless the program already painted over the bar itself.
+While RetroArch runs (/run/rgos/ingame says so) the bar is shown with RetroArch's own on-screen message instead, because
+RetroArch renders through DRM/KMS and a framebuffer write would never appear over the game.
 The bar's colours follow the launcher theme (the launcher writes /run/rgos/theme).
 
 Environment: RGOS_FB_DEV (/dev/fb0), RGOS_FB_ROTATE (same meaning as for the launcher), RGOS_RUN (/run/rgos),
 RGOS_VOLUME_FILE, RGOS_THEME_FILE, RGOS_OVERLAY_HOLD (seconds the bar stays, default 1.5).
 """
-import fcntl, os, struct, sys, time
+import fcntl, json, os, socket, struct, sys, time
 
 RUN_DIR = os.environ.get("RGOS_RUN", "/run/rgos")
 VOLUME_FILE = os.environ.get("RGOS_VOLUME_FILE", os.path.join(RUN_DIR, "volume"))
@@ -27,6 +29,8 @@ BOOT_QUIET = 15.0            # seconds after start in which an unchanged volume 
 FAST, SLOW = 1 / 30.0, 0.1   # poll interval while the bar is visible / while idle
 FBIOGET_VSCREENINFO, FBIOGET_FSCREENINFO = 0x4600, 0x4602
 DEFAULT_THEME = {"BG": (13, 15, 26), "PANEL": (24, 28, 46), "ACCENT": (255, 99, 71), "TEXT": (232, 235, 245)}
+GAME_FLAG = os.environ.get("RGOS_GAME_FLAG", os.path.join(RUN_DIR, "ingame"))
+RA_ADDR = ("127.0.0.1", int(os.environ.get("RGOS_RA_PORT", "55355") or 55355))
 BAR_W, BAR_H, BASE_W = 260, 44, 720       # bar size and the canvas width it was designed for (the launcher's)
 
 
@@ -69,6 +73,36 @@ def read_theme():
             return parse_theme(f.read())
     except OSError:
         return dict(DEFAULT_THEME)
+
+
+def retroarch_running(path=GAME_FLAG):
+    """True while RetroArch is the foreground program. It renders through DRM/KMS, so anything painted into /dev/fb0
+    is never shown over it: the volume bar has to be drawn by RetroArch itself (network command SHOW_MSG)."""
+    try:
+        with open(path) as f:
+            info = json.load(f)
+    except (OSError, ValueError):
+        return False
+    return isinstance(info, dict) and info.get("kind") == "retroarch"
+
+
+def volume_text(pct, width=20):
+    pct = max(0, min(100, int(pct)))
+    n = (pct * width + 50) // 100
+    return "Volume %3d%%  [%s%s]" % (pct, "#" * n, "-" * (width - n))
+
+
+def ra_message(text, addr=RA_ADDR):
+    """Show text on top of the running RetroArch picture (its on-screen message). False if it could not be sent."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.sendto(("SHOW_MSG " + text).encode("ascii", "replace"), addr)
+        return True
+    except OSError as e:
+        log("SHOW_MSG failed: %r" % e)
+        return False
+    finally:
+        s.close()
 
 
 def logical_size(xres, yres, rotate):
@@ -266,7 +300,10 @@ def run():
                 quiet = time.monotonic() - start < BOOT_QUIET and v[0] == seen_pct
                 seen_stamp, seen_pct = v[1], v[0]
                 if not quiet:
-                    ov.show(v[0])
+                    if retroarch_running():
+                        ra_message(volume_text(v[0]))     # RetroArch draws over the game; /dev/fb0 would be invisible
+                    else:
+                        ov.show(v[0])
             busy = ov.tick()
         except Exception as e:           # a bad frame must never kill the overlay; rebuild the screen access next time
             log("overlay error: %r" % e)
