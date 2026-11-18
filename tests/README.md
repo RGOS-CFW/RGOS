@@ -13,6 +13,7 @@ Plain `unittest`, standard library only: no pygame, device or root needed (`menu
 | `test_stick_nav.py` | Menu navigation with the left stick: directions, threshold and hysteresis, auto-repeat, screen-off reset. |
 | `test_filemanager.py` | File manager: protected boot files stay protected (including names that start with `..`); `human_size` rolls over to the next unit when the value rounds up (no "1024.0 KB"). |
 | `test_volume.py` | `rgos-volume`: the ALSA card from `hw.json` (card 0 is a real card, not "unset"); the in-game volume indicator (`Announcer`: first press shows at once, a held button sends one settled message instead of flooding RetroArch's 8-slot queue). |
+| `test_overlay.py` | `rgos-overlay` (the system-wide volume bar): volume/theme file parsing, mapping the bar rectangle onto a rotated framebuffer, and the draw / re-cover / restore logic when a program repaints underneath it or flips pages. |
 | `test_dhcp.py` | `rgos-wifi-dhcp`: lease script order (routes flushed before the address is added, so the default route sticks) and resolv.conf. |
 | `test_btctl.py` | `btctl`: the saved Bluetooth on/off setting is applied at boot (off stays off). |
 | `test_splash.py` | `splash.read_conf`: a malformed splash.json falls back to the defaults instead of raising. |
