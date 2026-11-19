@@ -584,7 +584,34 @@ def throttled(fn, interval):
     return get
 
 
+def bg_cached(fn, interval):
+    """Return the last value of fn() at once; refresh it on a worker thread when stale so a slow
+    /proc, sysfs or subprocess read never stalls a frame. The first call computes synchronously."""
+    st = {"t": -1e9, "v": None, "busy": False, "init": False}
+
+    def work():
+        try:
+            v = fn()
+            st["v"] = v
+        except Exception:
+            pass
+        finally:
+            st["t"], st["busy"] = time.monotonic(), False
+
+    def get(force=False):
+        if not st["init"]:
+            st["init"] = True
+            st["v"], st["t"] = fn(), time.monotonic()
+            return st["v"]
+        if (force or time.monotonic() - st["t"] >= interval) and not st["busy"]:
+            st["busy"] = True
+            threading.Thread(target=work, daemon=True).start()
+        return st["v"]
+    return get
+
+
 _BTN_CACHE = {}
+_BTN_SHADOW = {}
 
 
 def _btn_face(w, h, base, radius):
@@ -678,8 +705,13 @@ def draw_button(surf, rect, base, radius=12, depth=4, sel=False):
             pygame.draw.rect(surf, _mix(TEXT, ACCENT, hl), (x, y, w, h), 2 if h < 80 else 3, border_radius=radius)
         return hl, lift
     side = _mix(base, (0, 0, 0), 0.55)
-    sh = pygame.Surface((w, h + depth + 3), pygame.SRCALPHA)
-    pygame.draw.rect(sh, (0, 0, 0, 70), (0, 3, w, h + depth), border_radius=radius)
+    skey = (w, h, depth, radius)
+    sh = _BTN_SHADOW.get(skey)
+    if sh is None:
+        if len(_BTN_SHADOW) > 200:
+            _BTN_SHADOW.clear()
+        sh = _BTN_SHADOW[skey] = pygame.Surface((w, h + depth + 3), pygame.SRCALPHA)
+        pygame.draw.rect(sh, (0, 0, 0, 70), (0, 3, w, h + depth), border_radius=radius)
     surf.blit(sh, (x, y + lift))
     pygame.draw.rect(surf, side, (x, y + depth, w, h), border_radius=radius)
     surf.blit(_btn_face(w, h, base, radius), (x, y))
@@ -2513,6 +2545,17 @@ MUSIC_EXTS = (".mp3", ".ogg", ".oga", ".wav", ".flac", ".mod", ".xm", ".it", ".s
 _music_playlist = []
 _music_last = None
 
+_music_scan = [0.0, []]
+
+
+def _music_tracks_cached():
+    now = time.monotonic()
+    if now - _music_scan[0] > 10.0:
+        _music_scan[1] = _music_tracks()
+        _music_scan[0] = time.monotonic()
+    return _music_scan[1]
+
+
 def _music_tracks():
     tracks = []
     for root in MUSIC_DIRS:
@@ -2646,6 +2689,7 @@ def main():
 
     _fbp = [None, {}]
     _fav_c = [0.0, None, []]
+    _fav_m = [None]
 
     def favorite_games():
         now = time.monotonic()
@@ -2653,15 +2697,25 @@ def main():
             _fbp[0], _fbp[1] = all_games, {g["path"]: g for g in all_games}
             _fav_c[0] = 0.0
         if now - _fav_c[0] >= 0.5 or _fav_c[0] > now:
-            by_path = _fbp[1]
-            _fav_c[0], _fav_c[2] = now, [by_path[p] for p in load_favorites() if p in by_path]
+            try:
+                mt = os.stat(FAVORITES_FILE).st_mtime_ns
+            except OSError:
+                mt = None
+            if _fav_c[0] == 0.0 or mt != _fav_m[0] or _fav_c[0] > now:
+                by_path = _fbp[1]
+                _fav_m[0] = mt
+                _fav_c[2] = [by_path[p] for p in load_favorites() if p in by_path]
+            _fav_c[0] = now
         return _fav_c[2]
 
     def fav_changed():
         _fav_c[0] = 0.0
 
+    wifi_status = bg_cached(wifictl.status, 1.0)
+    settings_info_c = bg_cached(settings_info, 1.0)
+
     def settings_text():
-        wst = wifictl.status()
+        wst = wifi_status()
         spl = {"on": "On: video and sound", "silent": "On: video only", "off": "Off"}[splash.mode_of(state)]
         return {"theme": ("Theme", "%s   (%d of %d)   A opens the list" % (THEMES[theme_index(theme_id)][1], theme_index(theme_id) + 1, len(THEMES))),
                 "launcher": ("Launcher", "%s   (%d of %d)   A opens the list" % (LAUNCHERS[launcher_index(launcher_id)][1], launcher_index(launcher_id) + 1, len(LAUNCHERS))),
@@ -2777,10 +2831,20 @@ def main():
     btm.refresh()
     ssh_cache, ssh_msg_until = (0.0, sshctl.info()), 0.0
 
-    def ssh_info():
+    _ssh_busy = [False]
+
+    def _ssh_refresh():
         nonlocal ssh_cache
-        if time.time() - ssh_cache[0] > 1.0:
+        try:
             ssh_cache = (time.time(), sshctl.info())
+        except Exception:
+            pass
+        _ssh_busy[0] = False
+
+    def ssh_info():
+        if time.time() - ssh_cache[0] > 1.0 and not _ssh_busy[0]:
+            _ssh_busy[0] = True
+            threading.Thread(target=_ssh_refresh, daemon=True).start()
         return ssh_cache[1]
 
     def ssh_toggle():
@@ -2950,7 +3014,7 @@ def main():
             pygame.time.wait(120)
             continue
         blanked = False
-        if pygame.mixer.get_init() and not pygame.mixer.music.get_busy() and (_music_playlist or _music_tracks()):
+        if pygame.mixer.get_init() and not pygame.mixer.music.get_busy() and (_music_playlist or _music_tracks_cached()):
             _play_next_launcher_track()
         _asc = art["sc"]
         if _asc is not None:
@@ -3898,7 +3962,7 @@ def main():
             ROW_H = 42
             px, py, pw, ph = list_x, top_y, W - 2 * list_x, 336 + DY
             ui_rect(canvas, PANEL, (px, py, pw, ph), 10)
-            info_rows = settings_info()
+            info_rows = settings_info_c()
             vis = max(1, (ph - 20) // ROW_H)
             max_scroll = max(0, len(info_rows) - vis)
             info_scroll = min(max(0, info_scroll), max_scroll)
@@ -3929,7 +3993,7 @@ def main():
                     canvas.blit(f_tiny.render("^ more", True, DIM), (px + pw - 70, py + 6))
             hint = "Up/Down Scroll   L/R Page   B Back   START+SELECT Power off"
         elif view == "wifi":
-            wst, wrows = wifictl.status(), wscan.rows(wconf)
+            wst, wrows = wifi_status(), wscan.rows(wconf)
             wn = len(wrows) + 2
             ui_rect(canvas, PANEL, (list_x, top_y, W - 2 * list_x, 336 + DY), 10)
             head = wifictl.status_text(wst) if wconf["enabled"] else "Wi-Fi is off"
@@ -4019,7 +4083,7 @@ def main():
             hint = "A Pair/Connect/Disconnect   X Scan   Y Forget   B Back"
         elif view == "ssh":
             si = ssh_info()
-            wst_ = wifictl.status()
+            wst_ = wifi_status()
             ip_ = wst_["ip"] or "(connect Wi-Fi first)"
             ui_rect(canvas, PANEL, (list_x, top_y, W - 2 * list_x, 336 + DY), 10)
             canvas.blit(f_row.render("SSH / file transfer is " + ("ON" if si["running"] else "off"), True, ACCENT), (list_x + 28, top_y + 14))
@@ -4218,7 +4282,7 @@ def main():
             flow_warm(fcards, flow_t, 0.004 if fmoving else 0.012, fmoving)
         idle = (view in IDLE_VIEWS and not forced and time.monotonic() - last_act > 3.0
                 and time.time() >= bri_show_until)
-        clock.tick(60 if anim_moving or (launcher_id in ("xmb", "flow") and time.monotonic() - last_act < 0.5) else (15 if idle else 30))
+        clock.tick(60 if anim_moving or (time.monotonic() - last_act < 0.5) else (15 if idle else 30))
 
     try:
         if pygame.mixer.get_init():
