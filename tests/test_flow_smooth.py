@@ -185,5 +185,58 @@ class CoverTests(unittest.TestCase):
         self.assertNotIn(self.key(0), menu._FLOW["jobs"])
 
 
+class MovingTests(unittest.TestCase):
+    """While a glide runs, flow_warm must not start anything heavy."""
+
+    def setUp(self):
+        p = mock.patch.object(menu, "pygame", fake_pygame())
+        self.pg = p.start()
+        self.addCleanup(p.stop)
+        for name in ("cards", "glow", "shadow", "fonts", "jobs"):
+            menu._FLOW[name].clear()
+        menu._FLOW["warm"] = None
+        menu._FLOW["S"] = 300
+        menu.FONT_PATH[0] = None
+        self.cards = [{"title": "Game %d" % i, "sub": "x", "hue": i * 20, "tag": "GBA", "abbr": "G%d" % i, "icon": None,
+                       "fav": False, "art": "/art/%d.png" % i} for i in range(30)]
+
+    def test_moving_never_decodes_covers_or_scales_levels(self):
+        with mock.patch.object(menu, "_flow_art_steps", side_effect=AssertionError("decoded while moving")):
+            for _ in range(40):
+                menu.flow_warm(self.cards, 0, 0.004, True)
+        self.pg.transform.smoothscale.assert_not_called()
+        self.assertEqual(menu._FLOW["jobs"], {})
+        self.assertIsNone(menu._FLOW["warm"])
+
+    def test_moving_builds_one_cheap_card_per_call_nearest_first(self):
+        menu.flow_warm(self.cards, 10, 0.004, True)
+        self.assertEqual(len(menu._FLOW["cards"]), 1)
+        g = self.cards[10]
+        self.assertIn(menu._flow_key(g["hue"], g["tag"], g["abbr"], 300, None), menu._FLOW["cards"])
+
+    def test_a_shoulder_jump_finds_its_cards_ready(self):
+        for _ in range(60):
+            menu.flow_warm(self.cards, 10, 0.004, True)
+        for i in range(10 + menu.FLOW_JUMP - 2, 10 + menu.FLOW_JUMP + 3):
+            g = self.cards[i]
+            self.assertIn(menu._flow_key(g["hue"], g["tag"], g["abbr"], 300, None), menu._FLOW["cards"], i)
+
+    def test_moving_cache_stays_inside_its_cap(self):
+        for c in range(0, 30):
+            for _ in range(20):
+                menu.flow_warm(self.cards, c, 0.004, True)
+        self.assertLessEqual(len(menu._FLOW["cards"]), menu.FLOW_CACHE_CARDS)
+
+    def test_resting_afterwards_still_finishes_the_covers(self):
+        for _ in range(30):
+            menu.flow_warm(self.cards, 0, 0.004, True)
+        with mock.patch.object(menu, "_flow_art_steps", side_effect=lambda p, S: iter(())):
+            for _ in range(300):
+                menu.flow_warm(self.cards, 0, 0.012, False)
+                if menu._FLOW["warm"]:
+                    break
+        self.assertTrue(menu._FLOW["warm"])
+
+
 if __name__ == "__main__":
     unittest.main()

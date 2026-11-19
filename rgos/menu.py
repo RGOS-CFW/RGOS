@@ -1391,6 +1391,7 @@ def draw_xmb_dropdown(c, f_small, dd, opts):
 FONT_PATH = [None]
 FLOW_LEVELS = (1.0, 0.88, 0.77, 0.69, 0.62, 0.55, 0.50, 0.45)
 FLOW_CACHE_CARDS = 20
+FLOW_JUMP = 5  # the shoulder buttons move this many cards at once
 _FLOW = {"fonts": {}, "cards": {}, "bg": (None, None), "bar": (None, None), "glow": {}, "shadow": {}, "S": 0, "warm": None,
          "jobs": {}, "op": 0.0}
 
@@ -1694,11 +1695,16 @@ def _flow_title(title, compact):
     return tt, ts
 
 
-def flow_warm(cards, centre, budget):
+def flow_warm(cards, centre, budget, moving=False):
     """Build cards, glows and scaled levels near the centre, never running past `budget` seconds.
 
     While scrolling the budget is a few milliseconds, so an operation is only started when the measured
     cost of the last one still fits; the first one of a call always runs so warming cannot stall.
+
+    With `moving` set (a glide is running or a button was just pressed) nothing heavy may run: no cover
+    decoding, no glow or scaled levels, because one 20-50 ms operation in the middle of a glide is exactly
+    the stutter. Only the cheap gradient cards the next few steps will need are built (one per call), so a
+    shoulder-button jump of 5 never has to build them inside a frame; the rest waits until the glide ends.
     """
     n, S = len(cards), _FLOW["S"]
     if not n or S <= 0:
@@ -1710,7 +1716,7 @@ def flow_warm(cards, centre, budget):
     end = t0 + budget
     compact = H < 600
     order, seen = [], set()
-    for dist in range(5):
+    for dist in range(FLOW_JUMP + 3 if moving else 5):
         for sgn in ((0,) if dist == 0 else (1, -1)):
             i = centre + sgn * dist
             if n >= 3:
@@ -1728,6 +1734,12 @@ def flow_warm(cards, centre, budget):
     for (dist, i), k in zip(order, keys):
         g = cards[i]
         lv = _lru_get(_FLOW["cards"], k)
+        if moving:
+            # Cheap path: make sure the gradient card exists (a cover shows it until it is built at rest).
+            if lv is None and _lru_get(_FLOW["cards"], k[:5]) is None:
+                _flow_base(*k[:5])
+                return
+            continue
         if lv is None:
             if len(k) > 5:
                 lv = _flow_art_advance(k, end)
@@ -1744,6 +1756,8 @@ def flow_warm(cards, centre, budget):
         if dist <= 3:
             _flow_title(g["title"], compact)
 
+    if moving:
+        return
     ops = [0]
 
     def room():
@@ -4200,7 +4214,8 @@ def main():
 
         present()
         if flow_on:
-            flow_warm(fcards, flow_t, 0.004 if anim_moving else 0.012)
+            fmoving = (anim_moving or flow_fx != flow_t or flow_fv != 0.0 or time.monotonic() - last_act < 0.35)
+            flow_warm(fcards, flow_t, 0.004 if fmoving else 0.012, fmoving)
         idle = (view in IDLE_VIEWS and not forced and time.monotonic() - last_act > 3.0
                 and time.time() >= bri_show_until)
         clock.tick(60 if anim_moving or (launcher_id in ("xmb", "flow") and time.monotonic() - last_act < 0.5) else (15 if idle else 30))
