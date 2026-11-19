@@ -284,13 +284,16 @@ fi
 if [[ "$PORTMASTER" == 1 ]]; then
   cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf" 2>/dev/null || true
   chroot "$ROOTFS" apt-get update >/dev/null 2>&1 || true
-  for pkg in libopenal1 libmpg123-0t64 libvorbisfile3 libvorbis0a libogg0 libtheora0 libmodplug1 libfreetype6 libsdl2-2.0-0 zlib1g; do
+  for pkg in libopenal1 libmpg123-0t64 libvorbisfile3 libvorbis0a libogg0 libtheora0 libmodplug1 libfreetype6 libsdl2-2.0-0 zlib1g \
+             unzip wget curl xxd procps psmisc; do
     chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg" >/dev/null 2>&1 || true
   done
   rm -f "$ROOTFS/etc/resolv.conf"
   if ! chroot "$ROOTFS" sh -c 'ldconfig -p 2>/dev/null | grep -q "libopenal.so.1"' && ! ls "$ROOTFS"/usr/lib/*/libopenal.so.1 >/dev/null 2>&1; then
     echo "!! libopenal.so.1 is not in the image: PortMaster will not start (install libopenal1 with EXTRA_PKGS=libopenal1)"; exit 1
   fi
+  # PortMaster.sh unpacks its pylibs.zip with unzip before the GUI starts; without it the GUI dies right after the splash.
+  [[ -x "$ROOTFS/usr/bin/unzip" ]] || echo "!! unzip is not in the image: PortMaster may close right after its splash (a busybox unzip is linked in below as a fallback)"
 fi
 printf 'BUILD_ID=%s\n' "$(date +%Y%m%d-%H%M)" > "$ROOTFS/etc/rgos-release"
 echo '{"enabled": false, "mountpoint": "/media/roms2"}' > "$ROOTFS/etc/rgos/sdcard.json"
@@ -422,6 +425,11 @@ if [[ "$DEVICE" == "rg-rotate" && "$GC_REPO" != none ]]; then core_present dolph
 core_present mednafen_psx || core_present pcsx_rearmed || echo "!! no PlayStation core (neither pcsx_rearmed nor mednafen_psx) is in the image"
 [[ -x "$ROOTFS/usr/bin/retroarch" ]] || echo "!! retroarch is not in the image (package missing from $DEBIAN_SUITE?)"
 for a in reboot poweroff halt; do ln -sf /bin/busybox "$ROOTFS/sbin/$a"; done
+# The root is a read-only squashfs, so the boot-time "busybox --install" in rgos-init cannot create applet links and any command
+# Debian's minbase lacks (unzip, xxd, pkill, ...) is missing for PortMaster. Link the missing applets now, into /usr/local/bin:
+# only names with no real binary are linked, so no GNU tool is ever replaced by its busybox twin.
+chroot "$ROOTFS" sh -c 'mkdir -p /usr/local/bin; for a in $(/bin/busybox --list); do command -v "$a" >/dev/null 2>&1 || ln -s /bin/busybox "/usr/local/bin/$a"; done'
+echo "==> busybox fallback applets linked: $(ls "$ROOTFS/usr/local/bin" | wc -l)"
 ln -sf /usr/share/fonts/truetype/dejavu "$ROOTFS/usr/share/fonts/dejavu" 2>/dev/null || true
 
 cat > "$ROOTFS/usr/sbin/rgos-init" <<'INIT'

@@ -164,7 +164,7 @@ python3 /opt/rgos/rgos-input >> /var/log/rgos-input.log 2>&1 &
     { echo "== $(date) kernel $(uname -r) t=$t"; echo "--- pygame"
       T=""; command -v timeout >/dev/null 2>&1 && T="timeout 4"
       $T python3 -c 'import pygame; print("pygame", pygame.version.ver)' 2>&1
-      for f in /var/log/rgos-menu.log /var/log/rgos-input.log /var/log/rgos-launch.log /var/log/rgos-native.log /var/log/rgos-retroarch.log /var/log/rgos-roms.log /var/log/rgos-artwork.log /var/log/rgos-volume.log /var/log/rgos-overlay.log /var/log/rgos-gamemenu.log /var/log/rgos-audio.log /var/log/rgos-audio-prep.log /var/log/rgos-audio-load.log /var/log/rgos-wifi.log /var/log/rgos-bt.log /var/log/rgos-ssh.log; do echo "--- $f"; tail -n 100 "$f" 2>&1; done
+      for f in /var/log/rgos-menu.log /var/log/rgos-input.log /var/log/rgos-launch.log /var/log/rgos-native.log /var/log/rgos-retroarch.log /var/log/rgos-roms.log /var/log/rgos-artwork.log /var/log/rgos-volume.log /var/log/rgos-overlay.log /var/log/rgos-gamemenu.log /var/log/rgos-audio.log /var/log/rgos-audio-prep.log /var/log/rgos-audio-load.log /var/log/rgos-wifi.log /var/log/rgos-bt.log /var/log/rgos-ssh.log; do echo "--- $f"; if [ -f "$f" ]; then tail -n 100 "$f" 2>&1; else echo "(not created yet: nothing has run that writes it; see rgos-native.txt after a port runs)"; fi; done
       echo "--- settings dir"; id; grep -E ' (/|/var|/var/lib|/var/lib/rgos) ' /proc/mounts; ls -ld /var /var/lib /var/lib/rgos 2>&1
       ls -la /var/lib/rgos 2>&1; { touch /var/lib/rgos/.w && rm -f /var/lib/rgos/.w && echo "write test: ok"; } 2>&1 || echo "write test: FAILED"
       cat /var/log/rgos-state.log 2>&1

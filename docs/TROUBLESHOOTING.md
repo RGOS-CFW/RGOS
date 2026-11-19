@@ -8,6 +8,7 @@ RG OS leaves up to four evidence files on the FAT boot partition (the one labell
 | `rgos-bootinfo.txt` | `rgos-init`, 6 s after switch_root | the failure is between switch_root and the session |
 | `rgos-logs.txt` | `rgos-session`, at 8, 28 and 58 s | the session never started, or it died early |
 | `rgos-retroarch.txt` | `rgos-launch`, after every game | no game was launched yet |
+| `rgos-native.txt` | `rgos-launch`, after every native port / PortMaster run | no native port or PortMaster was started yet |
 
 ## RG34XXSP / RG35XX H / RG35XX SP: black screen, nothing is written to the card
 
@@ -54,5 +55,11 @@ Read it from the top: it lists the kernel command line, the partition the boot f
 PortMaster's GUI runs on its LOVE 11.5 runtime, which needs the system `libopenal1` package. Images built before this was added do not have it. Rebuild (or run an offline update built) with the current `build.sh`; `libopenal1` is now part of the base package list and the build stops if `libopenal.so.1` is missing from the rootfs. To add other missing libraries without editing the script, use `EXTRA_PKGS="pkg1 pkg2"`. `rgos-native.log` on the device shows the exact library that failed to load.
 
 ## PortMaster shows its splash and then returns to the menu
+
+First read `rgos-native.txt` on the FAT partition: it is written when PortMaster closes and holds the exit code, the
+`missing tools:` line and the end of `rgos-native.log`. `unzip` in that line matters: PortMaster.sh unpacks its
+`pylibs.zip` with it, and without the Python libraries the GUI dies right after the splash. Images built with the
+current `build.sh` ship `unzip`, `wget`, `curl`, `xxd`, `procps` and `psmisc` and link busybox applets for any other
+missing command; older images need a rebuild (or an offline update built from the current `build.sh`).
 
 PortMaster's output is written to `rgos-native.log` (on the device: `/var/log/rgos-native.log`), and when PortMaster quits within a few seconds the last lines of that log are shown on screen for a moment. Read the lines after the last `PortMaster.sh` header in the log: a Python traceback means PortMaster's GUI (pugwash/harbourmaster) crashed, `error while loading shared libraries` names a missing system package (add it with `EXTRA_PKGS`), and a network error means the first start could not download its runtime. `ALSOFT ... PipeWire` warnings are harmless; the launcher now sets `ALSOFT_DRIVERS=alsa` to avoid them.

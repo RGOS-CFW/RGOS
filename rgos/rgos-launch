@@ -8,6 +8,7 @@ ROMS_ROOT = os.environ.get("RGOS_ROMS", "/media/roms")
 STATE_FILE = os.environ.get("RGOS_STATE", "/var/lib/rgos/state.json")
 LOG = os.environ.get("RGOS_RA_LOG", "/var/log/rgos-retroarch.log")
 NATIVE_LOG = os.environ.get("RGOS_NATIVE_LOG", "/var/log/rgos-native.log")
+LAUNCH_LOG = os.environ.get("RGOS_LAUNCH_LOG", "/var/log/rgos-launch.log")
 CORE_DIRS = os.environ.get("RGOS_CORE_DIRS", "/usr/lib/libretro:/usr/lib/aarch64-linux-gnu/libretro:/usr/local/lib/libretro").split(":")
 TTY = os.environ.get("RGOS_TTY", "/dev/tty1")
 SYS_INPUT = os.environ.get("RGOS_SYS_INPUT", "/sys/class/input")
@@ -664,12 +665,57 @@ def launch_native(target):
         restore_governor(saved)
     dt = time.monotonic() - started
     log("native port exited rc=%s after %.1fs" % (rc, dt))
+    save_native_report("native port", cmd, rc, dt, cwd, stopped)
     if stopped:
         log("native port was stopped by the Select+Start hold")
         return 0
     if rc != 0 and dt < EARLY_FAIL_S:
         show_error("RG OS: native port exited with an error (%s)" % rc_text(rc), "%s\nLog: %s" % (tail(NATIVE_LOG, 8), NATIVE_LOG))
     return rc
+
+# Tools a PortMaster-style launcher shells out to. The root is a read-only squashfs, so anything the image
+# does not ship is simply absent at run time (the old boot-time "busybox --install" cannot write there).
+PORT_TOOLS = ("bash", "unzip", "wget", "curl", "xxd", "pkill", "pgrep", "pidof", "killall", "ps", "mount", "python3")
+
+
+def save_native_report(what, cmd, rc, dt, cwd, stopped=False, boot_dir=None):
+    """Write rgos-native.txt on the FAT boot partition after every native port / PortMaster run.
+
+    rgos-logs.txt is only written 8, 28 and 58 s after boot, so a port started later never showed up in any
+    file on the card (and the boot-time snapshot printed "cannot open rgos-native.log" for a log that did not
+    exist yet). This report is written when the port ends, so the card always carries the last run's evidence.
+    """
+    try:
+        path = os.path.join(boot_dir or BOOT_DIR, "rgos-native.txt")
+        missing = [t for t in PORT_TOOLS if not shutil.which(t)]
+        with open(path, "w") as f:
+            f.write("== %s %s rc=%s (%s) after %.1fs%s\ncmd: %s\ncwd: %s\n"
+                    % (time.strftime("%Y-%m-%d %H:%M:%S"), what, rc, rc_text(rc), dt,
+                       " (stopped by Select+Start)" if stopped else "", " ".join(cmd), cwd))
+            f.write("missing tools: %s\n" % (", ".join(missing) or "none"))
+            try:
+                with open("/proc/meminfo") as m:
+                    mem = [l.strip() for l in m if l.startswith(("MemTotal", "MemAvailable"))]
+            except OSError:
+                mem = []
+            f.write("memory: %s\n" % (" | ".join(mem) or "unknown"))
+            try:
+                with open("/proc/mounts") as m:
+                    loops = [l.strip() for l in m if "squashfs" in l or "/dev/loop" in l]
+            except OSError:
+                loops = []
+            f.write("squashfs / loop mounts:\n%s\n" % ("\n".join(loops) or "(none)"))
+            try:
+                names = sorted(os.listdir(cwd))[:60]
+            except OSError as e:
+                names = ["(%s)" % e]
+            f.write("\n--- %s\n%s\n" % (cwd, "\n".join(names)))
+            f.write("\n--- kernel messages (segfault / OOM / GPU)\n" + (kernel_hints() or "(none)\n"))
+            f.write("\n--- rgos-launch log (last 40 lines)\n" + (tail(LAUNCH_LOG, 40) or "(empty)\n"))
+            f.write("\n--- native log (last 150 lines)\n" + (tail(NATIVE_LOG, 150) or "(empty: the port printed nothing)\n"))
+        os.sync()
+    except Exception as e:  # a report must never turn a port exit into a crash
+        log("cannot write rgos-native.txt: %s" % e)
 
 
 def launch_retroarch(sid, core, core_path, content):
@@ -797,6 +843,7 @@ def launch_portmaster():
         restore_governor(saved)
     dt = time.monotonic() - started
     log("PortMaster exited rc=%s (%s) after %.1fs%s" % (rc, rc_text(rc), dt, " after the Select+Start hold" if stopped else ""))
+    save_native_report("PortMaster", cmd, rc, dt, cwd, stopped)
     if stopped:
         return 0
     # PortMaster that quits within seconds, even with rc 0, crashed or could not start its GUI: say why.

@@ -24,6 +24,12 @@ Console ROM folders continue to use the emulator/core configured for their
 system. See `rgos-native.log` on the device for native-port output when a port
 fails to start.
 
+After every native port and every PortMaster run, `rgos-launch` also writes `rgos-native.txt` on the FAT boot
+partition: the command, exit code and run time, which helper tools are missing from the image, the port
+folder listing, kernel hints and the last 150 lines of `rgos-native.log`. Put the card in a PC and read it
+when a port closes by itself. (`rgos-logs.txt` is only written 8, 28 and 58 s after boot, so it never holds
+a port started later; a log that does not exist yet is shown as "not created yet".)
+
 ## Performance
 
 While a native port runs, RG OS switches the CPU and GPU/DDR governors to `performance` and restores
