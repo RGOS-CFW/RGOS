@@ -25,5 +25,6 @@ Plain `unittest`, standard library only: no pygame, device or root needed (`menu
 | `test_launch.py` | `rgos-launch` `pick_core`: a state.json that is not the expected shape (list, null, `"emulators": "a"`, ...) falls back to the system default core instead of crashing. |
 | `test_flow_smooth.py` | RG Flow carousel: covers are prebuilt at fixed sizes (`flow_warm`) so a glide never smoothscales, the resting sizes land exactly on a prebuilt level, the caches are LRU (not wiped whole), and wrap-around / 0-2 card lists still draw. |
 | `test_bios.py` | Settings > Missing BIOS check (`biosctl`): required vs optional per selected core, any-one-of PlayStation regions, MD5 "other version", wrong-case names, subfolders (Dolphin `IPL.bin`), second card, missing bios folder, and the screen lines / "put it here" paths. |
+| `test_system_icons.py` | Per-system icons (RG XMB Games list, RG Flow system cards): every `SYSTEMS` row has a `sys_<id>` icon, an unknown system falls back to the pad, each icon draws inside the 96 px box. |
 
 `helpers.py` loads the real `menu.py` and `rgos-input` for the tests.

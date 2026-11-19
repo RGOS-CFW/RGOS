@@ -885,6 +885,241 @@ ICONS = {"games": icon_games, "recents": icon_recents, "favorites": icon_favorit
          "theme": icon_theme, "launcher": icon_launcher, "splash": icon_splash, "emulators": icon_emulators, "bios": icon_bios, "artwork": icon_artwork, "bmap": icon_bmap,
          "swapab": icon_swapab, "wifi": icon_wifi, "bluetooth": icon_bluetooth, "ssh": icon_ssh, "info": icon_info, "files": icon_files}
 
+
+# ---- per-system icons (RG XMB list, RG Flow system cards) --------------------------------------------------------
+# Same convention as the icons above: drawn white-on-transparent around (cx, cy) inside a 96x96 box, `bg` cuts details out
+# of the body. Generic shapes (handheld, pad, cartridge, ...), deliberately not console logos.
+
+def _cross(c, bg, x, y, a=7, t=4):
+    pygame.draw.rect(c, bg, (x - a, y - t // 2, 2 * a, t))
+    pygame.draw.rect(c, bg, (x - t // 2, y - a, t, 2 * a))
+
+
+def _dots(c, bg, pts, r=3):
+    for x, y in pts:
+        pygame.draw.circle(c, bg, (x, y), r)
+
+
+def _screen(c, col, bg, x, y, w, h, colour=False):
+    """A handheld's screen: bezel cut out of the body, then the glass (four colour tiles for the colour models)."""
+    pygame.draw.rect(c, bg, (x, y, w, h), border_radius=2)
+    if colour:
+        tw, th = (w - 11) // 2, (h - 11) // 2
+        for i in range(2):
+            for j in range(2):
+                pygame.draw.rect(c, col, (x + 4 + i * (tw + 3), y + 4 + j * (th + 3), tw, th))
+    else:
+        pygame.draw.rect(c, col, (x + 4, y + 4, w - 8, h - 8))
+
+
+def icon_sys_gba(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 36, cy - 24, 12, 7), border_radius=3)
+    pygame.draw.rect(c, col, (cx + 24, cy - 24, 12, 7), border_radius=3)
+    pygame.draw.rect(c, col, (cx - 40, cy - 19, 80, 38), border_radius=14)
+    _screen(c, col, bg, cx - 18, cy - 12, 36, 24)
+    _cross(c, bg, cx - 29, cy, 6, 4)
+    _dots(c, bg, [(cx + 25, cy + 4), (cx + 33, cy - 3)])
+
+
+def _gb_body(c, cx, cy, col, bg, colour):
+    pygame.draw.rect(c, col, (cx - 23, cy - 38, 46, 76), border_radius=5, border_bottom_right_radius=16)
+    _screen(c, col, bg, cx - 17, cy - 33, 34, 28, colour)
+    _cross(c, bg, cx - 9, cy + 14, 7, 4)
+    _dots(c, bg, [(cx + 8, cy + 19), (cx + 15, cy + 11)], 4)
+    for i in range(3):
+        pygame.draw.line(c, bg, (cx + 3 + i * 5, cy + 33), (cx + 9 + i * 5, cy + 26), 2)
+
+
+def icon_sys_gb(c, cx, cy, col, bg):
+    _gb_body(c, cx, cy, col, bg, False)
+
+
+def icon_sys_gbc(c, cx, cy, col, bg):
+    _gb_body(c, cx, cy, col, bg, True)
+
+
+def icon_sys_nes(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 40, cy - 17, 80, 34), border_radius=3)
+    pygame.draw.rect(c, bg, (cx - 35, cy - 11, 70, 22), border_radius=2)
+    pygame.draw.rect(c, col, (cx - 31, cy - 2, 14, 4))
+    pygame.draw.rect(c, col, (cx - 26, cy - 7, 4, 14))
+    pygame.draw.rect(c, col, (cx - 9, cy + 1, 9, 4), border_radius=2)
+    pygame.draw.rect(c, col, (cx + 3, cy + 1, 9, 4), border_radius=2)
+    pygame.draw.circle(c, col, (cx + 20, cy + 2), 4)
+    pygame.draw.circle(c, col, (cx + 30, cy + 2), 4)
+
+
+def icon_sys_snes(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 40, cy - 16, 80, 32), border_radius=16)
+    _cross(c, bg, cx - 25, cy, 7, 4)
+    _dots(c, bg, [(cx + 25, cy - 7), (cx + 25, cy + 7), (cx + 18, cy), (cx + 32, cy)], 3)
+    pygame.draw.rect(c, bg, (cx - 8, cy + 3, 8, 3), border_radius=1)
+    pygame.draw.rect(c, bg, (cx + 2, cy + 3, 8, 3), border_radius=1)
+
+
+def icon_sys_genesis(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 40, cy - 17, 80, 34), border_radius=13)
+    _cross(c, bg, cx - 24, cy, 7, 4)
+    _dots(c, bg, [(cx + 4, cy + 8), (cx + 16, cy + 4), (cx + 28, cy)], 4)
+    pygame.draw.rect(c, bg, (cx - 8, cy - 11, 10, 4), border_radius=2)
+
+
+def icon_sys_mastersystem(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 29, cy - 36, 58, 72), border_radius=5)
+    pygame.draw.polygon(c, bg, [(cx - 30, cy - 37), (cx - 18, cy - 37), (cx - 30, cy - 25)])
+    pygame.draw.rect(c, bg, (cx - 21, cy - 27, 42, 36), border_radius=3)
+    pygame.draw.rect(c, col, (cx - 16, cy - 22, 32, 26), border_radius=2)
+    for i in range(6):
+        pygame.draw.rect(c, bg, (cx - 21 + i * 8, cy + 17, 5, 14))
+
+
+def icon_sys_gamegear(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 43, cy - 21, 86, 42), border_radius=10)
+    _screen(c, col, bg, cx - 25, cy - 14, 50, 28)
+    _cross(c, bg, cx - 34, cy - 2, 5, 4)
+    _dots(c, bg, [(cx + 34, cy - 4), (cx + 34, cy + 6)], 3)
+
+
+def icon_sys_sg1000(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 26, cy + 8, 52, 24), border_radius=7)
+    pygame.draw.line(c, col, (cx, cy + 10), (cx, cy - 16), 8)
+    pygame.draw.circle(c, col, (cx, cy - 22), 12)
+    pygame.draw.circle(c, bg, (cx + 14, cy + 20), 4)
+    pygame.draw.rect(c, bg, (cx - 18, cy + 18, 20, 4), border_radius=2)
+
+
+def icon_sys_segacd(c, cx, cy, col, bg):
+    pygame.draw.circle(c, col, (cx, cy - 7), 30)
+    pygame.draw.circle(c, bg, (cx, cy - 7), 17, 2)
+    pygame.draw.circle(c, bg, (cx, cy - 7), 8)
+    pygame.draw.rect(c, col, (cx - 40, cy + 27, 80, 9), border_radius=4)
+
+
+def icon_sys_sega32x(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 19, cy - 36, 38, 40), border_radius=4)
+    pygame.draw.rect(c, bg, (cx - 13, cy - 30, 26, 16), border_radius=2)
+    pygame.draw.rect(c, bg, (cx - 42, cy + 1, 84, 4))
+    pygame.draw.rect(c, col, (cx - 40, cy + 6, 80, 28), border_radius=5)
+    pygame.draw.rect(c, bg, (cx - 30, cy + 16, 34, 4), border_radius=2)
+    pygame.draw.circle(c, bg, (cx + 28, cy + 20), 4)
+
+
+def icon_sys_segapico(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 40, cy - 23, 80, 46), border_radius=8)
+    pygame.draw.rect(c, bg, (cx - 33, cy - 16, 44, 32), border_radius=3)
+    pygame.draw.line(c, col, (cx - 24, cy + 9), (cx - 4, cy - 9), 4)
+    pygame.draw.circle(c, col, (cx - 24, cy + 9), 3)
+    _dots(c, bg, [(cx + 26, cy - 9), (cx + 26, cy + 4)], 4)
+    pygame.draw.rect(c, bg, (cx + 17, cy + 12, 18, 3), border_radius=1)
+
+
+def icon_sys_atari2600(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 40, cy - 4, 80, 28), border_radius=4)
+    pygame.draw.polygon(c, col, [(cx - 34, cy - 3), (cx - 26, cy - 24), (cx + 26, cy - 24), (cx + 34, cy - 3)])
+    for i in range(3):
+        pygame.draw.rect(c, bg, (cx - 22, cy - 19 + i * 6, 44, 3))
+    for x in (-33, -21, 11, 23):
+        pygame.draw.rect(c, bg, (cx + x, cy + 8, 10, 5), border_radius=2)
+
+
+def icon_sys_atari5200(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 25, cy - 36, 50, 72), border_radius=10)
+    pygame.draw.circle(c, bg, (cx, cy - 23), 10)
+    pygame.draw.circle(c, col, (cx, cy - 23), 5)
+    for r in range(4):
+        for k in range(3):
+            pygame.draw.rect(c, bg, (cx - 17 + k * 12, cy - 6 + r * 9, 10, 6), border_radius=1)
+
+
+def icon_sys_atari7800(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 17, cy - 30, 34, 26), border_radius=3)
+    pygame.draw.rect(c, bg, (cx - 11, cy - 24, 22, 8), border_radius=2)
+    pygame.draw.rect(c, bg, (cx - 42, cy - 5, 84, 3))
+    pygame.draw.rect(c, col, (cx - 40, cy - 2, 80, 32), border_radius=5)
+    pygame.draw.circle(c, bg, (cx - 22, cy + 14), 7)
+    pygame.draw.circle(c, bg, (cx + 22, cy + 14), 7)
+    pygame.draw.circle(c, col, (cx - 22, cy + 14), 3)
+    pygame.draw.circle(c, col, (cx + 22, cy + 14), 3)
+
+
+def icon_sys_ngp(c, cx, cy, col, bg, colour=False):
+    pygame.draw.rect(c, col, (cx - 40, cy - 22, 80, 44), border_radius=11)
+    _screen(c, col, bg, cx - 17, cy - 14, 34, 28, colour)
+    pygame.draw.circle(c, bg, (cx - 28, cy), 8)
+    pygame.draw.circle(c, col, (cx - 28, cy), 4)
+    _dots(c, bg, [(cx + 26, cy + 5), (cx + 33, cy - 3)], 3)
+
+
+def icon_sys_ngpc(c, cx, cy, col, bg):
+    icon_sys_ngp(c, cx, cy, col, bg, True)
+
+
+def icon_sys_ws(c, cx, cy, col, bg, colour=False):
+    pygame.draw.rect(c, col, (cx - 42, cy - 19, 84, 38), border_radius=9)
+    _screen(c, col, bg, cx - 16, cy - 12, 32, 24, colour)
+    _cross(c, bg, cx - 29, cy, 5, 3)
+    _cross(c, bg, cx + 29, cy, 5, 3)
+
+
+def icon_sys_wsc(c, cx, cy, col, bg):
+    icon_sys_ws(c, cx, cy, col, bg, True)
+
+
+def icon_sys_psx(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 31, cy - 19, 62, 30), border_radius=11)
+    pygame.draw.rect(c, col, (cx - 42, cy - 5, 24, 32), border_radius=11)
+    pygame.draw.rect(c, col, (cx + 18, cy - 5, 24, 32), border_radius=11)
+    _cross(c, bg, cx - 22, cy - 5, 7, 4)
+    _dots(c, bg, [(cx + 22, cy - 12), (cx + 22, cy + 2), (cx + 15, cy - 5), (cx + 29, cy - 5)], 3)
+    pygame.draw.rect(c, bg, (cx - 9, cy - 6, 6, 3))
+    pygame.draw.rect(c, bg, (cx + 3, cy - 6, 6, 3))
+
+
+def icon_sys_gc(c, cx, cy, col, bg):
+    pygame.draw.polygon(c, col, [(cx, cy - 32), (cx + 30, cy - 16), (cx, cy), (cx - 30, cy - 16)])
+    pygame.draw.polygon(c, col, [(cx - 30, cy - 16), (cx, cy), (cx, cy + 34), (cx - 30, cy + 18)])
+    pygame.draw.polygon(c, col, [(cx, cy), (cx + 30, cy - 16), (cx + 30, cy + 18), (cx, cy + 34)])
+    pygame.draw.lines(c, bg, False, [(cx - 30, cy - 16), (cx, cy), (cx + 30, cy - 16)], 3)
+    pygame.draw.line(c, bg, (cx, cy), (cx, cy + 34), 3)
+    pygame.draw.circle(c, bg, (cx, cy - 16), 6)
+    pygame.draw.circle(c, col, (cx, cy - 16), 2)
+
+
+def icon_sys_arcade(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 24, cy - 39, 48, 78), border_radius=4)
+    pygame.draw.rect(c, col, (cx - 36, cy + 4, 72, 16), border_radius=4)
+    pygame.draw.rect(c, bg, (cx - 17, cy - 34, 34, 5), border_radius=1)
+    pygame.draw.rect(c, bg, (cx - 17, cy - 24, 34, 24), border_radius=3)
+    pygame.draw.circle(c, bg, (cx - 17, cy + 12), 4)
+    _dots(c, bg, [(cx + 2, cy + 12), (cx + 13, cy + 12), (cx + 24, cy + 12)], 3)
+    pygame.draw.rect(c, bg, (cx - 9, cy + 26, 18, 8), border_radius=2)
+
+
+def icon_sys_neogeo(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 40, cy - 8, 80, 38), border_radius=8)
+    pygame.draw.line(c, col, (cx - 22, cy - 8), (cx - 22, cy - 22), 5)
+    pygame.draw.circle(c, col, (cx - 22, cy - 28), 9)
+    pygame.draw.circle(c, bg, (cx - 22, cy + 8), 8, 2)
+    _dots(c, bg, [(cx + 1 + i * 11, cy + 17 - i * 3) for i in range(4)], 4)
+
+
+def icon_sys_ports(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 20, cy - 8, 40, 32), border_radius=7)
+    pygame.draw.rect(c, col, (cx - 12, cy - 30, 7, 24), border_radius=2)
+    pygame.draw.rect(c, col, (cx + 5, cy - 30, 7, 24), border_radius=2)
+    pygame.draw.line(c, col, (cx, cy + 22), (cx, cy + 38), 9)
+    pygame.draw.rect(c, bg, (cx - 10, cy + 4, 20, 4), border_radius=2)
+
+
+SYSTEM_ICONS = {n[len("icon_sys_"):]: f for n, f in list(globals().items()) if n.startswith("icon_sys_")}
+ICONS.update({"sys_" + sid: fn for sid, fn in SYSTEM_ICONS.items()})
+
+
+def system_icon(sid):
+    """ICONS key of a system's icon; systems without their own icon (a new SYSTEMS row) keep the generic pad."""
+    return "sys_" + sid if "sys_" + sid in ICONS else "games"
+
+
 _XI = {}
 _XIT = {}
 _XBG = {}
@@ -1247,12 +1482,17 @@ def _flow_gradient_card(hue, tag, abbr, S, icon=None):
         surf.blit(chip, (int(S * 0.06), int(S * 0.06)))
         surf.blit(tt, (int(S * 0.06) + px, int(S * 0.06) + py))
     if icon:
+        # A card with a short name (a system) lifts the icon and puts the name under it; the home cards have no name.
+        lift = bool(abbr)
+        dcy, dr, isz = (int(S * 0.44), int(S * 0.29), int(S * 0.42)) if lift else (S // 2, int(S * 0.34), int(S * 0.5))
         disc = pygame.Surface((S, S), pygame.SRCALPHA)
-        pygame.draw.circle(disc, (255, 255, 255, 40), (S // 2, S // 2), int(S * 0.34))
-        pygame.draw.circle(disc, (255, 255, 255, 60), (S // 2, S // 2), int(S * 0.34), max(2, S // 90))
+        pygame.draw.circle(disc, (255, 255, 255, 40), (S // 2, dcy), dr)
+        pygame.draw.circle(disc, (255, 255, 255, 60), (S // 2, dcy), dr, max(2, S // 90))
         surf.blit(disc, (0, 0))
-        isz = int(S * 0.5)
-        surf.blit(xmb_icon(icon, isz, (242, 242, 250)), ((S - isz) // 2, (S - isz) // 2))
+        surf.blit(xmb_icon(icon, isz, (242, 242, 250)), ((S - isz) // 2, dcy - isz // 2))
+        if lift:
+            at = _flow_font(S * 0.115).render(abbr, True, (242, 242, 250))
+            surf.blit(at, ((S - at.get_width()) // 2, int(S * 0.84) - at.get_height() // 2))
     else:
         fa = _flow_font(S * (0.32 if len(abbr) <= 3 else 0.24))
         at = fa.render(abbr, True, (242, 242, 250))
@@ -2430,13 +2670,13 @@ def main():
             if not vsys:
                 return [{"label": "No games found", "sub": "Copy ROMs to the ROMS card, then press X to rescan", "icon": "games", "act": None}]
             return [{"label": sy[4], "sub": "%d %s" % (len(games_of(sy[0])), "port" if sy[0] == "ports" else "game") + ("" if len(games_of(sy[0])) == 1 else "s"),
-                     "icon": "games", "act": ("system", i)} for i, sy in enumerate(vsys)]
+                     "icon": system_icon(sy[0]), "act": ("system", i)} for i, sy in enumerate(vsys)]
         if cat in ("recents", "favorites"):
             gl = recent_games() if cat == "recents" else favorite_games()
             if not gl:
                 return [{"label": "No recent games" if cat == "recents" else "No favorites yet",
                          "sub": "Games you play show up here" if cat == "recents" else "Press Y on a game to add it", "icon": cat, "act": None}]
-            return [{"label": g["title"], "sub": sysname.get(g["sid"], g["tag"]), "icon": "games", "act": ("launch", g)} for g in gl]
+            return [{"label": g["title"], "sub": sysname.get(g["sid"], g["tag"]), "icon": system_icon(g["sid"]), "act": ("launch", g)} for g in gl]
         if cat == "tools":
             return [{"label": t[1], "sub": t[2], "icon": "files" if t[3] == "@view:files" else "tools", "act": ("tool", t[3])} for t in TOOLS]
         return [{"label": "Power Off", "sub": "Shut down RG OS", "icon": "power", "act": ("power",)}]
@@ -2572,7 +2812,7 @@ def main():
                     "abbr": "", "icon": hid, "fav": False} for hid, lbl in HOME_ITEMS]
         elif view == "systems":
             out = [{"id": sy[0], "title": sy[4], "sub": "%d game%s" % (len(games_of(sy[0])), "" if len(games_of(sy[0])) == 1 else "s"),
-                    "hue": flow_hue(sy[0]), "tag": "", "abbr": sy[1], "icon": None, "fav": False} for sy in vsys]
+                    "hue": flow_hue(sy[0]), "tag": "", "abbr": sy[1], "icon": system_icon(sy[0]), "fav": False} for sy in vsys]
         else:
             out = [{"game": g, "title": g["title"], "sub": sysname.get(g["sid"], g["tag"]), "hue": flow_hue(g["sid"]), "tag": g["tag"],
                     "abbr": flow_abbr(g["title"]), "icon": None, "fav": g["path"] in favorite_paths,
