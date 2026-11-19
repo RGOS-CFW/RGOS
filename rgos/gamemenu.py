@@ -606,6 +606,55 @@ class FbMenuScreen:
         self.saved = self.drawn = self.base = None
 
 
+class DrmMenuScreen(FbMenuScreen):
+    """Same panel, but on a hardware overlay plane: it is composited above a DRM/KMS game, which /dev/fb0 never is."""
+
+    def __init__(self, ov=None):
+        super().__init__(ov)
+        here = os.path.dirname(os.path.abspath(__file__))
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import drmplane
+        self.drm = drmplane.DrmOverlay()
+        self.rect = self.fb.rect                      # panel rectangle in panel pixels (set by FbMenuScreen)
+
+    def open(self):
+        pass
+
+    def draw(self, layer, x):
+        pg, fb = self.fb.pg, self.fb
+        frame = pg.Surface(layer.get_size(), pg.SRCALPHA, 32)
+        frame.blit(layer, (x, 0))
+        if self.drm.premultiplied() and hasattr(frame, "premul_alpha"):
+            frame = frame.premul_alpha()
+        if fb.rotate:
+            frame = pg.transform.rotate(frame, -fb.rotate)
+        self.drm.show(self.rect, pg.image.tostring(frame, "BGRA"))
+
+    def repainted(self):
+        return False
+
+    def rebase(self):
+        pass
+
+    def close(self):
+        self.drm.close()
+        try:
+            os.close(self.fb.fd)
+        except OSError:
+            pass
+
+
+def make_screen(kind):
+    """Native ports render through DRM/KMS: use an overlay plane for them, the framebuffer if that is not possible."""
+    if os.environ.get("RGOS_GAMEMENU_DRM", "1") != "0":
+        try:
+            return DrmMenuScreen()
+        except Exception as e:
+            log("overlay plane not available (%r); using the framebuffer" % e)
+    return FbMenuScreen()
+
+
 # ---- daemon --------------------------------------------------------------------------------------------------------
 
 def open_pads():
@@ -696,8 +745,9 @@ def daemon():
                         log("retroarch menu %s" % ("opened" if ra_menu.toggle() else "closed"))
                         break
                     try:
-                        screen = screen or FbMenuScreen()
+                        screen = screen or make_screen(info.get("kind"))
                         open_menu(info, pads, screen)
+                        screen = None             # the plane is released after every menu; open it fresh next time
                     except Exception as e:
                         log("menu error: %r" % e)
                         screen = None

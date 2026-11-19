@@ -86,6 +86,15 @@ def retroarch_running(path=GAME_FLAG):
     return isinstance(info, dict) and info.get("kind") == "retroarch"
 
 
+def game_running(path=GAME_FLAG):
+    """True while any game (RetroArch or a native port) runs: /dev/fb0 is hidden behind its DRM/KMS output."""
+    try:
+        with open(path) as f:
+            return isinstance(json.load(f), dict)
+    except (OSError, ValueError):
+        return False
+
+
 def volume_text(pct, width=20):
     pct = max(0, min(100, int(pct)))
     n = (pct * width + 50) // 100
@@ -252,6 +261,14 @@ class FbScreen:
 
     def compose(self, saved, pct):
         """The saved pixels with the bar drawn over them, as framebuffer rows."""
+        bar = self.bar_surface(pct)
+        fw, fh = bar.get_size()
+        sf = self._surface_from(saved, fw, fh)
+        sf.blit(bar, (0, 0))
+        return self._rows_of(sf, fw, fh)
+
+    def bar_surface(self, pct):
+        """The volume bar as an alpha surface already turned to the panel's orientation."""
         pg, s = self.pg, self.scale
         self.theme = read_theme()
         c = self.theme
@@ -272,17 +289,54 @@ class FbScreen:
         bar.blit(pct_t, (w - pct_t.get_width() - int(12 * s), ty))
         if self.rotate:
             bar = pg.transform.rotate(bar, -self.rotate)
-        fw, fh = bar.get_size()
-        sf = self._surface_from(saved, fw, fh)
+        return bar
+
+
+class DrmBar:
+    """The volume bar on a hardware overlay plane: shown above a DRM/KMS game (native ports) where /dev/fb0 is hidden."""
+
+    def __init__(self, fb, drm_mod):
+        self.fb, self.drm_mod, self.drm, self.until = fb, drm_mod, None, 0.0
+
+    def show(self, pct, hold):
+        fb, pg = self.fb, self.fb.pg
+        if self.drm is None:
+            self.drm = self.drm_mod.DrmOverlay()
+        bar = fb.bar_surface(pct)
+        w, h = bar.get_size()
+        sf = pg.Surface((w, h), pg.SRCALPHA, 32)
         sf.blit(bar, (0, 0))
-        return self._rows_of(sf, fw, fh)
+        if self.drm.premultiplied() and hasattr(sf, "premul_alpha"):
+            sf = sf.premul_alpha()
+        raw = pg.image.tostring(sf, "BGRA")
+        self.drm.show(fb.rect, raw)
+        self.until = time.monotonic() + hold
+
+    def tick(self):
+        if self.drm is not None and self.until and time.monotonic() >= self.until:
+            self.hide()
+        return self.drm is not None and self.until > 0
+
+    def hide(self):
+        if self.drm is not None:
+            self.drm.close()
+        self.drm, self.until = None, 0.0
+
+
+def load_drm():
+    import importlib
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    return importlib.import_module("drmplane")
 
 
 # ---- daemon --------------------------------------------------------------------------------------------------------
 
 def run():
     start = time.monotonic()
-    ov, last = None, read_volume()
+    ov, last, drm_bar, drm_bad = None, read_volume(), None, False
+    
     seen_stamp, seen_pct = (last[1], last[0]) if last else (None, None)
     log("overlay started (volume %s)" % (seen_pct if last else "unknown"))
     while True:
@@ -302,9 +356,24 @@ def run():
                 if not quiet:
                     if retroarch_running():
                         ra_message(volume_text(v[0]))     # RetroArch draws over the game; /dev/fb0 would be invisible
+                    elif game_running() and not drm_bad:
+                        try:                              # native port: a hardware overlay plane above its DRM output
+                            drm_bar = drm_bar or DrmBar(ov.screen, load_drm())
+                            drm_bar.show(v[0], HOLD)
+                        except Exception as e:
+                            log("overlay plane failed (%r); using the framebuffer" % e)
+                            drm_bad = True
+                            if drm_bar:
+                                drm_bar.hide()
+                            drm_bar = None
+                            ov.show(v[0])
                     else:
                         ov.show(v[0])
             busy = ov.tick()
+            if drm_bar is not None:
+                busy = drm_bar.tick() or busy
+                if not drm_bar.until:
+                    drm_bar = None if not game_running() else drm_bar
         except Exception as e:           # a bad frame must never kill the overlay; rebuild the screen access next time
             log("overlay error: %r" % e)
             try:
