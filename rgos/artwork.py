@@ -8,6 +8,7 @@ downloading a cover, and remembering what was already tried.
 Layout on the ROMS card (visible and editable from a PC):
 
     artwork/<system>/<rom file name without extension>.png|jpg
+    artwork/<system>/<rom file name without extension>.json   metadata (release date, description, ...)
     artwork/.misses.json        games SteamGridDB had no match for (retried after 30 days)
     artwork/overrides.json      optional {"<system>/<rom stem>": <SteamGridDB game id>}
 
@@ -44,6 +45,9 @@ MISS_RETRY_S = 30 * 86400
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MIN_MATCH = 0.72
+WIKI_API = "https://en.wikipedia.org"
+META_VERSION = 1
+MAX_DESC_CHARS = 600
 SHAPES = {
     "portrait": "600x900,342x482,660x930",
     "square": "512x512,1024x1024",
@@ -502,6 +506,137 @@ def best_grid(key, game_id, shape):
     return None
 
 
+def best_grid_info(key, game_id, shape):
+    """The best-scored still image for game_id as SteamGridDB's dict (url, author, style, ...), or None."""
+    base = "/grids/game/%d?types=static&mimes=image/png,image/jpeg&nsfw=false&humor=false&epilepsy=false" % game_id
+    dims = SHAPES.get(shape, "")
+    tries = [base + "&dimensions=" + dims] if dims else []
+    tries.append(base)
+    for path in tries:
+        grids = api_get(path, key)
+        grids = [g for g in (grids or []) if isinstance(g, dict) and _cdn_ok(str(g.get("url", "")))]
+        if grids:
+            grids.sort(key=lambda g: (g.get("score") or 0), reverse=True)
+            return grids[0]
+        time.sleep(0.1)
+    return None
+
+
+def best_grid(key, game_id, shape):
+    """URL of the best-scored still image for game_id, or None."""
+    g = best_grid_info(key, game_id, shape)
+    return str(g["url"]) if g else None
+
+
+def game_info(key, game_id):
+    """SteamGridDB's own record for a game: name, release year, verified flag."""
+    d = api_get("/games/id/%d" % game_id, key)
+    if not isinstance(d, dict):
+        return {}
+    out = {"sgdb_id": game_id, "name": str(d.get("name") or "")}
+    rd = d.get("release_date")
+    try:
+        out["release_date"] = time.strftime("%Y-%m-%d", time.gmtime(int(rd)))
+        out["year"] = int(out["release_date"][:4])
+    except (TypeError, ValueError, OverflowError, OSError):
+        pass
+    if d.get("verified") is not None:
+        out["verified"] = bool(d.get("verified"))
+    return out
+
+
+def grid_info(g):
+    """The per-image fields worth keeping from a SteamGridDB grid."""
+    if not g:
+        return {}
+    out = {}
+    for k in ("style", "language", "width", "height", "score"):
+        if g.get(k) is not None:
+            out[k] = g[k]
+    author = g.get("author")
+    if isinstance(author, dict) and author.get("name"):
+        out["author"] = str(author["name"])
+    return out
+
+
+# ---- descriptions (SteamGridDB has none, so Wikipedia's page summaries fill that gap)
+
+def _wiki_json(path):
+    data = _open(WIKI_API + path, "", MAX_JSON_BYTES, 15)
+    if data is None:
+        return None
+    try:
+        return json.loads(data.decode("utf-8", "replace"))
+    except ValueError:
+        raise ApiError("server", "Bad response from Wikipedia")
+
+
+def _clip(text, limit=MAX_DESC_CHARS):
+    text = re.sub(r"\s+", " ", text or "").strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+    return cut[:end + 1] if end > 120 else cut.rstrip() + "..."
+
+
+def _is_game_page(d):
+    blob = ("%s %s" % (d.get("description") or "", (d.get("extract") or "")[:240])).lower()
+    return d.get("type") == "standard" and ("video game" in blob or "videogame" in blob or "arcade game" in blob)
+
+
+def find_description(title, canonical=""):
+    """(description, wikipedia_url) for a game, or ("", "") when no confident match.
+
+    Only pages that identify themselves as a video game are accepted, so "Contra" the
+    Roman-law page or "Tetris" the pop song never leak in."""
+    names = []
+    for n in [canonical] + search_terms(title):
+        if n and n not in names:
+            names.append(n)
+    seen = set()
+    for name in names[:3]:
+        q = urllib.parse.quote(name + " video game", safe="")
+        res = _wiki_json("/w/rest.php/v1/search/title?q=%s&limit=3" % q)
+        for page in ((res or {}).get("pages") or [])[:3]:
+            pkey = str(page.get("key") or "")
+            if not pkey or pkey in seen:
+                continue
+            seen.add(pkey)
+            if _norm(str(page.get("title", ""))).split(" ")[0] != _norm(name).split(" ")[0]:
+                continue  # first word must agree: cheap guard against unrelated pages
+            d = _wiki_json("/api/rest_v1/page/summary/" + urllib.parse.quote(pkey, safe=""))
+            if isinstance(d, dict) and _is_game_page(d) and d.get("extract"):
+                url = ((d.get("content_urls") or {}).get("desktop") or {}).get("page", "")
+                return _clip(str(d["extract"])), url
+        time.sleep(0.1)
+    return "", ""
+
+
+def meta_path(roms_root, sid, rom_path):
+    return os.path.join(art_dir(roms_root), sid, stem_of(rom_path) + ".json")
+
+
+def load_meta(roms_root, sid, rom_path):
+    """Saved metadata for a ROM ({} when there is none). Cheap enough to call per frame's selection."""
+    d = _read_json(meta_path(roms_root, sid, rom_path), {})
+    return d if d.get("v") == META_VERSION else {}
+
+
+def has_meta(roms_root, sid, rom_path):
+    return os.path.exists(meta_path(roms_root, sid, rom_path))
+
+
+def format_meta_lines(meta):
+    """Short display strings for a game card: ["1991", "Verified"], etc."""
+    out = []
+    if meta.get("release_date"):
+        out.append(str(meta["release_date"]))
+    elif meta.get("year"):
+        out.append(str(meta["year"]))
+    return out
+
+
 def _write_atomic(path, data):
     tmp = path + ".part"
     with open(tmp, "wb") as f:
@@ -614,7 +749,7 @@ class Scraper:
         self.index.invalidate()
         todo = []
         for g in games:
-            if self.index.lookup(g["sid"], g["path"]):
+            if self.index.lookup(g["sid"], g["path"]) and has_meta(self.root, g["sid"], g["path"]):
                 continue
             mk = "%s/%s" % (g["sid"], stem_of(g["path"]))
             if now - float(misses.get(mk, 0)) < MISS_RETRY_S:
@@ -622,7 +757,7 @@ class Scraper:
             todo.append((g, mk))
         self._set(total=len(todo))
         if not todo:
-            return self._finish("done", "Every game already has artwork or was checked recently")
+            return self._finish("done", "Every game already has artwork and details, or was checked recently")
         by_title = {}
         net_fail = 0
         for g, mk in todo:
@@ -658,36 +793,69 @@ class Scraper:
         s = self.snapshot()
         self._finish("done", "Found %d, no match for %d%s" % (s["found"], s["missed"], (", %d failed (try again)" % s["failed"]) if s["failed"] else ""))
 
+    def _save_meta(self, g, meta):
+        meta = dict(meta, v=META_VERSION, title=g["title"])
+        _write_atomic(meta_path(self.root, g["sid"], g["path"]), json.dumps(meta, ensure_ascii=False, indent=1).encode("utf-8"))
+
     def _one(self, g, mk, overrides, by_title):
+        """Fetch the cover (when missing) and the metadata (when missing) for one game.
+        Returns the cover path, or None when SteamGridDB has no match and there is no cover."""
         stem = stem_of(g["path"])
         dest_dir = os.path.join(art_dir(self.root), g["sid"])
         os.makedirs(dest_dir, exist_ok=True)
         tkey = _norm(g["title"])
         ov = overrides.get(mk) or overrides.get(stem)
+        existing = self.index.lookup(g["sid"], g["path"])
+        need_meta = not has_meta(self.root, g["sid"], g["path"])
         cached = by_title.get(tkey) if not ov else None
-        if cached and os.path.exists(cached):
-            ext = os.path.splitext(cached)[1]
-            dest = os.path.join(dest_dir, stem + ext)
-            shutil.copyfile(cached, dest)
+        if cached and (cached[0] is None or os.path.exists(cached[0])):
+            img, meta = cached
+            dest = existing
+            if dest is None and img:
+                dest = os.path.join(dest_dir, stem + os.path.splitext(img)[1])
+                shutil.copyfile(img, dest)
+            if need_meta and meta:
+                self._save_meta(g, meta)
             return dest
         game_id = self._retry(lambda: find_game(self.key, g["title"], ov))
         if game_id is None:
-            return None
-        url = self._retry(lambda: best_grid(self.key, game_id, self.shape))
-        if url is None:
-            return None
-        data = self._retry(lambda: download(url))
-        ext = image_ext(data)
-        if not ext:
-            return None
-        dest = os.path.join(dest_dir, stem + ext)
-        _write_atomic(dest, data)
-        if self.post is not None:
+            if existing and need_meta:
+                self._save_meta(g, {})  # user-supplied cover, nothing to look up: don't retry every run
+            return existing
+        dest, grid = existing, None
+        if dest is None:
+            grid = self._retry(lambda: best_grid_info(self.key, game_id, self.shape))
+            if grid is None and not need_meta:
+                return None
+            if grid is not None:
+                data = self._retry(lambda: download(str(grid["url"])))
+                ext = image_ext(data)
+                if not ext:
+                    return None
+                dest = os.path.join(dest_dir, stem + ext)
+                _write_atomic(dest, data)
+                if self.post is not None:
+                    try:
+                        dest = self.post(dest) or dest
+                    except Exception:
+                        pass
+        meta = {}
+        if need_meta or cached is None:
+            meta = self._retry(lambda: game_info(self.key, game_id)) or {"sgdb_id": game_id}
+            meta.update(grid_info(grid))
             try:
-                dest = self.post(dest) or dest
-            except Exception:
-                pass
-        by_title[tkey] = dest
+                desc, url = self._retry(lambda: find_description(g["title"], meta.get("name", "")))
+            except ApiError as e:
+                if e.kind in ("auth", "tls"):
+                    raise
+                _log("%s: description lookup failed (%s)" % (g["title"], e))
+                desc, url = None, ""  # leave the metadata unsaved so the next run retries
+            if desc is not None:
+                if desc:
+                    meta["description"], meta["description_source"] = desc, url or "Wikipedia"
+                if need_meta:
+                    self._save_meta(g, meta)
+        by_title[tkey] = (dest, meta)
         return dest
 
     def _retry(self, fn):

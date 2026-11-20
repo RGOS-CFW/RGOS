@@ -2769,6 +2769,18 @@ def main():
     def art_on():
         return state.get("artwork", True) is not False
 
+    meta_cache = {}
+
+    def game_meta(g):
+        """Saved SteamGridDB/Wikipedia details for a game; re-read from the card at most every 3 s."""
+        now = time.monotonic()
+        ent = meta_cache.get(g["path"])
+        if ent is None or now - ent[0] > 3.0:
+            if len(meta_cache) > 200:
+                meta_cache.clear()
+            ent = meta_cache[g["path"]] = (now, artwork.load_meta(ROMS_ROOT, g["sid"], g["path"]))
+        return ent[1]
+
     def art_note(msg):
         art["msg"], art["until"] = msg, time.time() + 5
 
@@ -3688,10 +3700,9 @@ def main():
             bw, bh = (W - 40 - (HOME_COLS - 1) * gap) // HOME_COLS, (H - top_y - 48 - (nrows_h - 1) * gap) // nrows_h
             x0 = (W - (HOME_COLS * bw + (HOME_COLS - 1) * gap)) // 2
             vo = (bh - 148) // 2
-            _ng, _nf = len(all_games), len(favorite_games())
-            subs = {"games": "%d game%s" % (_ng, "" if _ng == 1 else "s"),
+            subs = {"games": "%d games" % len(all_games),
                     "recents": "%d recent" % len(recent_games()),
-                    "favorites": "%d favorite%s" % (_nf, "" if _nf == 1 else "s"),
+                    "favorites": "%d favorites" % len(favorite_games()),
                     "tools": "Files, ports, RetroArch",
                     "settings": "Theme, Wi-Fi, info, controls",
                     "power": "Shut down RG OS"}
@@ -3869,7 +3880,7 @@ def main():
             _run = _s["state"] == "running"
             _have, _all = art_counts()
             _rows = [("SteamGridDB API key", ("Set: " + artwork.key_hint(art["key"]) + "   A changes it") if artwork.valid_key(art["key"]) else "Not set   A types it (free key: steamgriddb.com, Preferences, API)"),
-                     ("Download missing artwork", ("Downloading...   A stops" if _run else "%d of %d games have artwork   A starts" % (_have, _all))),
+                     ("Download missing artwork + details", ("Downloading...   A stops" if _run else "%d of %d games have artwork   A starts" % (_have, _all))),
                      ("Retry games with no match", "Ask SteamGridDB again about games it could not find   A starts"),
                      ("Show artwork on game cards", ("On" if art_on() else "Off") + "   A toggles")]
             for i, (nm, sub) in enumerate(_rows):
@@ -4253,10 +4264,18 @@ def main():
             for line in wrap_n(f_row, g["title"], 170, 2):
                 canvas.blit(f_row.render(line, True, TEXT), (px + 15, ty_))
                 ty_ += 24
-            canvas.blit(f_small.render("%.1f MB" % (g["size"] / 1048576), True, DIM),
+            _gm = game_meta(g) if art_on() else {}
+            _yr = _gm.get("year") or ""
+            canvas.blit(f_small.render("%.1f MB%s" % (g["size"] / 1048576, ("   %s" % _yr) if _yr else ""), True, DIM),
                         (px + 15, top_y + 300 + DY))
-            canvas.blit(f_small.render("Native Linux port" if g.get("core") == "native" else "RetroArch + " + core_label(g["sid"], state),
-                                       True, DIM), (px + 15, top_y + 322 + DY))
+            canvas.blit(f_small.render("Native port", True, DIM), (px + 15, top_y + 322 + DY))
+            _desc = _gm.get("description")
+            if _desc:
+                _lh = f_small.get_linesize()
+                _n = max(0, (top_y + 296 + DY - ty_) // _lh)
+                for _line in (wrap_n(f_small, _desc, 170, min(_n, 6)) if _n else []):
+                    canvas.blit(f_small.render(_line, True, DIM), (px + 15, ty_ + 2))
+                    ty_ += _lh
             hint = ("A Run   Y Favorite/unfavorite   B Back   L/R Page   X Rescan   START+SELECT Power off"
                     if view == "games" else "A Run   B Back   L/R Page   X Rescan   START+SELECT Power off")
 
