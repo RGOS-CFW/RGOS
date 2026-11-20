@@ -3688,9 +3688,10 @@ def main():
             bw, bh = (W - 40 - (HOME_COLS - 1) * gap) // HOME_COLS, (H - top_y - 48 - (nrows_h - 1) * gap) // nrows_h
             x0 = (W - (HOME_COLS * bw + (HOME_COLS - 1) * gap)) // 2
             vo = (bh - 148) // 2
-            subs = {"games": "%d games" % len(all_games),
+            _ng, _nf = len(all_games), len(favorite_games())
+            subs = {"games": "%d game%s" % (_ng, "" if _ng == 1 else "s"),
                     "recents": "%d recent" % len(recent_games()),
-                    "favorites": "%d favorites" % len(favorite_games()),
+                    "favorites": "%d favorite%s" % (_nf, "" if _nf == 1 else "s"),
                     "tools": "Files, ports, RetroArch",
                     "settings": "Theme, Wi-Fi, info, controls",
                     "power": "Shut down RG OS"}
