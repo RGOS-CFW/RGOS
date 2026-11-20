@@ -4254,7 +4254,8 @@ def main():
                 ty_ += 24
             canvas.blit(f_small.render("%.1f MB" % (g["size"] / 1048576), True, DIM),
                         (px + 15, top_y + 300 + DY))
-            canvas.blit(f_small.render("Native port", True, DIM), (px + 15, top_y + 322 + DY))
+            canvas.blit(f_small.render("Native Linux port" if g.get("core") == "native" else "RetroArch + " + core_label(g["sid"], state),
+                                       True, DIM), (px + 15, top_y + 322 + DY))
             hint = ("A Run   Y Favorite/unfavorite   B Back   L/R Page   X Rescan   START+SELECT Power off"
                     if view == "games" else "A Run   B Back   L/R Page   X Rescan   START+SELECT Power off")
 
