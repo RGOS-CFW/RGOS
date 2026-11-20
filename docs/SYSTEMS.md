@@ -33,9 +33,9 @@ Files that start with `.` are ignored.
 
 ## Which cores ship in the image
 
-`build.sh` installs these Debian libretro packages: gambatte, mgba, snes9x, nestopia and beetle-wswan. It also builds, best effort, the PlayStation core (pcsx_rearmed), Genesis Plus GX and the Neo Geo Pocket core from source, plus Dolphin on the RG Rotate. A failed source build is reported with a `!!` line and the image is built without that core.
+`build.sh` installs these Debian libretro packages: gambatte, mgba, snes9x, nestopia and beetle-wswan. It also builds, best effort, the PlayStation core (pcsx_rearmed), Genesis Plus GX, the Neo Geo Pocket core and the three Atari cores (stella2014 for the 2600, atari800 for the 5200, prosystem for the 7800) from source, plus Dolphin on the RG Rotate. A failed source build is reported with a `!!` line and the image is built without that core.
 
-Systems that the build does not provide a core for (for example Atari 2600/5200/7800 and Arcade/Neo Geo with FinalBurn Neo) only appear when you supply the core yourself: put a prebuilt aarch64 `<name>_libretro.so` in `cores/` before building, or install a Debian package with `EXTRA_PKGS` ([BUILDING.md](BUILDING.md)). The menu lists a system only when a compatible core is present.
+Systems that the build does not provide a core for (for example Arcade/Neo Geo with FinalBurn Neo) only appear when you supply the core yourself: put a prebuilt aarch64 `<name>_libretro.so` in `cores/` before building, or install a Debian package with `EXTRA_PKGS` ([BUILDING.md](BUILDING.md)). The menu lists a system only when a compatible core is present.
 
 ## Choosing another core
 

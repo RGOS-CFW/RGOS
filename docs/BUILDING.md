@@ -23,6 +23,7 @@ Root (or `sudo`), and: `debootstrap`, `losetup`, `mksquashfs`/`unsquashfs`, `wge
 | `DEBIAN_SUITE`, `DEBIAN_MIRROR` | `trixie`, deb.debian.org | Root filesystem source |
 | `EXTRA_PKGS` | empty | Extra Debian packages, space separated |
 | `PSX_REPO`, `GENESIS_REPO`, `NGP_SRC` | libretro upstreams | Sources of the cores built from source |
+| `STELLA_REPO`, `ATARI800_REPO`, `PROSYSTEM_REPO` | libretro upstreams | Sources of the Atari 2600 (`stella2014`), 5200 (`atari800`) and 7800 (`prosystem`) cores; `none` skips that core |
 | `GC_REPO` | libretro/dolphin | RG Rotate only; `none` skips GameCube ([GAMECUBE.md](GAMECUBE.md)) |
 | `PORTMASTER` | `1` | `0` leaves PortMaster out |
 | `PORTMASTER_URL`, `PORTMASTER_ZIP` | latest release / none | Where to get PortMaster; a local zip builds offline |

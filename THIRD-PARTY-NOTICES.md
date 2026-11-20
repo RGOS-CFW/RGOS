@@ -59,6 +59,9 @@ own Debian copyright file.
 | Beetle WonderSwan | Debian `libretro-beetle-wswan` | GPL-2.0-only |
 | Beetle PSX (fallback) | Debian `libretro-beetle-psx` | GPL-2.0-or-later |
 | Beetle NGP (`mednafen_ngp`) | built from `libretro/beetle-ngp-libretro` | GPL-2.0-only |
+| Stella 2014 (`stella2014`, Atari 2600) | built from `libretro/stella2014-libretro` | GPL-2.0-only |
+| Atari800 (`atari800`, Atari 5200) | built from `libretro/libretro-atari800` | GPL-2.0-or-later |
+| ProSystem (`prosystem`, Atari 7800) | built from `libretro/prosystem-libretro` | GPL-2.0-only |
 | PCSX ReARMed (PlayStation) | built from `libretro/pcsx_rearmed` | GPL-2.0-or-later |
 | Genesis Plus GX (Mega Drive, Master System, Game Gear, SG-1000, Sega CD) | Debian `libretro-genesisplusgx` or built from `libretro/Genesis-Plus-GX` | **Genesis Plus GX license: non-commercial only.** Not an open-source license. Contains code under other terms (see the upstream `LICENSE.txt`). |
 | Dolphin libretro (GameCube, RG Rotate only) | built from `libretro/dolphin` | GPL-2.0-or-later |

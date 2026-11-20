@@ -112,6 +112,9 @@ DEBIAN_MIRROR="${DEBIAN_MIRROR:-http://deb.debian.org/debian}"
 PSX_REPO="${PSX_REPO:-https://github.com/libretro/pcsx_rearmed.git}"
 GENESIS_REPO="${GENESIS_REPO:-https://github.com/libretro/Genesis-Plus-GX.git}"
 GC_REPO="${GC_REPO:-https://github.com/libretro/dolphin.git}"
+STELLA_REPO="${STELLA_REPO:-https://github.com/libretro/stella2014-libretro.git}"
+ATARI800_REPO="${ATARI800_REPO:-https://github.com/libretro/libretro-atari800.git}"
+PROSYSTEM_REPO="${PROSYSTEM_REPO:-https://github.com/libretro/prosystem-libretro.git}"
 [[ "$DEVICE" == "rg-rotate" ]] || GC_REPO=none
 RGOS_INITRD="${RGOS_INITRD:-1}"
 [[ "$RGOS_INITRD" == 0 || "$RGOS_INITRD" == 1 ]] || { echo "RGOS_INITRD must be 0 or 1" >&2; exit 1; }
@@ -354,13 +357,16 @@ if ls "$HERE"/cores/*_libretro.so >/dev/null 2>&1; then
   echo "==> Copying prebuilt cores from cores/"; cp "$HERE"/cores/*_libretro.so "$LRDIR/"
 fi
 [[ "$DEVICE" == "rg-rotate" ]] || rm -f "$LRDIR/dolphin_libretro.so"
-WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0
+WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0
 [[ "$NGP_SRC" != none && ! -e "$LRDIR/mednafen_ngp_libretro.so" ]] && WANT_NGP=1
 [[ "$PSX_REPO" != none && ! -e "$LRDIR/pcsx_rearmed_libretro.so" ]] && WANT_PSX=1
 have_core() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so "$ROOTFS/usr/lib/libretro/$1"_libretro.so "$ROOTFS/usr/local/lib/libretro/$1"_libretro.so; do [[ -e "$f" ]] && return 0; done; return 1; }
 [[ "$GENESIS_REPO" != none ]] && ! have_core genesis_plus_gx && WANT_GEN=1
 [[ "$GC_REPO" != none && ! -e "$LRDIR/dolphin_libretro.so" ]] && WANT_GC=1
-if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC )); then
+[[ "$STELLA_REPO" != none ]] && ! have_core stella2014 && WANT_ATARI=1
+[[ "$ATARI800_REPO" != none ]] && ! have_core atari800 && WANT_ATARI=1
+[[ "$PROSYSTEM_REPO" != none ]] && ! have_core prosystem && WANT_ATARI=1
+if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI )); then
   echo "==> Installing a compiler in the rootfs to build libretro cores"
   rm -rf "$ROOTFS/tmp/core-src"; mkdir -p "$ROOTFS/tmp/core-src"
   cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
@@ -388,6 +394,25 @@ if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC )); then
         install -m 755 "$ROOTFS"/tmp/core-src/gen/genesis_plus_gx_libretro.so "$LRDIR/genesis_plus_gx_libretro.so"
       ); then echo "   genesis_plus_gx_libretro.so built"
       else echo "!! could not build Genesis Plus GX: Mega Drive / Master System / Game Gear / Sega CD will have no core (put a prebuilt genesis_plus_gx_libretro.so in cores/ and rebuild)"; fi
+    fi
+    if (( WANT_ATARI )); then
+      # Atari 2600 (Stella 2014), 5200 (Atari800) and 7800 (ProSystem): small, plain-Makefile cores. Each one is built on its own,
+      # so a failure only drops that one system from the menu.
+      for spec in "stella2014|$STELLA_REPO|Atari 2600" "atari800|$ATARI800_REPO|Atari 5200" "prosystem|$PROSYSTEM_REPO|Atari 7800"; do
+        IFS='|' read -r acore arepo asys <<<"$spec"
+        [[ "$arepo" != none ]] && ! have_core "$acore" || continue
+        echo "==> Building the $asys core ($acore)"
+        if (
+          command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
+          rm -rf "$WORK/$acore" && git clone -q --depth 1 "$arepo" "$WORK/$acore" || exit 1
+          cp -r "$WORK/$acore" "$ROOTFS/tmp/core-src/$acore" || exit 1
+          chroot "$ROOTFS" sh -c "cd /tmp/core-src/$acore && make -j\"\$(nproc)\"" || exit 1
+          so="$(find "$ROOTFS/tmp/core-src/$acore" -name "${acore}_libretro.so" -type f | head -n1)"
+          [[ -n "$so" ]] || exit 1
+          install -m 755 "$so" "$LRDIR/${acore}_libretro.so" || exit 1
+        ); then echo "   ${acore}_libretro.so built"
+        else echo "!! could not build $acore: $asys will have no core (put a prebuilt ${acore}_libretro.so in cores/ and rebuild)"; rm -f "$LRDIR/${acore}_libretro.so"; fi
+      done
     fi
     if (( WANT_PSX )); then
       echo "==> Building the PlayStation core (pcsx_rearmed, aarch64 dynarec)"
@@ -425,7 +450,7 @@ KEEP
       else echo "!! could not build the GameCube core: GameCube will not appear on the RG Rotate (put a prebuilt dolphin_libretro.so in cores/ and rebuild)"; rm -f "$LRDIR/dolphin_libretro.so"; fi
     fi
   else
-    echo "!! could not install a compiler in the rootfs: skipped building the Genesis Plus GX / Neo Geo Pocket / PlayStation cores"
+    echo "!! could not install a compiler in the rootfs: skipped building the Genesis Plus GX / Neo Geo Pocket / Atari / PlayStation cores"
   fi
   chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get purge -y --auto-remove gcc g++ make git cmake ninja-build pkg-config '*-dev' >/dev/null 2>&1 || true
   if ! chroot "$ROOTFS" python3 -c 'import pygame' >/dev/null 2>&1; then
@@ -455,7 +480,7 @@ fi
 CORES="$(ls "$ROOTFS"/usr/local/lib/libretro/*_libretro.so "$ROOTFS"/usr/lib/*/libretro/*_libretro.so "$ROOTFS"/usr/lib/libretro/*_libretro.so 2>/dev/null | xargs -rn1 basename | tr '\n' ' ' || true)"
 echo "==> libretro cores in the image: ${CORES:-NONE}"
 core_present() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so "$ROOTFS/usr/lib/libretro/$1"_libretro.so "$ROOTFS/usr/local/lib/libretro/$1"_libretro.so; do [[ -e "$f" ]] && return 0; done; return 1; }
-for c in gambatte mgba nestopia genesis_plus_gx snes9x mednafen_wswan mednafen_ngp pcsx_rearmed; do
+for c in gambatte mgba nestopia genesis_plus_gx snes9x mednafen_wswan mednafen_ngp pcsx_rearmed stella2014 atari800 prosystem; do
   core_present "$c" || echo "!! ${c}_libretro.so is missing from the image (a Debian libretro package missing, or the source build of that core failed)"
 done
 if [[ "$DEVICE" == "rg-rotate" && "$GC_REPO" != none ]]; then core_present dolphin || echo "!! dolphin_libretro.so is missing from the image: no GameCube on this build"; fi
