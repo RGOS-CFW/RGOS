@@ -60,3 +60,5 @@ Everything lives on the ROMS card, so you can look at it or edit it from a PC:
   the `/etc/resolv.conf -> /run/rgos/resolv.conf` link (`build.sh` does this). The scraper also asks DNS
   directly as a fallback. Details of every failed request are written to `/var/log/rgos-artwork.log`, which
   is included in `rgos-logs.txt`.
+
+See also: [NETWORKING.md](NETWORKING.md) for Wi-Fi, [SD-CARD-LAYOUT.md](SD-CARD-LAYOUT.md).

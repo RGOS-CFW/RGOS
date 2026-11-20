@@ -1,17 +1,23 @@
 # Offline updates (.tar from the SD card)
 
-RG OS (RG Rotate and RG34XXSP) boots a Debian squashfs (`SYSTEM`) plus a small initramfs from the FAT boot partition. An update replaces files on that partition: `SYSTEM` (and its `.md5`), `rgos-initrd.cpio`, and optionally `KERNEL`, the device tree (`device_trees/ums512-rg-rotate.dtb` on the RG Rotate; `dtb.img` on the RG34XXSP) and `extlinux/extlinux.conf`.
+RG OS (all four devices: RG34XXSP, RG35XX H, RG35XX SP and RG Rotate) boots a Debian squashfs (`SYSTEM`) plus a small initramfs from the FAT boot partition. An update replaces files on that partition: `SYSTEM` (and its `.md5`), `rgos-initrd.cpio`, and optionally `KERNEL`, the device tree (`device_trees/ums512-rg-rotate.dtb` on the RG Rotate; `dtb.img` on the three H700 consoles) and `extlinux/extlinux.conf`.
+
+## What an update does and does not touch
+
+An update only replaces system files on the boot partition. Your ROMS partition (games, saves, states, BIOS, artwork, music, favourites) is never modified. Updates do not replace the U-Boot already on the card, so changing the RAM type or panel of an H700 console needs a new image ([TROUBLESHOOTING.md](TROUBLESHOOTING.md)).
 
 ## Build
 
 A device is always required (`./build.sh` alone does nothing); an update only installs on the device it was built for.
 
     sudo ./build.sh rg34xxsp update                       # pack out/rgos-update-rg34xxsp-<id>.tar
+    sudo ./build.sh rg35xxh update                        # pack out/rgos-update-rg35xxh-<id>.tar
+    sudo ./build.sh rg35xxsp update                       # pack out/rgos-update-rg35xxsp-<id>.tar
     sudo ./build.sh rg-rotate update                      # pack out/rgos-update-rg-rotate-<id>.tar
-    sudo ./build.sh all update                            # both, with the same id
+    sudo ./build.sh all update                            # all four, with the same id
     UPDATE_ID=2026.11-rc1 sudo -E ./build.sh rg34xxsp update   # custom id (default: timestamp)
     UPDATE_EXTLINUX=1 sudo -E ./build.sh rg34xxsp update       # also include extlinux.conf
-    UPDATE_DTB=1 sudo -E ./build.sh rg34xxsp update            # also include dtb.img (leave it out if you picked the v2-panel dtb by hand)
+    UPDATE_DTB=1 sudo -E ./build.sh rg34xxsp update            # also include dtb.img (H700 consoles; leave it out if you picked the v2-panel dtb by hand)
 
 ## Install
 
@@ -34,3 +40,5 @@ Manual test on a PC: `rgos-update apply TAR BOOTDIR` (set `RGOS_DEVICE_FILE`, `R
 * The reason is the last line of `update/rgos-update.log` (next to the tar) and is also shown on the console. The tar is renamed `*.failed`; rename it back to `.tar` after fixing the cause to retry.
 * `not enough free space`: the new files are staged beside the old ones, so free about the size of the new `SYSTEM`/initramfs on the FAT partition.
 * `boot partition is not writable`: the FAT partition was mounted read-only (dirty flag); repair it on a PC.
+
+See also: [BUILD-WORKFLOW.md](BUILD-WORKFLOW.md) for building the tar in GitHub Actions, [BUILDING.md](BUILDING.md) for every option.

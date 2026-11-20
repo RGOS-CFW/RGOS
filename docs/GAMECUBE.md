@@ -34,3 +34,5 @@ RG OS now does these things itself; each one was a way for the game to "just clo
 * **A readable report.** GameCube launches always use RetroArch's verbose log. After every launch `/boot/rgos-retroarch.txt` (on the FAT partition, readable on a PC) holds the command, the missing libraries (if any), the log of every attempt, the exit code or the signal that killed it (for example `SIGSEGV`), and kernel lines about segfaults, out-of-memory kills and GPU errors.
 
 If it still closes, send `rgos-retroarch.txt` and `rgos-logs.txt` from the boot partition.
+
+See also: [SYSTEMS.md](SYSTEMS.md), [BIOS.md](BIOS.md), [LOGS.md](LOGS.md).

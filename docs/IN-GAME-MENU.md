@@ -49,3 +49,5 @@ Log: `/var/log/rgos-gamemenu.log`.
 
 `python3 tools/render-gamemenu-demo.py out.mp4` renders a demo with the real menu code and a fake RetroArch (needs
 Pillow and ffmpeg; no device).
+
+See also: [CONTROLS.md](CONTROLS.md) for RetroArch hotkeys.

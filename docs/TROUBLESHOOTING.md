@@ -1,4 +1,8 @@
-# Troubleshooting: the card does not boot
+# Troubleshooting
+
+Quick map: black screen or no boot is covered below; a game or port that closes is in [LOGS.md](LOGS.md), [GAMECUBE.md](GAMECUBE.md) and [PORTS.md](PORTS.md); buttons and settings are in [SETTINGS.md](SETTINGS.md); common questions are in [FAQ.md](FAQ.md).
+
+## The card does not boot
 
 RG OS leaves up to four evidence files on the FAT boot partition (the one labelled RGOS; older cards still carry the stock ROCKNIX label). Put the card in a PC and look at which exist.
 
@@ -63,3 +67,7 @@ current `build.sh` ship `unzip`, `wget`, `curl`, `xxd`, `procps` and `psmisc` an
 missing command; older images need a rebuild (or an offline update built from the current `build.sh`).
 
 PortMaster's output is written to `rgos-native.log` (on the device: `/var/log/rgos-native.log`), and when PortMaster quits within a few seconds the last lines of that log are shown on screen for a moment. Read the lines after the last `PortMaster.sh` header in the log: a Python traceback means PortMaster's GUI (pugwash/harbourmaster) crashed, `error while loading shared libraries` names a missing system package (add it with `EXTRA_PKGS`), and a network error means the first start could not download its runtime. `ALSOFT ... PipeWire` warnings are harmless; the launcher now sets `ALSOFT_DRIVERS=alsa` to avoid them.
+
+## Still stuck
+
+Collect the files listed in [LOGS.md](LOGS.md) and ask on the Discord linked from the main README.

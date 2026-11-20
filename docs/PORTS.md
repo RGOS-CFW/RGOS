@@ -76,3 +76,5 @@ return to the menu. RG OS sends the port's whole process group SIGTERM, then
 SIGKILL after 3 seconds if it has not exited. The stop is logged in
 `rgos-native.log` and is not reported as an error. This also works inside
 PortMaster. Ports run in their own session so child processes stop with them.
+
+See also: [CONTROLS.md](CONTROLS.md), [LOGS.md](LOGS.md), [SD-CARD-LAYOUT.md](SD-CARD-LAYOUT.md).
