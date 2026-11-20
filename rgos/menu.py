@@ -928,7 +928,8 @@ RECENT_MAX = 20
 
 LAUNCHERS = [("rgos", "RG OS", "Classic tile launcher"), ("xmb", "RG XMB", "PlayStation-style cross media bar"),
              ("flow", "RG Flow", "Carousels: menu, systems, games"),
-             ("rgclassic", "RG Classic", "Pixel launcher: tiles, lists and menus")]
+             ("rgclassic", "RG Classic", "Pixel launcher: tiles, lists and menus"),
+             ("steamos", "SteamOS", "Steam Deck gaming mode: hero backdrop, capsule row, Play button")]
 DEFAULT_LAUNCHER = LAUNCHERS[0][0]
 
 
@@ -2146,6 +2147,213 @@ def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk
         c.blit(lt, (x0 + bw + 8, hy - lt.get_height() // 2))
 
 
+# ---- SteamOS launcher (Steam Deck gaming-mode look) --------------------------------------------------------------
+# Reuses the RG Flow plumbing (cards, scrolling, cover cache, input) and only changes how a level is drawn: a left-
+# anchored capsule row with a pulsing focus ring, a title block with a green Play button and a coloured button-prompt
+# bar. The palette is fixed (it is the look being cloned) and does not follow the RG OS theme.
+FLOW_LIKE = ("flow", "steamos")
+STEAM_BG, STEAM_BG2 = (14, 20, 27), (30, 45, 62)
+STEAM_BLUE, STEAM_TEXT, STEAM_DIM, STEAM_YELLOW = (26, 159, 255), (199, 213, 224), (132, 146, 160), (232, 188, 48)
+STEAM_GREEN, STEAM_GREEN2 = (112, 192, 52), (72, 128, 30)
+STEAM_BTN = {"A": (91, 163, 43), "B": (214, 76, 62), "X": (26, 159, 255), "Y": (232, 188, 48)}
+_STEAM = {"grad": (None, None), "bg": (None, None, None), "shade": (None, None, None)}
+
+
+def _steam_backdrop(c, base):
+    """Deck-style hero: navy gradient, the focused game's art blurred across the whole screen, then shaded on the left
+    and at the bottom so the title and prompts stay readable. Everything is cached (hero per capsule, shade per size)."""
+    gk = (W, H)
+    if _STEAM["grad"][0] != gk:
+        g = pygame.Surface((W, H))
+        for y in range(H):
+            g.fill(_mix(STEAM_BG2, STEAM_BG, min(1.0, y / (H * 0.8))), (0, y, W, 1))
+        _STEAM["grad"] = (gk, g)
+    grad = _STEAM["grad"][1]
+    if base is None:
+        c.blit(grad, (0, 0))
+    else:
+        if _STEAM["bg"][0] is not base or _STEAM["bg"][1] != gk:
+            out = grad.copy()
+            try:
+                blur = pygame.transform.smoothscale(pygame.transform.smoothscale(base, (12, max(6, 12 * H // W))), (W, H))
+                blur.set_alpha(150)
+                out.blit(blur, (0, 0))
+            except Exception:
+                pass
+            _STEAM["bg"] = (base, gk, out)
+        c.blit(_STEAM["bg"][2], (0, 0))
+    if _STEAM.get("shade", (None,))[0] != gk:
+        left = pygame.Surface((W, H), pygame.SRCALPHA)
+        for x in range(0, W, 3):
+            left.fill((8, 12, 18, int(185 * max(0.0, 1.0 - x / (W * 0.8)))), (x, 0, 3, H))
+        low = pygame.Surface((W, H), pygame.SRCALPHA)
+        y0 = int(H * 0.42)
+        for y in range(y0, H, 3):
+            low.fill((8, 12, 18, int(215 * (y - y0) / float(H - y0))), (0, y, W, 3))
+        _STEAM["shade"] = (gk, left, low)
+    c.blit(_STEAM["shade"][1], (0, 0))
+    c.blit(_STEAM["shade"][2], (0, 0))
+
+
+def _steam_prompt(c, f_small, x, cy, key_, label, arrows):
+    """One button prompt: a coloured disc for A/B/X/Y, a dark pill for anything else. Returns the x it ends at."""
+    key_ = key_.replace("<>", "\u25c0 \u25b6" if arrows else "L/R")
+    kt = f_small.render(key_, True, (255, 255, 255))
+    lt = f_small.render(label, True, STEAM_TEXT)
+    col = STEAM_BTN.get(key_)
+    gw = 24 if col else kt.get_width() + 16
+    if col:
+        pygame.draw.circle(c, col, (x + 12, cy), 12)
+    else:
+        pygame.draw.rect(c, (44, 60, 80), (x, cy - 12, gw, 24), border_radius=12)
+    c.blit(kt, (x + (gw - kt.get_width()) // 2, cy - kt.get_height() // 2))
+    c.blit(lt, (x + gw + 7, cy - lt.get_height() // 2))
+    return x + gw + 7 + lt.get_width()
+
+
+def _steam_play_button(c, x, y, bw, bh, label, bf, focus):
+    """Deck Play button: rounded green gradient with a play triangle, lighter outline while it is the focus."""
+    r = 6
+    pygame.draw.rect(c, STEAM_GREEN2, (x, y, bw, bh), border_radius=r)
+    pygame.draw.rect(c, _mix(STEAM_GREEN, STEAM_GREEN2, 0.25), (x, y, bw, bh * 2 // 3), border_top_left_radius=r, border_top_right_radius=r)
+    pygame.draw.rect(c, STEAM_GREEN, (x + 2, y + 2, bw - 4, bh // 3), border_top_left_radius=r - 2, border_top_right_radius=r - 2)
+    if focus:
+        pygame.draw.rect(c, (255, 255, 255), (x - 2, y - 2, bw + 4, bh + 4), 2, border_radius=r + 2)
+    lt = bf.render(label, True, (255, 255, 255))
+    ix, cy = x + 20, y + bh // 2
+    tw = 12 if label == "Play" else 0
+    if tw:
+        pygame.draw.polygon(c, (255, 255, 255), [(ix, cy - 8), (ix, cy + 8), (ix + tw + 2, cy)])
+    c.blit(lt, (x + (bw + (tw + 8 if tw else 0) - lt.get_width()) // 2 + (6 if tw else 0), cy - lt.get_height() // 2))
+
+
+def draw_steam_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk, bat, scanning):
+    compact = H < 600
+    arrows = bool(FONT_PATH[0])
+    n = len(cards)
+    top_h, bar_h = (40, 44) if compact else (50, 52)
+    head_h = 28 if compact else 34
+    S = int(max(96, min(W * 0.30, (H - top_h - bar_h - head_h) * 0.46)))
+    _FLOW["S"] = S
+    ci = int(round(fx))
+    cur = (cards[ci % n] if n >= 3 else cards[max(0, min(n - 1, ci))]) if n else None
+    base0 = _flow_draw_base(cur["hue"], cur["tag"], cur["abbr"], S, cur.get("icon"), cur.get("art"))[1][0] if cur else None
+    _steam_backdrop(c, base0)
+
+    # top bar: no panel, like gaming mode; clock and battery on the right, nothing on the left
+    cy = top_h // 2 + 2
+    right = W - 24
+    if bat:
+        pct, status = bat
+        chg = status.lower() == "charging"
+        col = (230, 70, 60) if pct <= 15 and not chg else STEAM_GREEN if chg else (255, 255, 255)
+        pt = f_small.render("%d%%" % pct, True, col)
+        right -= pt.get_width()
+        c.blit(pt, (right, cy - pt.get_height() // 2))
+        bx, by = right - 34, cy - 7
+        pygame.draw.rect(c, col, (bx, by, 25, 14), 2, border_radius=2)
+        pygame.draw.rect(c, col, (bx + 25, by + 4, 3, 6))
+        pygame.draw.rect(c, col, (bx + 3, by + 3, max(2, 19 * pct // 100), 8))
+        right = bx - 18
+    info = _flow_font(20 if compact else 22).render("Scanning..." if scanning else clk, True, (255, 255, 255))
+    c.blit(info, (right - info.get_width(), cy - info.get_height() // 2))
+
+    # section heading above the row, like "Recent Games"
+    hf = _flow_font(22 if compact else 26)
+    ht = hf.render(fit(hf, crumb or "Home", W // 2), True, (255, 255, 255))
+    c.blit(ht, (28, top_h - 2))
+
+    # capsule row, focus anchored on the left; the others follow at 80 % and dimmed
+    if not n:
+        t = _flow_font(26 if not compact else 22).render(empty[0], True, (255, 255, 255))
+        c.blit(t, ((W - t.get_width()) // 2, H // 2 - 40))
+        t2 = f_small.render(empty[1], True, STEAM_DIM)
+        c.blit(t2, ((W - t2.get_width()) // 2, H // 2 - 2))
+    else:
+        gap, x0, row_top = 14, 28, top_h + head_h + (6 if compact else 10)
+        mid, small = row_top + S // 2, int(S * 0.8)
+        wrap_ = n >= 3
+        lo = int(math.floor(fx)) - 1 if wrap_ else 0
+        idxs = range(lo, lo + min(n, 6)) if wrap_ else range(n)
+        pulse = 0.5 + 0.5 * math.sin(time.time() * 2.6)
+        vis = []
+        for i in idxs:
+            d = i - fx
+            left = x0 + (min(d, 1.0) * (S + gap) + max(0.0, d - 1.0) * (small + gap) if d >= 0 else d * (small + gap))
+            w = max(16, int(round(S * (1 - 0.2 * min(abs(d), 1.0)))))
+            if left < W and left + w > 0:
+                vis.append((abs(d), i, d, int(left), w))
+        for _ad, i, d, left, w in sorted(vis, reverse=True):
+            g = cards[i % n]
+            lv = _flow_draw_base(g["hue"], g["tag"], g["abbr"], S, g.get("icon"), g.get("art"))[1]
+            li = flow_level_index(w, S)
+            src = _flow_cover(lv, S, li)
+            surf = src if src.get_width() == w else pygame.transform.scale(src, (w, w))
+            surf.set_alpha(int(max(0, min(255, (255 - 120 * min(abs(d), 1.0)) * fade))))
+            top = mid - w // 2
+            sh = _flow_shadow(w)
+            sh.set_alpha(int(190 * fade))
+            c.blit(sh, (left + w // 2 - sh.get_width() // 2, top + w - sh.get_height() // 3))
+            c.blit(surf, (left, top))
+            if abs(d) < 0.5:
+                pygame.draw.rect(c, _mix(STEAM_BG2, STEAM_BLUE, 0.55), (left - 9, top - 9, w + 18, w + 18), 2, border_radius=9)
+                pygame.draw.rect(c, _mix(STEAM_BLUE, (255, 255, 255), 0.5 + 0.5 * pulse), (left - 5, top - 5, w + 10, w + 10), 3, border_radius=6)
+            if g.get("fav"):
+                pygame.draw.circle(c, STEAM_YELLOW, (left + w - 15, top + 15), 9)
+                if arrows:
+                    st = f_small.render("\u2605", True, (40, 30, 0))
+                    c.blit(st, (left + w - 15 - st.get_width() // 2, top + 15 - st.get_height() // 2))
+
+        # title block: big name, then Play + favourite buttons and Deck-style info columns
+        y = row_top + S + (20 if compact else 30)
+        tsize = 28 if compact else 36
+        while tsize > 18 and _flow_font(tsize).size(cur["title"])[0] > W - 56:
+            tsize -= 2
+        tf = _flow_font(tsize)
+        tt = tf.render(fit(tf, cur["title"], W - 56), True, (255, 255, 255))
+        c.blit(tt, (28, y))
+        y += tt.get_height() + (8 if compact else 14)
+        label = "Play" if "game" in cur else "Shut down" if cur.get("id") == "power" else "Open"
+        bf = _flow_font(20 if compact else 22)
+        bw, bh = max(150, bf.size(label)[0] + 76), 38 if compact else 44
+        _steam_play_button(c, 28, y, bw, bh, label, bf, True)
+        nx = 28 + bw + 12
+        if "game" in cur:
+            fav = bool(cur.get("fav"))
+            pygame.draw.rect(c, (36, 50, 66), (nx, y, bh, bh), border_radius=6)
+            pygame.draw.circle(c, STEAM_YELLOW if fav else STEAM_BTN["Y"], (nx + bh // 2, y + bh // 2), bh // 4 + 2, 0 if fav else 2)
+            yt = f_small.render("Y", True, (40, 30, 0) if fav else STEAM_YELLOW)
+            c.blit(yt, (nx + (bh - yt.get_width()) // 2, y + (bh - yt.get_height()) // 2))
+            nx += bh + 26
+        else:
+            nx += 14
+        cols = [("SYSTEM", cur["sub"]), ("POSITION", "%d / %d" % ((ci % n) + 1, n))]
+        for head, val in cols:
+            if not val or nx >= W - 90:
+                continue
+            ht_ = f_small.render(head, True, STEAM_DIM)
+            vt = f_row.render(fit(f_row, val, max(40, W - 28 - nx)), True, (255, 255, 255))
+            c.blit(ht_, (nx, y - 4))
+            c.blit(vt, (nx, max(y - 4 + ht_.get_height(), y + bh + 2 - vt.get_height())))
+            nx += max(ht_.get_width(), vt.get_width()) + 34
+
+    # bottom bar: Steam-style button on the left, button prompts on the right
+    by = H - bar_h
+    pygame.draw.rect(c, (40, 56, 74), (0, by, W, 1))
+    pygame.draw.circle(c, (44, 60, 80), (38, by + bar_h // 2), 15)
+    pygame.draw.circle(c, STEAM_TEXT, (38, by + bar_h // 2), 15, 2)
+    rg = f_small.render("RG", True, (255, 255, 255))
+    c.blit(rg, (38 - rg.get_width() // 2, by + bar_h // 2 - rg.get_height() // 2))
+    widths = []
+    for key_, label in reversed(list(hints)):
+        kw = f_small.size(key_.replace("<>", "L/R"))[0] + 16 if key_ not in STEAM_BTN else 24
+        widths.append((key_, label, kw + 7 + f_small.size(label)[0]))
+    x = W - 24 - sum(w for _k, _l, w in widths) - 22 * (len(widths) - 1)
+    for key_, label, w in reversed(widths):
+        _steam_prompt(c, f_small, x, by + bar_h // 2, key_, label, arrows)
+        x += w + 22
+
+
 def rd_file(path):
     try:
         with open(path) as f:
@@ -3260,10 +3468,10 @@ def main():
                     dd_set(dd["kind"], dd["orig"])
                     dd = None
             elif a == "menu":
-                if view == "home" and launcher_id == "flow":
+                if view == "home" and launcher_id in FLOW_LIKE:
                     flow_t = 0
                     flow_fade = 0.0
-                elif view in ("systems", "games", "recents", "favorites") and launcher_id == "flow":
+                elif view in ("systems", "games", "recents", "favorites") and launcher_id in FLOW_LIKE:
                     view = "home"
                 elif view in ("systems", "games", "recents", "favorites", "tools", "settings", "wifi", "bt", "ssh", "info", "bios", "artwork", "files"):
                     view = "home"
@@ -3271,7 +3479,7 @@ def main():
                     view = "home"
             elif a == "x" and view in ("home", "systems", "games", "recents", "favorites"):
                 rescan.start()
-            elif launcher_id == "flow" and view in ("home", "systems", "games", "recents", "favorites"):
+            elif launcher_id in FLOW_LIKE and view in ("home", "systems", "games", "recents", "favorites"):
                 fc = flow_cards()
                 fn_ = len(fc)
                 cur_ = fc[flow_t % fn_ if fn_ >= 3 else max(0, min(fn_ - 1, flow_t))] if fn_ else None
@@ -3742,7 +3950,7 @@ def main():
         XMB_UI[0] = launcher_id == "xmb"
         CLASSIC_UI[0], CLASSIC_UI[1] = launcher_id == "rgclassic", classic_unit()
         f_logo, f_big, f_row, f_small, f_tiny = PX_FONTS if CLASSIC_UI[0] else TT_FONTS
-        flow_on = launcher_id == "flow" and view in ("home", "systems", "games", "recents", "favorites")
+        flow_on = launcher_id in FLOW_LIKE and view in ("home", "systems", "games", "recents", "favorites")
         classic_on = launcher_id == "rgclassic" and view == "home"
         if flow_on or classic_on:
             pass
@@ -3857,7 +4065,7 @@ def main():
                 crumb = {"recents": "Recents", "favorites": "Favorites"}.get(view) or (sysname.get(vsys[sys_idx][0], "") if vsys else "")
                 hints = [("<>", "Browse"), ("A", "Play"), ("Y", "Favorite"), ("B", "Back")]
                 empty = ("Nothing here yet", "Play or star some games first") if view != "games" else ("No games found", "Press X to rescan")
-            draw_flow_level(canvas, f_small, f_row, fcards, flow_fx, flow_fade, crumb, hints, empty, clk, rd_bat(), rescan.busy)
+            (draw_steam_level if launcher_id == "steamos" else draw_flow_level)(canvas, f_small, f_row, fcards, flow_fx, flow_fade, crumb, hints, empty, clk, rd_bat(), rescan.busy)
             hint = ""
         elif view == "home" and launcher_id == "xmb":
             xcat = XMB_CATS[xmb_cat][0]
