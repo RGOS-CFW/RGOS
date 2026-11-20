@@ -477,10 +477,24 @@ def image_ext(data):
 
 # --------------------------------------------------------------------- lookups
 
+def _override_id(v):
+    """A SteamGridDB game id from a hand-edited overrides.json value, or None if it is not one."""
+    if isinstance(v, bool):
+        return None
+    try:
+        n = int(float(str(v).strip()))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return n if n > 0 else None
+
+
 def find_game(key, title, override_id=None):
     """SteamGridDB game id for a ROM title, or None."""
     if override_id:
-        return int(override_id)
+        oid = _override_id(override_id)
+        if oid:
+            return oid
+        _log("ignoring bad overrides.json value for %r: %r" % (title, override_id))
     for term in search_terms(title):
         hits = api_get("/search/autocomplete/" + urllib.parse.quote(term, safe=""), key)
         hit, _score = pick_match(hits, term)
