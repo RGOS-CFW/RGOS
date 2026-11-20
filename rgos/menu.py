@@ -610,6 +610,168 @@ def bg_cached(fn, interval):
     return get
 
 
+CLASSIC_UI = [False, 3]          # [active, pixel unit]; set every frame while the RG Classic launcher is selected
+_CLASSIC_BG = [None, None]
+
+
+def classic_unit():
+    return max(2, int(W / rgclassic.LW + 0.5))
+
+
+class PixelFont:
+    """RG Classic bitmap font (Galla 5x9) scaled to a target pixel height; stands in for the TTF fonts."""
+
+    def __init__(self, height):
+        k = height / 9.0
+        self.h, self.w, self.adv = height, max(3, int(round(5 * k))), max(4, int(round(6 * k)))
+        self._g, self._r = {}, {}
+
+    def _glyph(self, g, col):
+        sf = self._g.get((g, col))
+        if sf is None:
+            base = pygame.Surface((5, 9), pygame.SRCALPHA)
+            for y in range(9):
+                for x in range(5):
+                    if rgclassic.FONT[g][y] & (0x10 >> x):
+                        base.set_at((x, y), col)
+            sf = self._g[(g, col)] = pygame.transform.scale(base, (self.w, self.h))
+        return sf
+
+    def render(self, text, aa, color, *bg):
+        col = (int(color[0]), int(color[1]), int(color[2]))
+        surf = self._r.get((text, col))
+        if surf is None:
+            if len(self._r) > 900:
+                for k in list(self._r)[:300]:
+                    del self._r[k]
+            surf = pygame.Surface((max(1, self.adv * len(text)), self.h), pygame.SRCALPHA)
+            for i, ch in enumerate(text):
+                if ch != " ":
+                    surf.blit(self._glyph(rgclassic._glyph(ch), col), (i * self.adv, 0))
+            self._r[(text, col)] = surf
+        return surf
+
+    def size(self, text):
+        return (self.adv * len(text), self.h)
+
+    def get_linesize(self):
+        return self.h + 4
+
+    def get_height(self):
+        return self.h
+
+    def get_ascent(self):
+        return self.h - 2
+
+    def get_descent(self):
+        return 2
+
+
+_pg_rect = pygame.draw.rect
+
+
+def _cl_fill(surf, col, rect, u):
+    """Filled rectangle with the stepped (notched) pixel corners of the RG Classic tiles."""
+    x, y, w, h = [int(v) for v in rect]
+    if w <= 0 or h <= 0:
+        return
+    u = min(u, w // 3, h // 3)
+    if u < 1:
+        _pg_rect(surf, col, (x, y, w, h))
+        return
+    _pg_rect(surf, col, (x + u, y, w - 2 * u, h))
+    _pg_rect(surf, col, (x, y + u, w, h - 2 * u))
+
+
+def _cl_box(surf, fill, edge, rect, u, b):
+    x, y, w, h = [int(v) for v in rect]
+    _cl_fill(surf, edge, (x, y, w, h), u)
+    if w > 2 * b + 2 and h > 2 * b + 2:
+        _cl_fill(surf, fill, (x + b, y + b, w - 2 * b, h - 2 * b), max(0, u - b) if u > b else 0)
+
+
+def _cl_outline(surf, col, rect, t, u):
+    x, y, w, h = [int(v) for v in rect]
+    u = min(u, w // 3, h // 3)
+    t = max(1, min(t, u or t))
+    _pg_rect(surf, col, (x + u, y, w - 2 * u, t))
+    _pg_rect(surf, col, (x + u, y + h - t, w - 2 * u, t))
+    _pg_rect(surf, col, (x, y + u, t, h - 2 * u))
+    _pg_rect(surf, col, (x + w - t, y + u, t, h - 2 * u))
+    for cx, cy in ((x + max(0, u - t), y + max(0, u - t)), (x + w - u, y + max(0, u - t)),
+                   (x + max(0, u - t), y + h - u), (x + w - u, y + h - u)):
+        _pg_rect(surf, col, (cx, cy, t, t))
+
+
+def _rect_shim(surf, col, rect, width=0, border_radius=0, *a, **kw):
+    # RG Classic has no rounded corners: popups, keys and bars all pick up the notched pixel corners
+    if CLASSIC_UI[0] and border_radius and border_radius > 0:
+        if width and width > 0:
+            _cl_outline(surf, col, pygame.Rect(rect), width, CLASSIC_UI[1])
+        else:
+            _cl_fill(surf, col, pygame.Rect(rect), CLASSIC_UI[1])
+        return pygame.Rect(rect)
+    return _pg_rect(surf, col, rect, width, border_radius, *a, **kw)
+
+
+pygame.draw.rect = _rect_shim
+
+
+def _classic_button(surf, rect, hl):
+    u = CLASSIC_UI[1]
+    b = max(2, u - 1)
+    x, y, w, h = rect
+    rc = rgclassic
+    if w > 4 * u and h > 4 * u:
+        _cl_fill(surf, rc.BLACK, (x + u // 2 + 1, y + u // 2 + 1, w, h), u)
+    _cl_box(surf, _mix(rc.PANEL, rc.RED, hl), _mix(rc.REDM, rc.WHITE, hl), (x, y, w, h), u, b)
+    if hl > 0.3 and w > 4 * u:
+        _pg_rect(surf, rc.REDL, (x + u + b, y + b, w - 2 * (u + b), max(1, b // 2)))
+    return hl
+
+
+def draw_classic_header(canvas, f_logo):
+    rc = rgclassic
+    band = pygame.Surface((W, 64), pygame.SRCALPHA)
+    band.fill(tuple(rc.BLACK) + (110,))
+    canvas.blit(band, (0, 0))
+    _pg_rect(canvas, rc.REDM, (0, 60, W, 2))
+    _pg_rect(canvas, rc.BLACK, (0, 62, W, 2))
+    rg = f_logo.render("RG", True, rc.RED)
+    canvas.blit(rg, (20, (60 - rg.get_height()) // 2))
+    canvas.blit(f_logo.render("OS", True, rc.WHITE), (20 + rg.get_width() + f_logo.adv // 2, (60 - rg.get_height()) // 2))
+
+
+def draw_classic_footer(canvas, font, hint):
+    rc, u = rgclassic, CLASSIC_UI[1]
+    ch = font.get_height() + 6
+    y = H - ch - 8
+    band = pygame.Surface((W, H - y + 8), pygame.SRCALPHA)
+    band.fill(tuple(rc.BLACK) + (110,))
+    canvas.blit(band, (0, y - 8))
+    _pg_rect(canvas, rc.REDM, (0, y - 8, W, 2))
+    x = 16
+    for seg in hint.split("   "):
+        key, _, lab = seg.strip().partition(" ")
+        if not key:
+            continue
+        if not lab:
+            key, lab = "", key
+        kt = font.render(key, True, rc.REDM) if key else None
+        lt = font.render(lab, True, rc.WHITE)
+        need = (kt.get_width() + 16 if kt else 0) + lt.get_width()
+        if x + need > W - 8:
+            break
+        if kt:
+            kw = kt.get_width() + 10
+            _cl_box(canvas, rc.WHITE, rc.WHITE, (x, y, kw, ch), 2, 2)
+            _pg_rect(canvas, rc.DIM, (x + 2, y + ch - 2, kw - 4, 2))
+            canvas.blit(kt, (x + 5, y + 3))
+            x += kw + 6
+        canvas.blit(lt, (x, y + 3))
+        x += lt.get_width() + 18
+
+
 _BTN_CACHE = {}
 _BTN_SHADOW = {}
 
@@ -670,6 +832,16 @@ def _glass_face(w, h, radius, col, alpha, outline=45):
 
 
 def ui_rect(surf, col, rect, radius=0):
+    if CLASSIC_UI[0]:
+        rc, u = rgclassic, CLASSIC_UI[1]
+        if col == SEL_BG:
+            fill, edge = rc.RED, rc.WHITE
+        elif col == PANEL:
+            fill, edge = rc.PANEL, rc.REDM
+        else:
+            fill = edge = col
+        _cl_box(surf, fill, edge, rect, u, max(2, u - 1))
+        return
     if not XMB_UI[0]:
         pygame.draw.rect(surf, col, rect, border_radius=radius)
         return
@@ -697,8 +869,10 @@ def draw_button(surf, rect, base, radius=12, depth=4, sel=False):
     e = st[0] * st[0] * (3.0 - 2.0 * st[0])
     hl = round(e * ANIM_STEPS) / ANIM_STEPS
     base = _mix(st[2], st[1], hl)
-    lift = int(round(LIFT_PX * hl)) if h >= 80 else 0
+    lift = int(round(LIFT_PX * hl)) if h >= 80 and not CLASSIC_UI[0] else 0
     y -= lift
+    if CLASSIC_UI[0]:
+        return _classic_button(surf, (x, y, w, h), hl), 0
     if XMB_UI[0]:
         surf.blit(_glass_face(w, h, radius, _mix(_glass_tint(), SEL_BG, hl), 105 + int(70 * hl)), (x, y))
         if hl > 0:
@@ -754,7 +928,7 @@ RECENT_MAX = 20
 
 LAUNCHERS = [("rgos", "RG OS", "Classic tile launcher"), ("xmb", "RG XMB", "PlayStation-style cross media bar"),
              ("flow", "RG Flow", "Carousels: menu, systems, games"),
-             ("rgclassic", "RG Classic", "Pixel tile launcher, 3x2 buttons")]
+             ("rgclassic", "RG Classic", "Pixel launcher: tiles, lists and menus")]
 DEFAULT_LAUNCHER = LAUNCHERS[0][0]
 
 
@@ -2656,6 +2830,8 @@ def main():
     else:
         mk = lambda s: CFont(pygame.font.Font(None, int(s * 1.3)))
     f_logo, f_big, f_row, f_small, f_tiny = mk(30), mk(22), mk(19), mk(14), mk(11)
+    TT_FONTS = (f_logo, f_big, f_row, f_small, f_tiny)
+    PX_FONTS = tuple(PixelFont(px) for px in (30, 22, 18, 14, 11))
 
     classic_ui = ThemedClassic(W, H)
     inp = Input()
@@ -3564,10 +3740,18 @@ def main():
 
         anim_moving = anim_tick()
         XMB_UI[0] = launcher_id == "xmb"
+        CLASSIC_UI[0], CLASSIC_UI[1] = launcher_id == "rgclassic", classic_unit()
+        f_logo, f_big, f_row, f_small, f_tiny = PX_FONTS if CLASSIC_UI[0] else TT_FONTS
         flow_on = launcher_id == "flow" and view in ("home", "systems", "games", "recents", "favorites")
         classic_on = launcher_id == "rgclassic" and view == "home"
         if flow_on or classic_on:
             pass
+        elif launcher_id == "rgclassic":
+            classic_ui.apply(BG, PANEL, SEL_BG, ACCENT, TEXT, DIM)
+            if _CLASSIC_BG[0] != classic_ui._theme:
+                _CLASSIC_BG[0], _CLASSIC_BG[1] = classic_ui._theme, pygame.transform.scale(classic_ui.bg, (W, H))
+            canvas.blit(_CLASSIC_BG[1], (0, 0))
+            draw_classic_header(canvas, f_logo)
         elif launcher_id == "xmb":
             xmb_bg(canvas, time.time(), anim_moving or time.monotonic() - last_act < XMB_BG_SETTLE)
         else:
@@ -3624,14 +3808,24 @@ def main():
             pct, status = bat
             low = pct <= 15 and status.lower() != "charging"
             col = (230, 70, 60) if low else ACCENT if status.lower() == "charging" else TEXT
-            bx, by = W - 90, 22
-            pygame.draw.rect(canvas, col, (bx, by, 30, 16), 2, border_radius=3)
-            pygame.draw.rect(canvas, col, (bx + 30, by + 4, 3, 8))
-            fw = max(2, 24 * pct // 100)
-            pygame.draw.rect(canvas, col, (bx + 3, by + 3, fw, 10))
-            pt = f_tiny.render("%d%%" % pct + ("+" if status.lower() == "charging" else ""), True, col)
-            canvas.blit(pt, (bx + 38, by + 2))
-            right = bx - 16
+            if CLASSIC_UI[0]:
+                u_ = CLASSIC_UI[1]
+                bx, by = W - 20 - 16 * u_, 30 - 7 * u_ // 2
+                for r_ in ((0, 0, 15, 1), (0, 6, 15, 1), (0, 0, 1, 7), (14, 0, 1, 7), (15, 2, 1, 3),
+                           (2, 2, max(1, min(11, 11 * pct // 100)), 3)):
+                    pygame.draw.rect(canvas, col, (bx + r_[0] * u_, by + r_[1] * u_, r_[2] * u_, r_[3] * u_))
+                pt = f_tiny.render("%d%%" % pct, True, col)
+                canvas.blit(pt, (bx - 8 - pt.get_width(), 30 - pt.get_height() // 2))
+                right = bx - 8 - pt.get_width() - 16
+            else:
+                bx, by = W - 90, 22
+                pygame.draw.rect(canvas, col, (bx, by, 30, 16), 2, border_radius=3)
+                pygame.draw.rect(canvas, col, (bx + 30, by + 4, 3, 8))
+                fw = max(2, 24 * pct // 100)
+                pygame.draw.rect(canvas, col, (bx + 3, by + 3, fw, 10))
+                pt = f_tiny.render("%d%%" % pct + ("+" if status.lower() == "charging" else ""), True, col)
+                canvas.blit(pt, (bx + 38, by + 2))
+                right = bx - 16
         canvas.blit(s, (right - s.get_width(), 24))
 
         if flow_on:
@@ -4281,7 +4475,11 @@ def main():
 
         if inp.conf.get("debug") and inp.last_raw:
             hint += "   [" + inp.last_raw + "]"
-        canvas.blit(f_small.render(hint, True, DIM), (20, H - 28))
+        if CLASSIC_UI[0]:
+            if hint:
+                draw_classic_footer(canvas, f_tiny, hint)
+        else:
+            canvas.blit(f_small.render(hint, True, DIM), (20, H - 28))
 
         bri = rd_bri()
         if bri and bri[1] != bri_seen:
