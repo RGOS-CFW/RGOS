@@ -7,6 +7,7 @@ ALL_DEVICES=(rg-rotate rg34xxsp rg35xxh rg35xxsp)
 usage() {
   cat <<EOF
 usage: sudo ./build.sh <device> [image|update]
+       sudo ./build.sh update-img [device]
 
   device   rg34xxsp   Anbernic RG34XXSP (Allwinner H700, ROCKNIX-H700 base image)
            rg35xxh    Anbernic RG35XX H (Allwinner H700, ROCKNIX-H700 base image)
@@ -15,6 +16,9 @@ usage: sudo ./build.sh <device> [image|update]
            all        build every device above
   image    full SD card image (default)  -> out/<device>-rgos.img
   update   offline update tar            -> out/rgos-update-<device>-<id>.tar
+  update-img  delete the cached stock ROCKNIX image and download it again (just that, no build).
+           Without update-img the image is downloaded once into work/<device>/ and reused by every later build.
+           Device defaults to all; "./build.sh <device> update-img" works too.
 
 A device is required: ./build.sh with no argument does nothing but print this text.
 Options (environment): RG34XXSP: H700_RAM=DDR4|DDR3 (default DDR4, must match the console's RAM),
@@ -25,6 +29,11 @@ EOF
 
 DEVICE_ARG="$(printf '%s' "${1:-}" | tr 'A-Z_' 'a-z-')"
 MODE="${2:-image}"; [[ "$MODE" == "build" ]] && MODE=image
+[[ "$MODE" == "update-img" || "$MODE" == "updateimg" ]] && MODE=update-img
+if [[ "$DEVICE_ARG" == "update-img" || "$DEVICE_ARG" == "updateimg" ]]; then
+  MODE=update-img; set -- "${2:-all}"
+  DEVICE_ARG="$(printf '%s' "$1" | tr 'A-Z_' 'a-z-')"
+fi
 case "$DEVICE_ARG" in
   rg34xxsp|rg34xx-sp)  DEVICE_ARG=rg34xxsp ;;
   rg35xxh|rg35xx-h)    DEVICE_ARG=rg35xxh ;;
@@ -34,7 +43,7 @@ case "$DEVICE_ARG" in
   "")                  usage; exit 1 ;;
   *)                   echo "unknown device '${1}'" >&2; echo >&2; usage >&2; exit 1 ;;
 esac
-[[ "$MODE" == "image" || "$MODE" == "update" ]] || { echo "unknown mode '${2}' (use image or update)" >&2; echo >&2; usage >&2; exit 1; }
+[[ "$MODE" == "image" || "$MODE" == "update" || "$MODE" == "update-img" ]] || { echo "unknown mode '${2}' (use image, update or update-img)" >&2; echo >&2; usage >&2; exit 1; }
 
 if [[ $EUID -ne 0 ]]; then
   command -v sudo >/dev/null || { echo "ERROR: this build needs root; run it as root or install sudo" >&2; exit 1; }
@@ -117,6 +126,7 @@ ROOTFS="$WORK/rootfs"
 need=(debootstrap losetup mksquashfs unsquashfs wget gunzip md5sum python3 readelf sfdisk truncate)
 [[ "$MODE" == "image" && "$PTABLE" == gpt ]] && need+=(sgdisk)
 [[ "$(uname -m)" == "aarch64" ]] || need+=(qemu-aarch64-static)
+[[ "$MODE" == "update-img" ]] && need=(wget gunzip)
 for t in "${need[@]}"; do
   command -v "$t" >/dev/null || { echo "Missing tool: $t"
     echo "apt install debootstrap qemu-user-static binfmt-support squashfs-tools wget gdisk dosfstools"; exit 1; }
@@ -128,10 +138,37 @@ LOOP=""
 cleanup() { set +e; mountpoint -q "$WORK/mnt" && umount "$WORK/mnt"; [[ -n "$LOOP" ]] && losetup -d "$LOOP"; }
 trap cleanup EXIT
 
-if [[ ! -f "$RX_IMG" ]]; then
-  [[ -f "$RX_GZ" ]] || { echo "==> Downloading the stock ROCKNIX image for $DEVICE"; echo "    $ROCKNIX_URL"
-    wget -O "$RX_GZ" "$ROCKNIX_URL" || { rm -f "$RX_GZ"; echo "!! download failed. Set ROCKNIX_URL=<url of the stock image .img.gz> (RG34XXSP / RG35XX H: or ROCKNIX_H700_VERSION=<release tag>, H700_RAM=DDR4|DDR3), or put the .img.gz into $WORK/ and re-run." >&2; exit 1; }; }
-  gunzip -k -f "$RX_GZ"
+# The stock image is downloaded once and reused by every build. Only "build.sh update-img" throws it away.
+fetch_stock() {
+  echo "==> Downloading the stock ROCKNIX image for $DEVICE"; echo "    $ROCKNIX_URL"
+  rm -f "$RX_GZ.part" "$RX_IMG.part"
+  if ! wget -O "$RX_GZ.part" "$ROCKNIX_URL"; then
+    rm -f "$RX_GZ.part"
+    echo "!! download failed. Set ROCKNIX_URL=<url of the stock image .img.gz> (RG34XXSP / RG35XX H: or ROCKNIX_H700_VERSION=<release tag>, H700_RAM=DDR4|DDR3), or put the .img.gz into $WORK/ and re-run." >&2; exit 1
+  fi
+  mv -f "$RX_GZ.part" "$RX_GZ"
+}
+unpack_stock() {
+  echo "==> Unpacking $(basename "$RX_GZ")"
+  if ! gunzip -c "$RX_GZ" > "$RX_IMG.part"; then
+    rm -f "$RX_IMG.part" "$RX_GZ"
+    echo "!! $RX_GZ is corrupt (removed); run again to download it fresh" >&2; exit 1
+  fi
+  mv -f "$RX_IMG.part" "$RX_IMG"
+}
+if [[ "$MODE" == "update-img" ]]; then
+  echo "==> update-img: discarding the cached stock image for $DEVICE"
+  rm -f "$RX_GZ" "$RX_IMG"
+  fetch_stock; unpack_stock
+  echo "==> Stock image refreshed: $RX_IMG"
+  echo "    Later builds of $DEVICE reuse it until you run update-img again."
+  exit 0
+fi
+if [[ -s "$RX_IMG" ]]; then
+  echo "==> Using the cached stock image $RX_IMG (run './build.sh update-img $DEVICE' to download it again)"
+else
+  [[ -s "$RX_GZ" ]] || fetch_stock
+  unpack_stock
 fi
 echo "==> Copying stock image to $IMG"
 cp --sparse=always "$RX_IMG" "$IMG"

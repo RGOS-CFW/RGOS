@@ -4,6 +4,8 @@
 
 `device` is `rg34xxsp`, `rg35xxh`, `rg35xxsp`, `rg-rotate` or `all`. With no device the script only prints usage. Output goes to `out/`; work files go to `work/<device>/`.
 
+The stock ROCKNIX image is cached in `work/<device>/` and is not downloaded again on later builds. `sudo ./build.sh update-img [device]` (or `./build.sh <device> update-img`) deletes the cached copy and downloads it again without building. Changing `ROCKNIX_URL`, `ROCKNIX_H700_VERSION` or `H700_RAM` selects a different cached file by name, so it downloads that one the first time.
+
 ## Host requirements
 
 Root (or `sudo`), and: `debootstrap`, `losetup`, `mksquashfs`/`unsquashfs`, `wget`, `gunzip`, `md5sum`, `python3`, `readelf`, `sfdisk`, `truncate`, plus `sgdisk` for the RG Rotate and `qemu-aarch64-static` when the host is not arm64. On Debian/Ubuntu: `apt install debootstrap qemu-user-static binfmt-support squashfs-tools wget gdisk dosfstools`. Plan for tens of GB of disk and a long run ([BUILD-WORKFLOW.md](BUILD-WORKFLOW.md)).

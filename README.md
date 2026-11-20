@@ -21,6 +21,8 @@ RG34XXSP / RG35XX H / RG35XX SP: the stock U-Boot on the card is built per RAM t
 
 `sudo ./build.sh` with no device only prints the usage text; nothing is downloaded, mounted or written.
 
+The stock ROCKNIX image is downloaded once into `work/<device>/` and reused by every later build. To fetch a fresh copy (new release, corrupt download) run `sudo ./build.sh update-img [device]`; it only refreshes the cached image and does not build (device defaults to all).
+
 ## Build Update
 
     sudo ./build.sh rg34xxsp update         #out/rg34xxsp-update.tar
