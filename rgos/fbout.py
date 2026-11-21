@@ -1,4 +1,4 @@
-import fcntl, mmap, os, struct, zlib
+import fcntl, math, mmap, os, struct, zlib
 
 FBIOGET_VSCREENINFO, FBIOPUT_VSCREENINFO, FBIOGET_FSCREENINFO, FBIOPAN_DISPLAY = 0x4600, 0x4601, 0x4602, 0x4606
 FBIO_WAITFORVSYNC = 0x40044620
@@ -28,6 +28,30 @@ def fit_rect(src, dst):
     else:
         w, h = dw, max(1, dw * sh // sw)
     return ((dw - w) // 2, (dh - h) // 2, w, h)
+
+
+BAND_ROWS = 16  # canvas rows per dirty band, at least
+
+
+def band_plan(src, dst, min_rows=BAND_ROWS):
+    """How to cut the canvas into horizontal bands that can be scaled and written on their own.
+
+    Returns (canvas rows per band, screen rows per band) or None when the frame has to be handled whole (letterboxed,
+    or no clean row ratio). A band covers a whole number of the smallest repeating row groups (540 -> 480 rows is 9 -> 8,
+    so 18 -> 16), so scaling one band gives exactly the pixels the same rows get when the whole frame is scaled: no seams.
+    Without scaling (the canvas is the screen size) the bands are simply `min_rows` rows.
+    """
+    sw, sh = src
+    dw, dh = dst
+    if sh <= 0 or dh <= 0 or fit_rect(src, dst) != (0, 0, dw, dh):
+        return None
+    if (sw, sh) == (dw, dh):
+        return (min_rows, min_rows) if sh > min_rows else None
+    g = math.gcd(sh, dh)
+    us, ud = sh // g, dh // g
+    k = -(-min_rows // us)
+    bs, bd = us * k, ud * k
+    return (bs, bd) if bs < sh else None
 
 
 class FbOut:
@@ -71,6 +95,9 @@ class FbOut:
         self.vsync = os.environ.get("RGOS_FB_VSYNC", "1") != "0"
         self.page = 0
         self.last = None
+        self.bands = [None, None]   # per page: hash of every band of the frame that page holds
+        self.last_bands = None      # hashes of the frame shown last
+        self.plan = None
         self.cache_key = None
         self.cache = None
         self.info = "fb %dx%d %dbpp x%d page%s rot%d" % (self.xres, self.yres, self.bpp, self.pages,
@@ -124,6 +151,7 @@ class FbOut:
     def clear(self):
         self._put(0, b"\0" * len(self.mm))
         self.last = None
+        self.bands, self.last_bands = [None, None], None
 
     def _scaled(self, canvas):
         pg = self.pg
@@ -154,6 +182,78 @@ class FbOut:
             return buf.raw
 
     def present(self, canvas):
+        """Send the canvas to the screen, touching only the bands of rows that changed.
+
+        A scroll or a blinking focus ring changes a small part of a 720x540 frame; scaling, converting and writing all of
+        it every frame is what made the 640x480 handhelds chop. Each band is hashed; a band is scaled, converted and
+        written only if it differs from what the page being written to already holds (with two pages that is the frame
+        before last, so it is tracked per page). Rotated or letterboxed output takes the whole-frame path.
+        """
+        if self.rotate:
+            return self._present_full(canvas)
+        size = canvas.get_size()
+        plan = band_plan(size, (self.xres, self.yres))
+        if plan is None:
+            return self._present_full(canvas)
+        if self.plan != (size, plan):
+            self.plan = (size, plan)
+            self.bands, self.last_bands, self.last = [None, None], None, None
+        sw, sh = size
+        bs, bd = plan
+        buf = canvas.get_buffer()
+        mv = self._view(buf)
+        try:
+            pitch = canvas.get_pitch()
+            hashes = [zlib.adler32(mv[r * pitch:min(sh, r + bs) * pitch]) for r in range(0, sh, bs)]
+        finally:
+            if isinstance(mv, memoryview):
+                mv.release()
+            del mv, buf
+        if hashes == self.last_bands:
+            return
+        back = (1 - self.page) if self.pages > 1 else 0
+        prev = self.bands[back]
+        changed = [i for i, h in enumerate(hashes) if prev is None or prev[i] != h]
+        pg = self.pg
+        for i in changed:
+            r0, d0 = i * bs, i * bd
+            r1 = min(sh, r0 + bs)
+            d1 = min(self.yres, d0 + bd)
+            part = canvas.subsurface((0, r0, sw, r1 - r0))
+            if (sw, r1 - r0) != (self.xres, d1 - d0):
+                part = (pg.transform.smoothscale(part, (self.xres, d1 - d0)) if part.get_bitsize() in (24, 32)
+                        else pg.transform.scale(part, (self.xres, d1 - d0)))
+            self.surf.blit(part, (0, d0))
+        buf = self.surf.get_buffer()
+        raw = self._view(buf)
+        spitch, rowlen = self.surf.get_pitch(), self.xres * self.bytes_pp
+        base = back * self.yres * self.line + self.xoff * self.bytes_pp
+        if self.pages < 2:
+            base += self.yoff * self.line
+        try:
+            runs, i = [], 0
+            while i < len(changed):  # neighbouring bands go out in one write
+                j = i
+                while j + 1 < len(changed) and changed[j + 1] == changed[j] + 1:
+                    j += 1
+                runs.append((changed[i] * bd, min(self.yres, (changed[j] + 1) * bd)))
+                i = j + 1
+            for d0, d1 in runs:
+                if spitch == rowlen == self.line:
+                    self._put(base + d0 * self.line, raw[d0 * rowlen:d1 * rowlen])
+                else:
+                    for y in range(d0, d1):
+                        self._put(base + y * self.line, raw[y * spitch:y * spitch + rowlen])
+        finally:
+            if isinstance(raw, memoryview):
+                raw.release()
+            del raw, buf
+        self.bands[back] = hashes
+        self.last_bands = hashes
+        self.page = back
+        self._flip(back)
+
+    def _present_full(self, canvas):
         # .raw copied the whole frame (1+ MB) several times per frame; views read the pixels in place.
         buf = canvas.get_buffer()
         mv = self._view(buf)
@@ -166,6 +266,7 @@ class FbOut:
         if h == self.last:
             return
         self.last = h
+        self.bands, self.last_bands = [None, None], None  # a whole-frame write: band bookkeeping starts over
         self.surf.blit(self._scaled(canvas), (0, 0))
         buf = self.surf.get_buffer()
         raw = self._view(buf)
