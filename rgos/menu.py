@@ -2343,8 +2343,9 @@ def _steam_prompt(c, f_small, x, cy, key_, label, arrows):
     return x + gw + 7 + lt.get_width()
 
 
-def _steam_prompt_width(f_small, key_, label):
-    kw = 24 if key_ in STEAM_BTN else f_small.size(key_.replace("<>", "L/R"))[0] + 16
+def _steam_prompt_width(f_small, key_, label, arrows=False):
+    """Width _steam_prompt will draw; `arrows` must match what it is given or the bar lays out with the wrong gaps."""
+    kw = 24 if key_ in STEAM_BTN else f_small.size(key_.replace("<>", "\u25c0 \u25b6" if arrows else "L/R"))[0] + 16
     return kw + 7 + f_small.size(label)[0]
 
 
@@ -2547,12 +2548,12 @@ def draw_steam_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, cl
     pygame.draw.rect(c, (40, 56, 74), (0, by, W, 1))
     left_end = 24 if STEAM_UI["open"] else _steam_prompt(c, f_small, 24, cyb, "MENU", "Menu", arrows) + 22
     prompts = steam_hints(hints, bool(cur and "game" in cur), STEAM_UI["open"])
-    while len(prompts) > 2 and sum(_steam_prompt_width(f_small, k, l) for k, l in prompts) + 22 * (len(prompts) - 1) > W - 24 - left_end:
+    while len(prompts) > 2 and sum(_steam_prompt_width(f_small, k, l, arrows) for k, l in prompts) + 22 * (len(prompts) - 1) > W - 24 - left_end:
         prompts.pop(0)
-    x = W - 24 - sum(_steam_prompt_width(f_small, k, l) for k, l in prompts) - 22 * (len(prompts) - 1)
+    x = W - 24 - sum(_steam_prompt_width(f_small, k, l, arrows) for k, l in prompts) - 22 * (len(prompts) - 1)
     for key_, label in prompts:
         _steam_prompt(c, f_small, x, cyb, key_, label, arrows)
-        x += _steam_prompt_width(f_small, key_, label) + 22
+        x += _steam_prompt_width(f_small, key_, label, arrows) + 22
     draw_steam_menu(c, f_small, f_row, by)
 
 
