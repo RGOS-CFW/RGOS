@@ -94,7 +94,7 @@ class ExtlinuxQuietTests(unittest.TestCase):
 
     def test_a_block_without_append_gets_one(self):
         out = patch_extlinux.patch("LABEL a\n LINUX /Image\n", "/i")
-        self.assertIn("APPEND quiet vt.global_cursor_default=0 rdinit=/rgos-init", out)
+        self.assertIn("APPEND quiet loglevel=0 vt.global_cursor_default=0 rdinit=/rgos-init", out)
 
 
 class PaintLogoShellTests(unittest.TestCase):

@@ -2,7 +2,7 @@
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 umask 000
 export USER=root LOGNAME=root
-export RGOS_VIDEO=fb RGOS_FB_DBUF=0 RGOS_FB_VSYNC=0 SDL_VIDEODRIVER=dummy
+export PYGAME_HIDE_SUPPORT_PROMPT=1 RGOS_VIDEO=fb RGOS_FB_DBUF=0 RGOS_FB_VSYNC=0 SDL_VIDEODRIVER=dummy
 export XDG_RUNTIME_DIR=/run/rgos HOME=/root PYTHONDONTWRITEBYTECODE=1
 mountpoint -q /proc || mount -t proc proc /proc
 mountpoint -q /sys  || mount -t sysfs sysfs /sys

@@ -26,6 +26,7 @@ if [ -d /logo ]; then
   LOGO_PID=$!
 fi
 
+echo "0 4 1 7" > /proc/sys/kernel/printk 2>/dev/null
 klog() { echo "rgos-initramfs: $*" > /dev/kmsg 2>/dev/null; }
 say()  { klog "$*"; echo "RG OS: $*"; }
 

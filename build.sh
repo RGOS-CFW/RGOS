@@ -538,6 +538,8 @@ echo 0 > /sys/class/graphics/fbcon/cursor_blink 2>/dev/null
 # take many seconds before the first RG OS screen); stops after the first success or 20 s
 ( n=0; until paint_logo /etc/rgos/bootlogo; do n=$((n + 1)); [ "$n" -ge 200 ] && break; sleep 0.1 2>/dev/null || sleep 1; done ) &
 
+# no kernel / driver messages on the screen (they stay in dmesg and in rgos-logs.txt)
+echo "0 4 1 7" > /proc/sys/kernel/printk 2>/dev/null
 mountpoint -q /run || mount -t tmpfs tmpfs /run
 mountpoint -q /tmp || mount -t tmpfs tmpfs /tmp
 mount -t tmpfs -o mode=755 tmpfs /var 2>/dev/null
@@ -568,7 +570,7 @@ done
     echo "== boot partition"; ls -la /run/bi; echo "== extlinux.conf"; cat /run/bi/extlinux/extlinux.conf
   } > /run/bi/rgos-bootinfo.txt 2>&1
   sync; umount /run/bi ) >/dev/null 2>&1 &
-/opt/rgos/rgos-session
+/opt/rgos/rgos-session >> /var/log/rgos-session.log 2>&1
 for b in /sys/class/backlight/*; do [ -e "$b/max_brightness" ] && cat "$b/max_brightness" > "$b/brightness"; done
 [ -e /dev/fb0 ] && tr '\0' '\377' < /dev/zero > /dev/fb0 2>/dev/null
 while :; do sleep 3600; done
