@@ -16,6 +16,8 @@ All launchers share the same home sections: Games, Recents, Favorites, Tools and
 
 SteamOS scrolling is built to stay smooth on the handheld's CPU: each backdrop is composed once into a single opaque image (and prebuilt for the next and previous game while idle), capsule covers are scaled once and cached, and the backdrop changes once when the cursor settles instead of on every step of a held d-pad.
 
+While you use the launcher the CPU and GPU clocks are held at `performance` (and put back about 4 seconds after the last input, and always before a game starts), so scrolling does not start on slow clocks. Set `RGOS_UI_BOOST=0` in the environment to turn this off. On the 640x480 handhelds (RG35XX H / SP) only the rows of the 720x540 menu that changed are scaled and written to the screen each frame.
+
 ### SteamOS Steam-button menu
 
 Press **MENU** in the SteamOS launcher to slide in the Steam-button panel: a profile header (Online/Offline follows Wi-Fi) and the rows Home, Library, Recent Games, Favorites, Tools, Settings and Power. **Up/Down** move, **A** selects, **B** or **MENU** closes it. The panel opens on the row for the section you are in.
