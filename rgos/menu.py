@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 import glob
-import io, json, math, os, random, re, signal, subprocess, sys, threading, time
+import atexit, io, json, math, os, random, re, signal, subprocess, sys, threading, time
 import pygame
 from evpad import EvPads, CODES as EV_CODES, EV_KEY, EV_ABS
 import fbout
+import uiboost
 import splash
 import wifictl
 import btctl
@@ -3284,8 +3285,22 @@ class FrameProfiler:
             self._reset(now)
 
 
+_BOOST = uiboost.UiBoost()
+atexit.register(_BOOST.restore)
+
+
+def _on_term(_sig, _frm):
+    _BOOST.restore()
+    sys.exit(0)
+
+
 def main():
     windowed = os.environ.get("RGOS_WINDOWED") == "1"
+    if not windowed:
+        try:
+            signal.signal(signal.SIGTERM, _on_term)  # SIGTERM would skip atexit and leave the clocks pinned
+        except ValueError:
+            pass
     ensure_folders()
     if not windowed and os.environ.get("RGOS_VIDEO") == "fb":
         os.environ["SDL_VIDEODRIVER"] = "dummy"
@@ -3723,6 +3738,7 @@ def main():
             _acts, pending_acts = pending_acts + list(_acts), []
         if _acts:
             last_act = time.monotonic()
+            _BOOST.poke()
         if view == "home":
             xmb_ret[0] = False
         _acts = list(_acts)
@@ -4251,6 +4267,9 @@ def main():
 
         _pt1 = time.perf_counter()
         anim_moving = anim_tick()
+        if anim_moving:
+            _BOOST.poke()
+        _BOOST.tick()
         XMB_UI[0] = launcher_id == "xmb"
         CLASSIC_UI[0], CLASSIC_UI[1] = launcher_id == "rgclassic", classic_unit()
         f_logo, f_big, f_row, f_small, f_tiny = PX_FONTS if CLASSIC_UI[0] else TT_FONTS
@@ -5035,6 +5054,7 @@ def main():
             pygame.mixer.music.stop()
     except Exception:
         pass
+    _BOOST.restore()  # a game launch records the current governors to restore them later
     if not windowed:
         fbout.set_graphics(False)
     pygame.quit()
