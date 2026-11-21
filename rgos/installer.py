@@ -10,7 +10,8 @@ partition:
 On the first boot rgos-session runs `rgos-installer` (the screen) before anything else. The screen opens on a welcome page
 with two buttons, Install and Power off; nothing is touched on the card until Install is chosen. It uses this module to
 
-  1. create and format the ROMS partition in the free space of the card (rgos-roms) and mount it,
+  1. create and format the ROMS partition in the free space of the card (rgos-roms) and mount it. The screen asks which
+     file system to use first (FAT32, exFAT or ext4); a ROMS partition that already holds a file system keeps it,
   2. create the folder tree (roms/<system>, saves/, states/, bios/, ...),
   3. unpack every payload component (checked against its SHA-256 while it streams in),
   4. write /rgos-installed.json on the boot partition, delete the payload, and ask for a reboot.
@@ -44,6 +45,16 @@ RUN = os.environ.get("RGOS_RUN", "/run/rgos")
 LOG_FILE = os.environ.get("RGOS_INSTALL_LOG", "/var/log/rgos-installer.log")
 DEVICE_FILE = os.environ.get("RGOS_DEVICE_FILE", "/etc/rgos-device")
 ROMS_SCRIPT = os.environ.get("RGOS_ROMS_SCRIPT", "/opt/rgos/rgos-roms")
+
+# File systems offered for a new ROMS partition: id -> (menu label, one-line hint, what blkid reports once it is formatted)
+ROMS_FORMATS = ("fat32", "exfat", "ext4")
+DEFAULT_ROMS_FORMAT = "exfat"
+FORMAT_LABELS = {"fat32": "FAT32", "exfat": "exFAT", "ext4": "ext4"}
+FORMAT_HINTS = {"fat32": "Works everywhere. Files are limited to 4 GB.",
+                "exfat": "Recommended. Windows, Mac and Linux, big files.",
+                "ext4": "Linux only. Windows cannot read it without extra software."}
+FORMAT_BLKID = {"fat32": "vfat", "exfat": "exfat", "ext4": "ext4"}
+ROMS_FS_FILE = "rgos-roms-fs"   # on the boot partition: the choice, read by rgos-roms if the installer is interrupted
 
 PAYLOAD = "rgos-payload"
 MANIFEST = "manifest.json"
@@ -269,9 +280,9 @@ def make_folders(roms):
             raise InstallError("could not create %s (%s)" % (d, e))
 
 
-def _run(args, timeout=60):
+def _run(args, timeout=60, env=None):
     try:
-        p = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, universal_newlines=True)
+        p = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, universal_newlines=True, env=env)
         return p.returncode, p.stdout
     except (OSError, subprocess.SubprocessError) as e:
         return 127, "%s" % e
@@ -294,15 +305,29 @@ def _boot_source(boot):
     return ""
 
 
-def partition_roms(boot=None):
-    """Create + format the ROMS partition with rgos-roms (which only touches layouts it recognises); returns its device."""
+def partition_roms(boot=None, fmt=None):
+    """Create + format the ROMS partition with rgos-roms (which only touches layouts it recognises); returns its device.
+
+    `fmt` is one of ROMS_FORMATS (default exFAT). It only applies to a blank partition: one that already holds a file
+    system is left exactly as it is.
+    """
     boot = boot or BOOT
+    fmt = fmt or DEFAULT_ROMS_FORMAT
+    if fmt not in ROMS_FORMATS:
+        raise InstallError("unknown file system %r for the ROMS partition" % (fmt,))
     src = _boot_source(boot)
     m = re.match(r"^(/dev/mmcblk\d+)p1$", src)
     if not m:
         raise InstallError("RG OS is not running from an SD card (boot partition: %s), so the card cannot be partitioned" % (src or "unknown"))
-    log("running %s" % ROMS_SCRIPT)
-    rc, out = _run(["sh", ROMS_SCRIPT], timeout=900)
+    try:  # remembered on the card so rgos-roms still honours the choice if the installer is interrupted and RG OS boots anyway
+        with open(os.path.join(boot, ROMS_FS_FILE), "w") as f:
+            f.write(fmt + "\n")
+    except OSError as e:
+        log("could not write %s: %s" % (ROMS_FS_FILE, e))
+    log("running %s (ROMS file system: %s)" % (ROMS_SCRIPT, FORMAT_LABELS[fmt]))
+    env = dict(os.environ)
+    env["RGOS_ROMS_FS"] = fmt
+    rc, out = _run(["sh", ROMS_SCRIPT], timeout=900, env=env)
     log("rgos-roms exit %s %s" % (rc, out.strip()[-400:]))
     try:
         with open(os.path.join(RUN, "roms-part")) as f:
@@ -322,6 +347,8 @@ def partition_roms(boot=None):
     if not fs:
         raise InstallError("the ROMS partition could not be formatted (see /var/log/rgos-roms.log)")
     log("ROMS partition %s holds %s" % (dev, fs))
+    if fs != FORMAT_BLKID[fmt]:
+        log("note: %s was asked for but the partition already held %s, which is kept" % (FORMAT_LABELS[fmt], fs))
     return dev
 
 
@@ -364,10 +391,11 @@ def _write_json(path, obj):
 class Installer:
     """Runs the install. `snapshot()` is what the screen draws; call `run()` from a worker thread."""
 
-    def __init__(self, boot=None, roms=None, partition=None, mount=None, device=None):
+    def __init__(self, boot=None, roms=None, partition=None, mount=None, device=None, fmt=None):
         self.boot = boot or BOOT
         self.roms = roms or ROMS
-        self.partition = partition or (lambda: partition_roms(self.boot))
+        self.fmt = fmt if fmt in ROMS_FORMATS else DEFAULT_ROMS_FORMAT
+        self.partition = partition or (lambda: partition_roms(self.boot, self.fmt))
         self.mount = mount or (lambda dev: mount_roms(dev, self.roms))
         self.device = device if device is not None else device_id()
         self.lock = threading.Lock()
@@ -488,7 +516,7 @@ class Installer:
     def _run(self):
         log("installer start: build %s, device %s, components %s" % (self.man["id"], self.device, [c["id"] for c in self.comps]))
         # 1. partition + format + mount
-        self._begin(0, "Creating the ROMS partition", True)
+        self._begin(0, "Creating the ROMS partition (%s)" % FORMAT_LABELS[self.fmt], True)
         dev = self.partition()
         self.mount(dev)
         for c in self.comps:

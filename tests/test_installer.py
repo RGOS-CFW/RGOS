@@ -36,6 +36,11 @@ def load_ui():
     return mod
 
 
+def read_log(tmp):
+    with open(os.path.join(tmp, "installer.log"), encoding="utf-8") as f:
+        return f.read()
+
+
 class Card(unittest.TestCase):
     """A fake card: a boot folder with a payload, an (empty) ROMS folder, and the real installer logic on top."""
 
@@ -279,6 +284,74 @@ class Install(Card):
         self.assertEqual(inst.error, "the ROMS partition was not created")
         self.assertEqual(inst.snapshot()["steps"][0]["status"], "fail")
 
+    def test_the_chosen_format_reaches_the_partitioning_step(self):
+        seen = []
+        for fmt in installer.ROMS_FORMATS:
+            with mock.patch.object(installer, "partition_roms", side_effect=lambda boot, f: seen.append(f) or "/dev/fake-roms"):
+                inst = installer.Installer(boot=self.boot, roms=self.roms, mount=lambda d: os.makedirs(self.roms, exist_ok=True),
+                                           device="rg34xxsp", fmt=fmt)
+                self.assertEqual(inst.fmt, fmt)
+                inst.partition()
+        self.assertEqual(seen, list(installer.ROMS_FORMATS))
+
+    def test_the_default_format_is_exfat_and_junk_falls_back_to_it(self):
+        self.assertEqual(self.make().fmt, "exfat")
+        inst = installer.Installer(boot=self.boot, roms=self.roms, partition=lambda: "x", mount=lambda d: None, device="rg34xxsp", fmt="ntfs")
+        self.assertEqual(inst.fmt, "exfat")
+
+    def test_the_partition_step_names_the_format_on_screen(self):
+        details = []
+        box = []
+
+        def partition():
+            details.append(box[0].snapshot()["detail"])
+            return "/dev/fake-roms"
+        inst = installer.Installer(boot=self.boot, roms=self.roms, partition=partition,
+                                   mount=lambda d: os.makedirs(self.roms, exist_ok=True), device="rg34xxsp", fmt="ext4")
+        box.append(inst)
+        self.assertTrue(inst.run())
+        self.assertIn("ext4", details[0])
+
+    def test_partition_roms_passes_the_format_to_rgos_roms_and_remembers_it(self):
+        calls = []
+
+        def fake_run(args, timeout=60, env=None):
+            calls.append((args, env))
+            return 0, ""
+        for fmt, blk in (("fat32", "vfat"), ("exfat", "exfat"), ("ext4", "ext4")):
+            calls[:] = []
+            run_dir = os.path.join(self.tmp, "run-" + fmt)
+            os.makedirs(run_dir)
+            with open(os.path.join(run_dir, "roms-part"), "w") as f:
+                f.write("3")
+            with mock.patch.object(installer, "RUN", run_dir), mock.patch.object(installer, "_run", fake_run), \
+                    mock.patch.object(installer, "_boot_source", return_value="/dev/mmcblk0p1"), \
+                    mock.patch.object(installer, "_blkid_type", return_value=blk), \
+                    mock.patch.object(installer.os.path, "exists", return_value=True):
+                self.assertEqual(installer.partition_roms(self.boot, fmt), "/dev/mmcblk0p3")
+            self.assertEqual(calls[0][1]["RGOS_ROMS_FS"], fmt)
+            with open(os.path.join(self.boot, installer.ROMS_FS_FILE)) as f:
+                self.assertEqual(f.read().strip(), fmt)
+
+    def test_partition_roms_rejects_an_unknown_format_before_touching_anything(self):
+        with mock.patch.object(installer, "_run") as run:
+            with self.assertRaises(installer.InstallError):
+                installer.partition_roms(self.boot, "ntfs")
+            run.assert_not_called()
+        self.assertFalse(os.path.exists(os.path.join(self.boot, installer.ROMS_FS_FILE)))
+
+    def test_an_existing_filesystem_is_kept_and_the_mismatch_is_logged(self):
+        run_dir = os.path.join(self.tmp, "run-keep")
+        os.makedirs(run_dir)
+        with open(os.path.join(run_dir, "roms-part"), "w") as f:
+            f.write("3")
+        with mock.patch.object(installer, "RUN", run_dir), mock.patch.object(installer, "_run", return_value=(0, "")), \
+                mock.patch.object(installer, "_boot_source", return_value="/dev/mmcblk0p1"), \
+                mock.patch.object(installer, "_blkid_type", return_value="exfat"), \
+                mock.patch.object(installer.os.path, "exists", return_value=True):
+            installer.partition_roms(self.boot, "ext4")
+        self.assertIn("already held exfat", read_log(self.tmp))
+
     def test_unexpected_exceptions_become_a_screen_message(self):
         def boom():
             raise RuntimeError("kaboom")
@@ -411,6 +484,37 @@ class Wiring(unittest.TestCase):
     def test_power_off_uses_the_same_exit_status_as_the_menu(self):
         self.assertEqual(installer.EXIT_POWEROFF, helpers.load_menu().EXIT_POWER)
 
+    def test_rgos_roms_can_make_all_three_filesystems(self):
+        r = read("rgos", "rgos-roms")
+        for needle in ("mkfs.vfat -F 32", "mkfs.ext4", "mkfs.exfat", "RGOS_ROMS_FS", "/boot/rgos-roms-fs"):
+            self.assertIn(needle, r)
+        self.assertIn("exfat", r.split("case \"$fs\" in", 1)[1].split("esac", 1)[0])   # unknown value -> exFAT, as before
+        self.assertIn("already holds", r)                                                  # an existing file system is never reformatted
+
+    def test_rgos_roms_still_recognises_its_partition_whatever_the_format(self):
+        r = read("rgos", "rgos-roms")
+        self.assertIn("type=(7|c|83)", r)
+
+    def test_rgos_roms_script_is_valid_shell_and_defaults_to_exfat(self):
+        import subprocess
+        path = os.path.join(ROOT, "rgos", "rgos-roms")
+        self.assertEqual(subprocess.run(["sh", "-n", path]).returncode, 0)
+
+    def test_the_image_has_every_mkfs_the_menu_offers(self):
+        b = read("build.sh")
+        for pkg in ("e2fsprogs", "exfatprogs", "dosfstools"):
+            self.assertIn(pkg, b)
+        for tool in ("sbin/mkfs.ext4", "sbin/mkfs.exfat", "sbin/mkfs.vfat"):
+            self.assertIn(tool, b)
+
+    def test_every_offered_format_can_be_mounted_by_the_installer_and_the_session(self):
+        sess = read("rgos", "rgos-session")
+        self.assertEqual(sorted(installer.FORMAT_BLKID.values()), ["exfat", "ext4", "vfat"])
+        for fs in ("exfat", "vfat", "ext4"):
+            self.assertIn("mount -t %s" % fs, sess)
+        self.assertEqual(set(installer.FORMAT_LABELS), set(installer.ROMS_FORMATS))
+        self.assertEqual(set(installer.FORMAT_HINTS), set(installer.ROMS_FORMATS))
+
     def test_build_has_an_installer_mode(self):
         b = read("build.sh")
         self.assertIn('"$MODE" == "installer"', b)
@@ -531,6 +635,60 @@ class Screen(unittest.TestCase):
         self.assertEqual(ui.menu_input(0, ui.EV_KEY, ui.BTN_A, 0), (0, None))      # release
         self.assertEqual(ui.menu_input(0, ui.EV_KEY, ui.BTN_B, 1), (0, None))      # B does nothing here
         self.assertEqual(ui.menu_input(1, ui.EV_KEY, ui.KEY_DOWN, 0), (1, None))
+
+    def test_format_popup_offers_fat32_exfat_ext4_in_that_order(self):
+        ui = load_ui()
+        self.assertEqual(ui.FORMAT_CHOICES, ("fat32", "exfat", "ext4"))
+        self.assertEqual([installer.FORMAT_LABELS[k] for k in ui.FORMAT_CHOICES], ["FAT32", "exFAT", "ext4"])
+        self.assertEqual(ui.FORMAT_CHOICES[ui.FORMAT_CHOICES.index(installer.DEFAULT_ROMS_FORMAT)], "exfat")
+
+    def test_format_popup_navigation_confirm_and_back(self):
+        ui = load_ui()
+        fi = ui.format_input
+        self.assertEqual(fi(1, ui.EV_KEY, ui.KEY_DOWN, 1), (2, None))
+        self.assertEqual(fi(1, ui.EV_KEY, ui.KEY_UP, 1), (0, None))
+        self.assertEqual(fi(0, ui.EV_KEY, ui.KEY_UP, 1), (2, None))        # wraps round
+        self.assertEqual(fi(2, ui.EV_KEY, ui.KEY_RIGHT, 1), (0, None))
+        self.assertEqual(fi(0, ui.EV_ABS, ui.ABS_HAT0Y, 1), (1, None))     # hat axes work like the D-pad keys
+        self.assertEqual(fi(1, ui.EV_ABS, ui.ABS_HAT0X, -1), (0, None))
+        self.assertEqual(fi(1, ui.EV_ABS, ui.ABS_HAT0Y, 0), (1, None))
+        self.assertEqual(fi(0, ui.EV_KEY, ui.BTN_A, 1), (0, "fat32"))
+        self.assertEqual(fi(1, ui.EV_KEY, ui.BTN_A, 1), (1, "exfat"))
+        self.assertEqual(fi(2, ui.EV_KEY, ui.BTN_START, 1), (2, "ext4"))
+        self.assertEqual(fi(1, ui.EV_KEY, ui.BTN_B, 1), (1, "back"))
+
+    def test_format_popup_ignores_releases(self):
+        ui = load_ui()
+        self.assertEqual(ui.format_input(1, ui.EV_KEY, ui.BTN_A, 0), (1, None))
+        self.assertEqual(ui.format_input(1, ui.EV_KEY, ui.BTN_B, 0), (1, None))
+        self.assertEqual(ui.format_input(1, ui.EV_KEY, ui.KEY_DOWN, 0), (1, None))
+
+    def test_format_popup_draws_on_every_screen_with_every_row_selected(self):
+        ui = load_ui()
+        pg, canvas = mock.MagicMock(), mock.MagicMock()
+        fonts = (FakeFont(), FakeFont(), FakeFont())
+        for dev, size in installer.CANVAS.items():
+            for sel in range(len(ui.FORMAT_CHOICES)):
+                ui.draw_format_popup(pg, canvas, size, fonts, sel, dev)
+        self.assertTrue(canvas.blit.called)
+
+    def test_format_popup_panel_fits_on_the_smallest_screen(self):
+        ui = load_ui()
+        pg, canvas = mock.MagicMock(), mock.MagicMock()
+        ui.draw_format_popup(pg, canvas, (720, 480), (FakeFont(), FakeFont(), FakeFont()), 0, "rg34xxsp")
+        panel = [c for c in pg.draw.rect.call_args_list if len(c[0]) >= 3 and c[0][1] == ui.BG and len(c[0][2]) == 4][-1][0][2]
+        self.assertGreaterEqual(panel[1], 0)
+        self.assertLessEqual(panel[1] + panel[3], 480)
+        self.assertLessEqual(panel[0] + panel[2], 720)
+
+    def test_install_opens_the_format_popup_before_anything_is_installed(self):
+        """The popup sits between the welcome screen and the Installer thread; B in it returns to the welcome screen."""
+        src = read("rgos", "rgos-installer")
+        self.assertLess(src.index("draw_welcome, sel"), src.index("draw_format_popup, fmt_sel"))
+        self.assertLess(src.index("draw_format_popup, fmt_sel"), src.index("    start(inst)\n"))
+        self.assertLess(src.index("return installer.EXIT_POWEROFF"), src.index("draw_format_popup, fmt_sel"))
+        self.assertIn("installer.Installer(fmt=fmt)", src)
+        self.assertEqual(src.count("installer.Installer(fmt=fmt)"), 2)   # first run and the "try again" retry both keep the choice
 
     def test_installing_starts_only_after_install_is_chosen(self):
         """Power off must return before the Installer thread is ever started, so the card is untouched."""
