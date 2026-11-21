@@ -72,7 +72,7 @@ def _log(msg):
 
 def _read_json(path, default):
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:  # -sig: hand-edited files may start with a BOM
             d = json.load(f)
         return d if isinstance(d, type(default)) else default
     except (OSError, ValueError):
