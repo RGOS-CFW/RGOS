@@ -4006,8 +4006,6 @@ def main():
                 elif a == "a" and ci_rows and not ci_s["busy"]:
                     if not ci_rows[ci_idx]["installed"]:
                         ci.start([ci_rows[ci_idx]["core"]])
-                elif a == "x" and not ci_s["busy"]:
-                    ci.start([r["core"] for r in ci_rows if not r["installed"]])
             elif view == "files":
                 if fm.busy:
                     pass
@@ -4745,7 +4743,7 @@ def main():
                 canvas.blit(f_small.render(tag, True, tcol), (px + pw - 24 - f_small.size(tag)[0], y + 10))
             if not ci_rows:
                 canvas.blit(f_row.render("No RetroArch systems on this device", True, TEXT), (px + 24, top_c + 10))
-            hint = "B Cancel download" if ci_s["busy"] else "Up/Down Select   A Install   X Install all   B Back"
+            hint = "B Cancel download" if ci_s["busy"] else "Up/Down Select   A Install   B Back"
         elif view == "emulators":
             emu_systems = [sy for sy in SYSTEMS if sy[2] == "retroarch" and compatible_cores(sy[0])]
             ui_rect(canvas, PANEL, (list_x, top_y, W - 2 * list_x, 336 + DY), 10)
