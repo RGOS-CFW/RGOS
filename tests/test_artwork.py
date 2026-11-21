@@ -133,6 +133,24 @@ class KeyTests(unittest.TestCase):
         self.assertNotIn(KEY, artwork.key_hint(KEY))
 
 
+class ReadJsonTests(unittest.TestCase):
+    def test_hand_edited_json_with_bom_is_read(self):
+        # overrides.json is meant to be edited from a PC; Notepad may add a BOM
+        d = tempfile.mkdtemp(prefix="rgos-art-")
+        p = os.path.join(d, "overrides.json")
+        with open(p, "wb") as f:
+            f.write(b"\xef\xbb\xbf" + json.dumps({"snes/Super Mario World": 11}).encode())
+        self.assertEqual(artwork._read_json(p, {}), {"snes/Super Mario World": 11})
+
+    def test_missing_or_wrong_type_gives_default(self):
+        d = tempfile.mkdtemp(prefix="rgos-art-")
+        p = os.path.join(d, "x.json")
+        self.assertEqual(artwork._read_json(p, {}), {})
+        with open(p, "w") as f:
+            f.write("[1, 2]")
+        self.assertEqual(artwork._read_json(p, {}), {})
+
+
 class IndexTests(unittest.TestCase):
     def test_lookup_is_case_insensitive_and_ignores_junk(self):
         roms = tempfile.mkdtemp(prefix="rgos-art-")
