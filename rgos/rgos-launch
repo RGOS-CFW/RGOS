@@ -300,7 +300,9 @@ def tail(path, n=12):
             data = f.read()
     except OSError:
         return ""
-    lines = data.decode("utf-8", "replace").splitlines(True)
+    # split on "\n" only: str.splitlines() also breaks on "\r" (wget/unzip progress bars) and other control
+    # characters, so a progress-heavy port log would fill the last n "lines" with fragments of one bar
+    lines = re.findall(r"[^\n]*\n|[^\n]+", data.decode("utf-8", "replace"))
     return "".join(lines[-n:])
 
 
