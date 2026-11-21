@@ -10,9 +10,13 @@ Choose one in *Settings > Launcher*. The choice is remembered.
 | **RG XMB** | PlayStation-style cross media bar |
 | **RG Flow** | Carousels for menu, systems and games; cover art on game cards |
 | **RG Classic** | Pixel tile launcher with 3x2 buttons |
-| **SteamOS** | Steam Deck gaming mode: blurred hero backdrop from the focused game, "Recent Games"-style heading, dimmed capsule row with an animated focus ring, green Play button with a play icon, Y favourite button, SYSTEM / POSITION info columns, panel-free clock and battery %, coloured A/B/X/Y prompt bar |
+| **SteamOS** | Steam Deck gaming mode: blurred hero backdrop from the focused game (crossfades as you move), "Recent Games"-style heading, dimmed capsule row with an animated focus ring, green Play button, Y favourite button, SYSTEM / POSITION info columns, 12-hour clock with Wi-Fi and battery icons, and a Deck-style prompt bar (MENU and X on the left, A/B/Y on the right) |
 
 All launchers share the same home sections: Games, Recents, Favorites, Tools and Settings, plus Power Off (the XMB shows Settings first). **Tools** holds the File Manager and PortMaster.
+
+### SteamOS Steam-button menu
+
+Press **MENU** in the SteamOS launcher to slide in the Steam-button panel: a profile header (Online/Offline follows Wi-Fi) and the rows Home, Library, Recent Games, Favorites, Tools, Settings and Power. **Up/Down** move, **A** selects, **B** or **MENU** closes it. The panel opens on the row for the section you are in.
 
 ## Themes
 
