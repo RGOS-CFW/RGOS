@@ -91,6 +91,13 @@ class KeyTests(unittest.TestCase):
             f.write(KEY + "\r\nsecond line ignored\n")
         self.assertEqual(artwork.load_key(self.tmp), KEY)
 
+    def test_key_file_with_utf8_bom_is_read(self):
+        # Windows Notepad prepends a BOM when saving "UTF-8"; the key must still validate
+        os.makedirs(os.path.join(self.tmp, "rgos-data"))
+        with open(os.path.join(self.tmp, "rgos-data", "steamgriddb-key.txt"), "wb") as f:
+            f.write(b"\xef\xbb\xbf" + KEY.encode() + b"\r\n")
+        self.assertEqual(artwork.load_key(self.tmp), KEY)
+
     def test_legacy_key_file_in_roms_root_still_read(self):
         with open(os.path.join(self.tmp, "steamgriddb-key.txt"), "w") as f:
             f.write(KEY + "\n")
@@ -156,7 +163,8 @@ class ScrapeTests(unittest.TestCase):
         self.calls = []
         for p in (mock.patch.object(artwork.time, "sleep", lambda s: None),
                   mock.patch.object(artwork, "api_get", self.fake_api),
-                  mock.patch.object(artwork, "download", self.fake_dl)):
+                  mock.patch.object(artwork, "download", self.fake_dl),
+                  mock.patch.object(artwork, "find_description", lambda title, canonical="": ("", ""))):
             p.start()
             self.addCleanup(p.stop)
         self.db = {"Super Mario World": (11, "https://cdn2.steamgriddb.com/grid/a.png", PNG),
@@ -231,7 +239,9 @@ class ScrapeTests(unittest.TestCase):
         mine = os.path.join(d, "Super Mario World.png")
         open(mine, "wb").write(b"mine")
         _sc, s = self.run_scraper([game(self.roms, "snes", "Super Mario World.sfc")])
-        self.assertEqual(s["total"], 0)
+        # a game with no saved details is still visited so its metadata can be fetched, but the cover is left alone
+        self.assertEqual(s["total"], 1)
+        self.assertFalse(any(c.startswith("/grids/game/") for c in self.calls))
         self.assertEqual(open(mine, "rb").read(), b"mine")
 
     def test_bad_key_stops_the_run(self):

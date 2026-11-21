@@ -662,6 +662,22 @@ def open_pads():
     return portexit.open_events(portexit.find_pad_events(SYS_INPUT, DEV_INPUT, HUB_NAME))
 
 
+def read_pad(fd):
+    """Raw bytes from one pad fd: b"" when nothing is pending, None when the device is gone.
+
+    A removed evdev node (the input hub restarted) stays readable forever: read() raises ENODEV,
+    or returns EOF. Treating that as "nothing yet" made the daemon spin on select() at 100% CPU
+    and never reopen the pad, so the Menu button stayed dead until the game ended.
+    """
+    try:
+        data = os.read(fd, EVFMT.size * 64)
+    except BlockingIOError:
+        return b""
+    except OSError:
+        return None
+    return data if data else None
+
+
 class PadEvents:
     def __init__(self, fds):
         self.fds = fds
@@ -681,14 +697,22 @@ class PadEvents:
             time.sleep(dt)
             return names
         for fd in ready:
-            try:
-                data = os.read(fd, EVFMT.size * 64)
-            except (BlockingIOError, OSError):
+            data = read_pad(fd)
+            if data is None:                      # pad vanished while the menu is open
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                self.fds.remove(fd)               # in place: the daemon shares this list and will reopen the hub
                 continue
             for etype, code, value in parse_events(data):
                 n = translate(etype, code, value)
                 if n:
                     names.append(n)
+        if not self.fds:
+            # No pad left means no way to close the menu: the game would stay paused behind it. "close" twice
+            # backs out of a confirm step, then resumes.
+            return ["close", "close"]
         return names
 
 
@@ -735,9 +759,13 @@ def daemon():
             pads = []
             continue
         for fd in ready:
-            try:
-                data = os.read(fd, EVFMT.size * 64)
-            except (BlockingIOError, OSError):
+            data = read_pad(fd)
+            if data is None:                      # pad vanished: drop it so the next pass reopens the hub
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                pads = [f for f in pads if f != fd]
                 continue
             for etype, code, value in parse_events(data):
                 if tap.feed(etype, code, value, time.monotonic()):
