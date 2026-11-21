@@ -20,6 +20,7 @@ on:
         type: choice
         options:
           - img
+          - installer
           - update-tar
         default: img
       build_id:
@@ -250,6 +251,82 @@ jobs:
           sudo gzip -6 -f ./*-rgos.img
           ls -la ./*-rgos.img.gz
 
+      - name: Build installer image
+        if: inputs.artifact == 'installer'
+        env:
+          DEVICE: ${{ inputs.device }}
+          BUILD_ID: ${{ steps.metadata.outputs.build_id }}
+          BUILD_PSX: ${{ inputs.build_psx }}
+          BUILD_GC: ${{ inputs.build_gc }}
+          ROCKNIX_URL_INPUT: ${{ inputs.rocknix_url }}
+          H700_RAM_INPUT: ${{ inputs.h700_ram }}
+          H700_PANEL_INPUT: ${{ inputs.h700_panel }}
+          PORTMASTER_INPUT: ${{ inputs.portmaster }}
+          EXTRA_PKGS_INPUT: ${{ inputs.extra_pkgs }}
+        run: |
+          set -euo pipefail
+          export UPDATE_ID="$BUILD_ID"
+          [[ "$PORTMASTER_INPUT" == "true" ]] && export PORTMASTER=1 || export PORTMASTER=0
+          [[ -z "$EXTRA_PKGS_INPUT" ]] || export EXTRA_PKGS="$EXTRA_PKGS_INPUT"
+          [[ "$BUILD_PSX" == "true" ]] || export PSX_REPO=none
+          [[ "$BUILD_GC" == "true" ]] || export GC_REPO=none
+          [[ -z "$ROCKNIX_URL_INPUT" ]] || export ROCKNIX_URL="$ROCKNIX_URL_INPUT"
+          export H700_RAM="$H700_RAM_INPUT"
+          if [[ "$H700_PANEL_INPUT" == "alt" ]]; then
+            export RG34XXSP_DTB=sun50i-h700-anbernic-rg34xx-sp-v2-panel
+            export RG35XXH_DTB=sun50i-h700-anbernic-rg35xx-h-rev6-panel
+            export RG35XXSP_DTB=sun50i-h700-anbernic-rg35xx-sp-rev6-panel
+          fi
+          bash ./build.sh "$DEVICE" installer
+          if [[ "$DEVICE" == "all" ]]; then
+            for d in rg-rotate rg34xxsp rg35xxh rg35xxsp; do test -s "out/$d-rgos-installer.img"; done
+          else
+            test -s "out/$DEVICE-rgos-installer.img"
+          fi
+
+      - name: Verify installer image
+        if: inputs.artifact == 'installer'
+        run: |
+          set -euo pipefail
+          for img in out/*-rgos-installer.img; do
+            loop="$(sudo losetup -Pfr --show "$img")"
+            mnt="$(mktemp -d)"
+            sudo partprobe "$loop" 2>/dev/null || true
+            for _ in 1 2 3 4 5; do [[ -b "${loop}p1" ]] && break; sleep 1; done
+            sudo mount -o ro "${loop}p1" "$mnt"
+            rc=0
+            for f in SYSTEM rgos-initrd.cpio rgos-payload/manifest.json; do
+              test -s "$mnt/$f" || { echo "$img: boot partition is missing $f" >&2; rc=1; }
+            done
+            test ! -e "$mnt/rgos-installed.json" || { echo "$img: already marked as installed" >&2; rc=1; }
+            python3 - "$mnt/rgos-payload" <<'PY' || rc=1
+          import hashlib, json, os, sys
+          d = sys.argv[1]
+          man = json.load(open(os.path.join(d, 'manifest.json')))
+          assert man['format'] == 1 and man['components'], 'empty manifest'
+          for c in man['components']:
+              h = hashlib.sha256()
+              with open(os.path.join(d, c['archive']), 'rb') as f:
+                  for b in iter(lambda: f.read(1 << 20), b''):
+                      h.update(b)
+              assert h.hexdigest() == c['sha256'], c['id'] + ': SHA-256 mismatch'
+          print('payload ok:', ', '.join(c['id'] for c in man['components']))
+          PY
+            listing="$(unsquashfs -l "$mnt/SYSTEM")"
+            grep -q 'opt/rgos/rgos-installer$' <<<"$listing" || { echo "$img: SYSTEM has no rgos-installer" >&2; rc=1; }
+            grep -q 'libopenal\.so\.1$' <<<"$listing" || { echo "$img: SYSTEM has no libopenal.so.1 (PortMaster would not start)" >&2; rc=1; }
+            sudo umount "$mnt"; sudo losetup -d "$loop"
+            (( rc == 0 )) || exit 1
+            echo "Validated $img"
+          done
+
+      - name: Compress installer image
+        if: inputs.artifact == 'installer'
+        working-directory: out
+        run: |
+          sudo gzip -6 -f ./*-rgos-installer.img
+          ls -la ./*-rgos-installer.img.gz
+
       - name: Build update tar
         if: inputs.artifact == 'update-tar'
         env:
@@ -362,6 +439,16 @@ jobs:
         with:
           name: rgos-${{ inputs.device }}-${{ steps.metadata.outputs.build_id }}-img
           path: out/*-rgos.img.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload installer image
+        if: inputs.artifact == 'installer'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rgos-${{ inputs.device }}-${{ steps.metadata.outputs.build_id }}-installer
+          path: out/*-rgos-installer.img.gz
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
