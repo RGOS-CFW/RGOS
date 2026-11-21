@@ -1,8 +1,10 @@
 # Build options
 
-    sudo ./build.sh <device> [image|update]
+    sudo ./build.sh <device> [image|installer|update]
 
 `device` is `rg34xxsp`, `rg35xxh`, `rg35xxsp`, `rg-rotate` or `all`. With no device the script only prints usage. Output goes to `out/`; work files go to `work/<device>/`.
+
+`installer` builds a first-boot installer image (`out/<device>-rgos-installer.img`): PortMaster, the libretro cores and the optional `extras/` folder travel as a payload that the device installs on its first boot ([INSTALLER.md](INSTALLER.md)).
 
 The stock ROCKNIX image is cached in `work/<device>/` and is not downloaded again on later builds. `sudo ./build.sh update-img [device]` (or `./build.sh <device> update-img`) deletes the cached copy and downloads it again without building. Changing `ROCKNIX_URL`, `ROCKNIX_H700_VERSION` or `H700_RAM` selects a different cached file by name, so it downloads that one the first time.
 

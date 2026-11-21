@@ -7,6 +7,7 @@ RG OS is a Debian-based emulation distribution for Anbernic handhelds (RG34XXSP,
 | If you want to... | Read |
 |---|---|
 | Install RG OS on an SD card and boot it the first time | [GETTING-STARTED.md](GETTING-STARTED.md) |
+| Build a first-boot installer image (partitions the card and installs PortMaster and the cores) | [INSTALLER.md](INSTALLER.md) |
 | Check what is different between the four supported devices | [DEVICES.md](DEVICES.md) |
 | Know where to put ROMs, saves, BIOS files and music | [SD-CARD-LAYOUT.md](SD-CARD-LAYOUT.md) |
 | See which systems, file types and cores are supported | [SYSTEMS.md](SYSTEMS.md) |
