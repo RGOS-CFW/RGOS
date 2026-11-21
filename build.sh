@@ -279,8 +279,11 @@ case "$DEVICE" in
 esac
 if [[ -d "$HERE/splash" ]]; then
   mkdir -p "$ROOTFS/etc/rgos/splash"
-  SPLASH_DEV="$DEVICE"; [[ "$DEVICE" == "rg35xxsp" && ! -f "$HERE/splash/splash-rg35xxsp.mjpg" ]] && SPLASH_DEV=rg35xxh
+  SPLASH_DEV="$DEVICE"
+  # fall back to the RG35XX H splash only when there is no splash-rg35xxsp.* file of any type
+  [[ "$DEVICE" == "rg35xxsp" ]] && ! compgen -G "$HERE/splash/splash-rg35xxsp.*" >/dev/null && SPLASH_DEV=rg35xxh
   for f in "$HERE"/splash/*; do
+    [[ -e "$f" ]] || continue   # empty splash/ folder: the glob stays literal and cp would abort the build
     b="$(basename "$f")"
     case "$b" in splash-*) [[ "$b" == splash-"$SPLASH_DEV".* ]] || continue; b="splash-$DEVICE.${b#splash-"$SPLASH_DEV".}" ;; esac
     cp "$f" "$ROOTFS/etc/rgos/splash/$b"
