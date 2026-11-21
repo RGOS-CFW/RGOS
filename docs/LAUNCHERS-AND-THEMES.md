@@ -14,6 +14,8 @@ Choose one in *Settings > Launcher*. The choice is remembered.
 
 All launchers share the same home sections: Games, Recents, Favorites, Tools and Settings, plus Power Off (the XMB shows Settings first). **Tools** holds the File Manager and PortMaster.
 
+SteamOS scrolling is built to stay smooth on the handheld's CPU: each backdrop is composed once into a single opaque image (and prebuilt for the next and previous game while idle), capsule covers are scaled once and cached, and the backdrop changes once when the cursor settles instead of on every step of a held d-pad.
+
 ### SteamOS Steam-button menu
 
 Press **MENU** in the SteamOS launcher to slide in the Steam-button panel: a profile header (Online/Offline follows Wi-Fi) and the rows Home, Library, Recent Games, Favorites, Tools, Settings and Power. **Up/Down** move, **A** selects, **B** or **MENU** closes it. The panel opens on the row for the section you are in.
