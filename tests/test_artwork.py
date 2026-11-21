@@ -156,7 +156,8 @@ class ScrapeTests(unittest.TestCase):
         self.calls = []
         for p in (mock.patch.object(artwork.time, "sleep", lambda s: None),
                   mock.patch.object(artwork, "api_get", self.fake_api),
-                  mock.patch.object(artwork, "download", self.fake_dl)):
+                  mock.patch.object(artwork, "download", self.fake_dl),
+                  mock.patch.object(artwork, "find_description", lambda title, canonical="": ("", ""))):
             p.start()
             self.addCleanup(p.stop)
         self.db = {"Super Mario World": (11, "https://cdn2.steamgriddb.com/grid/a.png", PNG),
@@ -231,7 +232,9 @@ class ScrapeTests(unittest.TestCase):
         mine = os.path.join(d, "Super Mario World.png")
         open(mine, "wb").write(b"mine")
         _sc, s = self.run_scraper([game(self.roms, "snes", "Super Mario World.sfc")])
-        self.assertEqual(s["total"], 0)
+        # a game with no saved details is still visited so its metadata can be fetched, but the cover is left alone
+        self.assertEqual(s["total"], 1)
+        self.assertFalse(any(c.startswith("/grids/game/") for c in self.calls))
         self.assertEqual(open(mine, "rb").read(), b"mine")
 
     def test_bad_key_stops_the_run(self):
