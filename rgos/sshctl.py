@@ -83,11 +83,6 @@ def custom_password_file():
     return None
 
 
-def info():
-    return {"enabled": enabled(), "running": running(), "port": PORT, "user": "root",
-            "password": "custom (ssh-password.txt)" if custom_password_file() else "rgos"}
-
-
 def read_password(path):
     try:
         with open(path, encoding="utf-8-sig", errors="replace") as f:
@@ -97,6 +92,17 @@ def read_password(path):
     return lines[0].strip() if lines else ""
 
 
+def password_valid(pw):
+    return bool(pw) and ":" not in pw and len(pw) <= 128
+
+
+def info():
+    path = custom_password_file()
+    custom = path is not None and password_valid(read_password(path))
+    return {"enabled": enabled(), "running": running(), "port": PORT, "user": "root",
+            "password": "custom (ssh-password.txt)" if custom else "rgos"}
+
+
 def apply_password():
     path = custom_password_file()
     if not path:
@@ -104,7 +110,7 @@ def apply_password():
     pw = read_password(path)
     if pw is None:
         return
-    if not pw or ":" in pw or len(pw) > 128:
+    if not password_valid(pw):
         log("ssh-password.txt ignored (empty, too long, or contains ':')")
         return
     try:
