@@ -415,7 +415,9 @@ def save_state(st):
 
 def load_favorites():
     try:
-        with open(FAVORITES_FILE, "r", encoding="utf-8") as f:
+        # favorites.txt lives on the user-editable ROMS partition: tolerate a Windows BOM and non-UTF-8 bytes
+        # (a stray byte raised UnicodeDecodeError, which is not an OSError, and crashed the launcher at start)
+        with open(FAVORITES_FILE, "r", encoding="utf-8-sig", errors="replace") as f:
             return list(dict.fromkeys(line.strip() for line in f if line.strip()))
     except OSError:
         return []
