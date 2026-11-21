@@ -2,9 +2,14 @@
 import os
 
 
+def user_core_dir():
+    """Where the Core Installer puts downloaded cores: <ROMS>/cores (on the ROMS card, so they survive updates)."""
+    return os.path.join(os.environ.get("RGOS_ROMS", "/media/roms"), "cores")
+
+
 def installed_cores():
     dirs = ("/usr/lib/aarch64-linux-gnu/libretro", "/usr/lib/libretro",
-            "/usr/lib/aarch64-linux-gnu/retroarch/cores", "/usr/local/lib/libretro")
+            "/usr/lib/aarch64-linux-gnu/retroarch/cores", "/usr/local/lib/libretro", user_core_dir())
     found = set()
     for directory in dirs:
         try:

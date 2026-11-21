@@ -10,6 +10,7 @@ import wifictl
 import btctl
 import sshctl
 import biosctl
+import coreinstall
 import filemanager
 import rgclassic
 import artwork
@@ -495,11 +496,33 @@ def bios_summary_text(summ):
     return "   ".join(parts)
 
 
-if os.environ.get("RGOS_ALL_SYSTEMS") != "1":
-    _have_cores = installed_cores()
-    SYSTEMS = [sy for sy in SYSTEMS if sy[2] != "retroarch" or compatible_cores(sy[0], _have_cores)]
-    if (os.environ.get("RGOS_DEVICE") or _device() or "rg-rotate") != "rg-rotate":
-        SYSTEMS = [sy for sy in SYSTEMS if sy[0] != "gc"]
+ALL_SYSTEMS = list(SYSTEMS)
+
+
+def _gc_allowed():
+    return (os.environ.get("RGOS_DEVICE") or _device() or "rg-rotate") == "rg-rotate"
+
+
+def filter_systems():
+    """Hide systems that have no installed core (and GameCube off the RG Rotate). Edits SYSTEMS in place so that
+    everything holding a reference to it sees the change; the Core Installer calls this after installing a core."""
+    if os.environ.get("RGOS_ALL_SYSTEMS") == "1":
+        SYSTEMS[:] = ALL_SYSTEMS
+        return
+    have = installed_cores()
+    keep = [sy for sy in ALL_SYSTEMS if sy[2] != "retroarch" or compatible_cores(sy[0], have)]
+    if not _gc_allowed():
+        keep = [sy for sy in keep if sy[0] != "gc"]
+    SYSTEMS[:] = keep
+
+
+def core_installer_rows():
+    """Rows for the Core Installer: every core that could serve a RetroArch system on this device, missing ones first."""
+    systems = [(sy[0], sy[1], sy[4]) for sy in ALL_SYSTEMS if sy[2] == "retroarch" and (sy[0] != "gc" or _gc_allowed())]
+    return coreinstall.candidates(systems, SYSTEM_CORE_COMPATIBILITY, installed_cores(), CORE_NAMES)
+
+
+filter_systems()
 
 
 def ensure_folders():
@@ -908,6 +931,7 @@ HOME_COLS = 2
 HOME_ITEMS = [("games", "Games"), ("recents", "Recents"), ("favorites", "Favorites"), ("tools", "Tools"), ("settings", "Settings"), ("power", "Power Off")]
 TOOLS = [("files", "File Manager", "Browse, copy, move, rename and delete files on the SD cards", "@view:files"),
          ("portmaster", "PortMaster", "Browse, install and update native Linux game ports", "@tool:portmaster"),
+         ("coreinstall", "Core Installer", "Download RetroArch cores for your systems", "@view:coreinstall"),
          ("retroarch", "RetroArch", "Open the RetroArch menu (cores, content, settings)", "@tool:retroarch")]
 BOOT_ROOT = "/boot"
 BOOT_PROTECTED = ("SYSTEM", "SYSTEM.md5", "KERNEL", "KERNEL.md5", "extlinux", "dtbs", "device_trees", "boot.ini",
@@ -3530,6 +3554,8 @@ def main():
     fm, fm_pop = None, None
     emu_idx = 0
     bios_cache, bios_scroll, bios_pos, bios_all = None, 0, 0.0, False
+    ci = coreinstall.Installer(coreinstall.core_dir(ROMS_ROOT), names=CORE_NAMES)
+    ci_rows, ci_idx = [], 0
     info_scroll, info_pos = 0, 0.0
     wconf, wscan, wf_idx, wf_msg, wf_msg_until, wf_pending = wifictl.load_conf(), wifictl.Scanner(), 0, "", 0.0, ("", False)
     btm, bt_idx = btctl.Manager(), 0
@@ -3730,6 +3756,14 @@ def main():
                 art["seen"], art["seen_at"] = _sn["version"], _now
                 art_index.invalidate()
                 art["ver"] += 1
+        if ci.take_changed():
+            filter_systems()
+            sysname.clear()
+            sysname.update({sy[0]: sy[4] for sy in SYSTEMS})
+            ensure_folders()
+            ci_rows[:] = core_installer_rows()
+            ci_idx = min(ci_idx, max(0, len(ci_rows) - 1))
+            rescan.start()
         _scanned = rescan.take()
         if _scanned is not None:
             cur_sid = vsys[sys_idx][0] if vsys else None
@@ -3801,7 +3835,7 @@ def main():
                     flow_fade = 0.0
                 elif view in ("systems", "games", "recents", "favorites") and launcher_id in FLOW_LIKE:
                     view = "home"
-                elif view in ("systems", "games", "recents", "favorites", "tools", "settings", "wifi", "bt", "ssh", "info", "bios", "artwork", "files"):
+                elif view in ("systems", "games", "recents", "favorites", "tools", "settings", "wifi", "bt", "ssh", "info", "bios", "artwork", "files", "coreinstall"):
                     view = "home"
                 elif view == "bmap" and bmap and bmap.state in ("done", "fail"):
                     view = "home"
@@ -3865,6 +3899,9 @@ def main():
                     elif act[0] == "tool":
                         if act[1] == "@view:files":
                             fm, fm_pop, view = make_file_manager(), None, "files"
+                            xmb_ret[0] = True
+                        elif act[1] == "@view:coreinstall":
+                            ci_rows[:], ci_idx, view = core_installer_rows(), 0, "coreinstall"
                             xmb_ret[0] = True
                         else:
                             code = launch(act[1])
@@ -3948,8 +3985,29 @@ def main():
                     tgt = TOOLS[tool_idx][3]
                     if tgt == "@view:files":
                         fm, fm_pop, view = make_file_manager(), None, "files"
+                    elif tgt == "@view:coreinstall":
+                        ci_rows[:], ci_idx, view = core_installer_rows(), 0, "coreinstall"
                     else:
                         code = launch(tgt)
+            elif view == "coreinstall":
+                ci_vis = 7 + DY // 44
+                ci_s = ci.snapshot()
+                if a == "b":
+                    if ci_s["busy"]:
+                        ci.cancel()
+                    else:
+                        view = back_to("tools")
+                elif a in ("up", "down") and ci_rows:
+                    ci_idx = (ci_idx + (1 if a == "down" else -1)) % len(ci_rows)
+                elif a in ("left", "l") and ci_rows:
+                    ci_idx = max(0, ci_idx - ci_vis + 1)
+                elif a in ("right", "r") and ci_rows:
+                    ci_idx = min(len(ci_rows) - 1, ci_idx + ci_vis - 1)
+                elif a == "a" and ci_rows and not ci_s["busy"]:
+                    if not ci_rows[ci_idx]["installed"]:
+                        ci.start([ci_rows[ci_idx]["core"]])
+                elif a == "x" and not ci_s["busy"]:
+                    ci.start([r["core"] for r in ci_rows if not r["installed"]])
             elif view == "files":
                 if fm.busy:
                     pass
@@ -4313,6 +4371,8 @@ def main():
             info = "Tools   %s" % clk
         elif view == "files" or (view == "kbd" and kb.field.startswith("fm_")):
             info = "Tools > Files   %s" % clk
+        elif view == "coreinstall":
+            info = "Tools > Core Installer   %s" % clk
         elif view in ("settings", "bmap"):
             info = "Settings   %s" % clk
         elif view == "info":
@@ -4645,6 +4705,47 @@ def main():
             if time.time() < art["until"]:
                 canvas.blit(f_small.render(fit(f_small, art["msg"], W - 2 * list_x), True, ACCENT), (list_x, py + 60))
             hint = "A Select   " + ("X Stop   " if _run else "") + "B Back"
+        elif view == "coreinstall":
+            ci_s = ci.snapshot()
+            px, py, pw, ph = list_x, top_y, W - 2 * list_x, 336 + DY
+            ui_rect(canvas, PANEL, (px, py, pw, ph), 10)
+            n_missing = sum(1 for r in ci_rows if not r["installed"])
+            if ci_s["busy"]:
+                _anim_clock[2] = True
+                cname = CORE_NAMES.get(ci_s["core"]) or ci_s["core"].replace("_", " ")
+                head = "Downloading %s   %d%%" % (cname, ci_s["pct"]) + ("   (%d of %d)" % (ci_s["index"], ci_s["total"]) if ci_s["total"] > 1 else "")
+                hcol = ACCENT
+            elif ci_s["msg"]:
+                head, hcol = ci_s["msg"], (BIOS_BAD if ci_s["failed"] and not ci_s["ok"] else BIOS_GOOD if ci_s["ok"] else TEXT)
+            elif n_missing:
+                head, hcol = "%d core%s available to install" % (n_missing, "" if n_missing == 1 else "s") + ("" if rd_net() else "   (not on Wi-Fi)"), TEXT
+            else:
+                head, hcol = "All compatible cores are installed", ACCENT
+            canvas.blit(f_row.render(fit(f_row, head, pw - 48), True, hcol), (px + 24, py + 10))
+            if ci_s["busy"]:
+                pygame.draw.rect(canvas, DIM, (px + 24, py + 44, pw - 48, 6), 1, border_radius=3)
+                pygame.draw.rect(canvas, ACCENT, (px + 24, py + 44, max(0, (pw - 48) * ci_s["pct"] // 100), 6), 0, border_radius=3)
+            top_c = py + 58
+            ci_vis = 7 + DY // 44 - 1
+            first_ci = min(max(0, ci_idx - ci_vis // 2), max(0, len(ci_rows) - ci_vis))
+            for slot, r in enumerate(ci_rows[first_ci:first_ci + ci_vis]):
+                i = first_ci + slot
+                y, sel = top_c + slot * 44, i == ci_idx
+                if sel:
+                    ui_rect(canvas, SEL_BG, (px + 8, y, pw - 16, 40), 8)
+                    pygame.draw.rect(canvas, ACCENT, (px + 8, y, pw - 16, 40), 2, border_radius=8)
+                canvas.blit(f_small.render(fit(f_small, r["name"], 200), True, TEXT if sel else DIM), (px + 20, y + 10))
+                canvas.blit(f_small.render(fit(f_small, ", ".join(r["systems"]), pw - 20 - 220 - 130), True, DIM), (px + 232, y + 10))
+                if r["installed"]:
+                    tag, tcol = "Installed", BIOS_GOOD
+                elif ci_s["busy"] and ci_s["core"] == r["core"]:
+                    tag, tcol = "%d%%" % ci_s["pct"], ACCENT
+                else:
+                    tag, tcol = "A Install" if sel else "Not installed", ACCENT if sel else DIM
+                canvas.blit(f_small.render(tag, True, tcol), (px + pw - 24 - f_small.size(tag)[0], y + 10))
+            if not ci_rows:
+                canvas.blit(f_row.render("No RetroArch systems on this device", True, TEXT), (px + 24, top_c + 10))
+            hint = "B Cancel download" if ci_s["busy"] else "Up/Down Select   A Install   X Install all   B Back"
         elif view == "emulators":
             emu_systems = [sy for sy in SYSTEMS if sy[2] == "retroarch" and compatible_cores(sy[0])]
             ui_rect(canvas, PANEL, (list_x, top_y, W - 2 * list_x, 336 + DY), 10)
