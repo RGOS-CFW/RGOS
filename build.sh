@@ -620,6 +620,13 @@ FREE_KB="$(df -k --output=avail "$WORK/mnt" | tail -1)"
 NEED_KB=$(( ( $(stat -c %s "$WORK/SYSTEM") - $(stat -c %s "$OLD_SYS") ) / 1024 + 1 + 4096 + PAYLOAD_KB ))
 [[ $NEED_KB -lt $FREE_KB ]] || { echo "!! New SYSTEM doesn't fit on the boot partition"; exit 1; }
 cp "$WORK/SYSTEM" "$WORK/mnt/SYSTEM"
+BOOTLOGO="$HERE/bootlogo/bootlogo-$DEVICE.bmp"
+if [[ -f "$BOOTLOGO" ]]; then
+  echo "==> bootlogo.bmp <- $(basename "$BOOTLOGO") (shown by U-Boot while the console starts, until the installer / RG OS takes over)"
+  cp -f "$BOOTLOGO" "$WORK/mnt/bootlogo.bmp"
+else
+  echo "!! $BOOTLOGO missing: the image gets no bootlogo.bmp (python3 tools/render-bootlogo.py creates it)"
+fi
 if [[ "$MODE" == "installer" ]]; then
   echo "==> Copying the installer payload to /rgos-payload on the boot partition (${PAYLOAD_KB} KiB)"
   rm -rf "$WORK/mnt/rgos-payload" "$WORK/mnt/rgos-installed.json" "$WORK/mnt/rgos-install-state.json"

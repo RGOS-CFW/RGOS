@@ -4,7 +4,7 @@
 
 | Partition | Label | Filesystem | Mounted at | Contents |
 |---|---|---|---|---|
-| 1 | `RGOS` | FAT | `/boot` | Kernel, `SYSTEM` (the Debian squashfs), `rgos-initrd.cpio`, device tree, `extlinux/`, evidence and log files |
+| 1 | `RGOS` | FAT | `/boot` | Kernel, `SYSTEM` (the Debian squashfs), `rgos-initrd.cpio`, `bootlogo.bmp`, device tree, `extlinux/`, evidence and log files |
 | 2 | stock | from the stock image | not used for your files | Part of the stock ROCKNIX layout; leave it alone |
 | 3 (H700) or 4 (Rotate) | `ROMS` | exFAT | `/media/roms` | Your games and data |
 
@@ -35,6 +35,7 @@ Put the card in a PC; the boot partition is the small FAT one.
 
 | File | Effect |
 |---|---|
+| `bootlogo.bmp` | The picture shown at power on, before the installer or RG OS starts. Uncompressed 24-bit BMP at the panel's native size (720x480 RG34XXSP, 640x480 RG35XX H / SP, 720x720 RG Rotate). Builds put the matching file from `bootlogo/` there; `python3 tools/render-bootlogo.py` re-renders them from `bootlogo/rgos-logo.png` |
 | `rgos-governor.txt` | CPU/GPU governor while a native port runs (`default` keeps the stock one). See [PORTS.md](PORTS.md) |
 | `retroarch-gc-video.txt` | Force the GameCube video driver: `glcore`, `gl` or `vulkan`. See [GAMECUBE.md](GAMECUBE.md) |
 | `rgos-install.txt` | Options for the first-boot installer (`skip_install=1`, `keep_payload=1`, `skip=`). See [INSTALLER.md](INSTALLER.md) |
