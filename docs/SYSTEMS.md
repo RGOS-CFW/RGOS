@@ -39,7 +39,7 @@ Systems that the build does not provide a core for (for example Arcade/Neo Geo w
 
 ## Choosing another core
 
-*Settings > Emulators* lists each system and the installed cores that are compatible with it. Compatible alternatives include, for example, gpsp / vbam for GBA, sameboy for Game Boy, fceumm / quicknes / mesen for NES, bsnes variants for SNES, picodrive for Sega systems, and swanstation / mednafen_psx for PlayStation. Only cores that are actually installed appear.
+*Settings > Emulators* lists each system and the installed cores that are compatible with it. Compatible alternatives include, for example, gpsp / vbam for GBA, sameboy for Game Boy, fceumm / quicknes / mesen for NES, bsnes variants for SNES, picodrive for Sega systems, and swanstation / mednafen_psx for PlayStation. Only cores that are actually installed appear. *Tools > Core Installer* downloads the ones you do not have yet ([CORE-INSTALLER.md](CORE-INSTALLER.md)).
 
 ## Multi-disc games
 

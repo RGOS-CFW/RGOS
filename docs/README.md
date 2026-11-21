@@ -22,6 +22,7 @@ RG OS is a Debian-based emulation distribution for Anbernic handhelds (RG34XXSP,
 - [IN-GAME-MENU.md](IN-GAME-MENU.md): the Menu-button panel while a game runs
 - [ARTWORK.md](ARTWORK.md): cover art from SteamGridDB
 - [PORTS.md](PORTS.md): native Linux ports and PortMaster
+- [CORE-INSTALLER.md](CORE-INSTALLER.md): download more RetroArch cores
 - [NES.md](NES.md), [GAMECUBE.md](GAMECUBE.md): system-specific notes
 - [UPDATES.md](UPDATES.md): offline `.tar` updates
 - [BUILDING.md](BUILDING.md): every build option in one place

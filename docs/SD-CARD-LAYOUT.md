@@ -16,6 +16,7 @@ Older cards may still carry the stock `ROCKNIX` label on partition 1.
       roms/<system>/        game files, one folder per system (see SYSTEMS.md)
       roms/ports/           native ports and PortMaster
       bios/                 emulator BIOS files (see BIOS.md)
+      cores/                RetroArch cores downloaded by Tools > Core Installer (see CORE-INSTALLER.md)
       saves/<system>/       in-game saves
       states/<system>/      save states
       screenshots/          RetroArch screenshots
