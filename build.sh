@@ -6,7 +6,7 @@ ALL_DEVICES=(rg-rotate rg34xxsp rg35xxh rg35xxsp)
 
 usage() {
   cat <<EOF
-usage: sudo ./build.sh <device> [image|update]
+usage: sudo ./build.sh <device> [image|installer|update]
        sudo ./build.sh update-img [device]
 
   device   rg34xxsp   Anbernic RG34XXSP (Allwinner H700, ROCKNIX-H700 base image)
@@ -15,6 +15,9 @@ usage: sudo ./build.sh <device> [image|update]
            rg-rotate  Anbernic RG Rotate (Unisoc T618, ROCKNIX-T618 base image)
            all        build every device above
   image    full SD card image (default)  -> out/<device>-rgos.img
+  installer  first-boot installer image  -> out/<device>-rgos-installer.img
+           Same card layout, but PortMaster, the libretro cores and ./extras/ travel as a payload on the boot partition.
+           On the first boot the device partitions the SD card and installs them with a progress screen (docs/INSTALLER.md).
   update   offline update tar            -> out/rgos-update-<device>-<id>.tar
   update-img  delete the cached stock ROCKNIX image and download it again (just that, no build).
            Without update-img the image is downloaded once into work/<device>/ and reused by every later build.
@@ -43,7 +46,7 @@ case "$DEVICE_ARG" in
   "")                  usage; exit 1 ;;
   *)                   echo "unknown device '${1}'" >&2; echo >&2; usage >&2; exit 1 ;;
 esac
-[[ "$MODE" == "image" || "$MODE" == "update" || "$MODE" == "update-img" ]] || { echo "unknown mode '${2}' (use image, update or update-img)" >&2; echo >&2; usage >&2; exit 1; }
+[[ "$MODE" == "image" || "$MODE" == "installer" || "$MODE" == "update" || "$MODE" == "update-img" ]] || { echo "unknown mode '${2}' (use image, installer, update or update-img)" >&2; echo >&2; usage >&2; exit 1; }
 
 if [[ $EUID -ne 0 ]]; then
   command -v sudo >/dev/null || { echo "ERROR: this build needs root; run it as root or install sudo" >&2; exit 1; }
@@ -124,10 +127,11 @@ EXTRA_PKGS="${EXTRA_PKGS:-}"
 
 WORK="$HERE/work/$DEVICE"; OUT="$HERE/out"; IMG="$OUT/$DEVICE-rgos.img"
 [[ "$MODE" == "update" ]] && IMG="$WORK/update-scratch.img"
+[[ "$MODE" == "installer" ]] && IMG="$OUT/$DEVICE-rgos-installer.img"
 ROOTFS="$WORK/rootfs"
 
 need=(debootstrap losetup mksquashfs unsquashfs wget gunzip md5sum python3 readelf sfdisk truncate)
-[[ "$MODE" == "image" && "$PTABLE" == gpt ]] && need+=(sgdisk)
+[[ ( "$MODE" == "image" || "$MODE" == "installer" ) && "$PTABLE" == gpt ]] && need+=(sgdisk)
 [[ "$(uname -m)" == "aarch64" ]] || need+=(qemu-aarch64-static)
 [[ "$MODE" == "update-img" ]] && need=(wget gunzip)
 for t in "${need[@]}"; do
@@ -569,6 +573,39 @@ ln -s /run/rgos/resolv.conf "$ROOTFS/etc/resolv.conf"
 rm -rf "$ROOTFS/var/cache/apt" "$ROOTFS/var/lib/apt/lists" "$ROOTFS/usr/share/doc" "$ROOTFS/usr/share/man" "$ROOTFS/usr/share/info" "$ROOTFS/usr/share/lintian"
 find "$ROOTFS/usr/share/locale" -mindepth 1 -maxdepth 1 ! -name 'en*' ! -name locale.alias -exec rm -rf {} + 2>/dev/null || true
 
+# Installer mode: PortMaster, every libretro core and ./extras/ leave SYSTEM and become the payload that the first-boot installer
+# (rgos/installer.py) unpacks onto the ROMS partition after it has partitioned the card. cores.py / rgos-launch already search <ROMS>/cores.
+PAYLOAD_DIR="$WORK/payload"; PAYLOAD_KB=0
+if [[ "$MODE" == "installer" ]]; then
+  echo "==> Installer mode: moving PortMaster and the libretro cores out of SYSTEM into the payload"
+  rm -rf "$PAYLOAD_DIR" "$WORK/payload-src"; mkdir -p "$PAYLOAD_DIR" "$WORK/payload-src/cores"
+  PAYLOAD_SPECS=()
+  # Debian's cores first, then /usr/local/lib/libretro (cores built from source or prebuilt in cores/) so those win on a name clash
+  for d in "$ROOTFS"/usr/lib/*/libretro "$ROOTFS/usr/lib/libretro" "$ROOTFS/usr/local/lib/libretro"; do
+    [[ -d "$d" ]] || continue
+    for so in "$d"/*_libretro.so; do [[ -e "$so" ]] && cp -fL "$so" "$WORK/payload-src/cores/"; done
+    find "$d" -maxdepth 1 -name '*_libretro.so' -delete
+  done
+  NCORES="$(find "$WORK/payload-src/cores" -name '*_libretro.so' | wc -l)"
+  echo "   $NCORES libretro cores -> payload"
+  (( NCORES > 0 )) && PAYLOAD_SPECS+=("cores|Emulator cores|$WORK/payload-src/cores|roms|cores|") \
+    || echo "!! no libretro cores found: the installer image will have no emulators until the Core Installer downloads some"
+  if [[ -f "$ROOTFS/opt/rgos/seed/PortMaster/PortMaster.sh" ]]; then
+    PAYLOAD_SPECS+=("portmaster|PortMaster|$ROOTFS/opt/rgos/seed|roms|roms/ports|roms/ports/PortMaster")
+  else
+    echo "   (no PortMaster seed: the payload has no PortMaster)"
+  fi
+  if [[ -d "$HERE/extras" ]] && [[ -n "$(find "$HERE/extras" -type f 2>/dev/null | head -n1)" ]]; then
+    echo "   extras/ -> payload (unpacked into the root of the ROMS partition)"
+    PAYLOAD_SPECS+=("extras|Extra files|$HERE/extras|roms||")
+  fi
+  (( ${#PAYLOAD_SPECS[@]} )) || { echo "!! nothing to put in the installer payload" >&2; exit 1; }
+  python3 "$HERE/tools/mkpayload.py" "$PAYLOAD_DIR" "${UPDATE_ID:-$(date +%Y%m%d-%H%M%S)}" "$DEVICE" "${PAYLOAD_SPECS[@]}"
+  # the seed and the cores now live in the payload; leaving them in SYSTEM would only make the squashfs bigger
+  rm -rf "$ROOTFS/opt/rgos/seed"
+  PAYLOAD_KB="$(du -sk "$PAYLOAD_DIR" | cut -f1)"
+fi
+
 echo "==> Precompiling Python bytecode"
 chroot "$ROOTFS" python3 -m compileall -q --invalidation-mode checked-hash /opt/rgos /usr/lib/python3 /usr/lib/python3/dist-packages >/dev/null 2>&1 \
   || echo "   (bytecode precompile reported errors; continuing, the sources still work)"
@@ -580,9 +617,15 @@ ls -la "$WORK/SYSTEM"
 
 echo "==> Installing it on the boot partition"
 FREE_KB="$(df -k --output=avail "$WORK/mnt" | tail -1)"
-NEED_KB=$(( ( $(stat -c %s "$WORK/SYSTEM") - $(stat -c %s "$OLD_SYS") ) / 1024 + 1 + 4096 ))
+NEED_KB=$(( ( $(stat -c %s "$WORK/SYSTEM") - $(stat -c %s "$OLD_SYS") ) / 1024 + 1 + 4096 + PAYLOAD_KB ))
 [[ $NEED_KB -lt $FREE_KB ]] || { echo "!! New SYSTEM doesn't fit on the boot partition"; exit 1; }
 cp "$WORK/SYSTEM" "$WORK/mnt/SYSTEM"
+if [[ "$MODE" == "installer" ]]; then
+  echo "==> Copying the installer payload to /rgos-payload on the boot partition (${PAYLOAD_KB} KiB)"
+  rm -rf "$WORK/mnt/rgos-payload" "$WORK/mnt/rgos-installed.json" "$WORK/mnt/rgos-install-state.json"
+  mkdir -p "$WORK/mnt/rgos-payload" && cp "$PAYLOAD_DIR"/* "$WORK/mnt/rgos-payload/"
+  test -s "$WORK/mnt/rgos-payload/manifest.json" || { echo "!! the payload was not copied" >&2; exit 1; }
+fi
 if [[ -f "$WORK/mnt/SYSTEM.md5" ]]; then
   (cd "$WORK/mnt" && md5sum SYSTEM > SYSTEM.md5)
 fi
@@ -625,6 +668,7 @@ fi
     echo "h700 ram type: $H700_RAM   (the U-Boot on this card only starts consoles with this RAM; black screen + nothing written = wrong type, rebuild with H700_RAM=DDR3 or DDR4)"
     echo "device tree: $H700_DTB   (screen black or garbage = wrong panel revision, rebuild with the other one)"
   fi
+  [[ "$MODE" == "installer" ]] && echo "installer image: first boot partitions the card and installs the payload (/rgos-payload)"
   echo "build: $(date -u +%Y-%m-%dT%H:%MZ)"
 } > "$WORK/mnt/rgos-image-info.txt"
 sync
@@ -659,6 +703,7 @@ fi
 
 echo
 echo "Done: $IMG"
+[[ "$MODE" != "installer" ]] || echo "This is an INSTALLER image: write it to the SD card and boot. The first boot partitions the card, installs PortMaster and the cores (progress screen), then restarts into RG OS."
 echo "To go back to ROCKNIX's own init: copy extlinux/extlinux.conf.stock over extlinux/extlinux.conf on the card's FAT partition."
 echo "RG OS logs are copied to rgos-logs.txt on the card's FAT partition at 8, 28 and 58 s after boot."
 if [[ "$DEVICE" == "rg-rotate" ]]; then
