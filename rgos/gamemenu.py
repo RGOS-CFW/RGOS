@@ -697,14 +697,22 @@ class PadEvents:
             time.sleep(dt)
             return names
         for fd in ready:
-            try:
-                data = os.read(fd, EVFMT.size * 64)
-            except (BlockingIOError, OSError):
+            data = read_pad(fd)
+            if data is None:                      # pad vanished while the menu is open
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                self.fds.remove(fd)               # in place: the daemon shares this list and will reopen the hub
                 continue
             for etype, code, value in parse_events(data):
                 n = translate(etype, code, value)
                 if n:
                     names.append(n)
+        if not self.fds:
+            # No pad left means no way to close the menu: the game would stay paused behind it. "close" twice
+            # backs out of a confirm step, then resumes.
+            return ["close", "close"]
         return names
 
 
