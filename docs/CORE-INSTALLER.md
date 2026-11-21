@@ -13,7 +13,6 @@ The list shows every compatible core for the systems on this device, with the on
 | Up / Down | Select a core |
 | L / R | Page up / down |
 | A | Install the selected core |
-| X | Install every core that is not installed yet |
 | B | Back (while a download runs: cancel it) |
 
 When an install finishes, the menu rescans: a system that had no core appears straight away, and the new core is selectable in *Settings > Emulators*.
