@@ -3070,6 +3070,23 @@ def _music_tracks():
                         tracks.append(path)
     return tracks
 
+MUSIC_RETRY_S = 30.0
+_music_retry_at = [0.0]
+
+
+def _music_tick(now=None):
+    """Per-frame check: start the next track once the current one has ended.
+
+    When nothing can be played (a track SDL_mixer cannot decode, no audio device, ...) the
+    attempt is not repeated every frame: each try walks the music folders, re-tries every
+    track and logs, which made every menu crawl. It backs off for MUSIC_RETRY_S instead."""
+    now = time.monotonic() if now is None else now
+    if now < _music_retry_at[0]:
+        return
+    if pygame.mixer.get_init() and not pygame.mixer.music.get_busy() and (_music_playlist or _music_tracks_cached()):
+        _music_retry_at[0] = 0.0 if _play_next_launcher_track() else now + MUSIC_RETRY_S
+
+
 def _start_launcher_music():
     global _music_playlist, _music_last
     tracks = _music_tracks()
@@ -3083,7 +3100,8 @@ def _start_launcher_music():
         random.shuffle(_music_playlist)
         if len(_music_playlist) > 1 and _music_playlist[0] == _music_last:
             _music_playlist.append(_music_playlist.pop(0))
-        _play_next_launcher_track()
+        if not _play_next_launcher_track():
+            _music_retry_at[0] = time.monotonic() + MUSIC_RETRY_S
         log("launcher music: %d track(s) found" % len(tracks))
     except Exception as e:
         log("launcher music unavailable: %s" % e)
@@ -3098,7 +3116,7 @@ def _play_next_launcher_track():
             pygame.mixer.music.play()
             _music_last = path
             log("launcher music playing: %s" % path)
-            return
+            return True
         except Exception as e:
             log("launcher music skipped %s: %s" % (path, e))
     tracks = _music_tracks()
@@ -3116,9 +3134,10 @@ def _play_next_launcher_track():
                 pygame.mixer.music.play()
                 _music_last = path
                 log("launcher music playing: %s" % path)
-                return
+                return True
             except Exception as e:
                 log("launcher music skipped %s: %s" % (path, e))
+    return False
 
 
 def main():
@@ -3529,8 +3548,7 @@ def main():
             pygame.time.wait(120)
             continue
         blanked = False
-        if pygame.mixer.get_init() and not pygame.mixer.music.get_busy() and (_music_playlist or _music_tracks_cached()):
-            _play_next_launcher_track()
+        _music_tick()
         _asc = art["sc"]
         if _asc is not None:
             _now = time.monotonic()
