@@ -107,22 +107,22 @@ def is_required(entry, core):
     return req == "*" or (isinstance(req, tuple) and bool(core) and core in req)
 
 
+_RANK = {OK: 3, DIFFERS: 2, CASE: 1, MISSING: 0}
+
+
 def check_file(entry, bios_dirs):
     rel, _desc, md5s, _req, _grp = entry
-    best = ("", MISSING)
+    known = [m for m in md5s if m]
+    best = (MISSING, "")
     for d in bios_dirs:
         path, st = _find(d, rel)
+        if st == OK and known and md5_of(path) not in known:
+            st = DIFFERS
+        if _RANK[st] > _RANK[best[0]]:
+            best = (st, path)
         if st == OK:
-            best = (path, OK)
             break
-        if st == CASE and best[1] == MISSING:
-            best = (path, CASE)
-    path, st = best
-    if st == OK:
-        known = [m for m in md5s if m]
-        if known and md5_of(path) not in known:
-            return DIFFERS, path
-    return st, path
+    return best
 
 
 def check_system(sid, core, bios_dirs):
