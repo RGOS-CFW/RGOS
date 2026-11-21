@@ -1764,16 +1764,22 @@ def _flow_art_card(path, S):
 _DETAIL_ART = {}
 
 
-def _detail_cover(path, w, h):
+DETAIL_SETTLE_S = 0.12  # the list's cover/details are only read from the card once the cursor rests this long
+
+
+def _detail_cover(path, w, h, load=True):
     """Cover scaled to fit inside w x h (aspect kept) for the game list details panel, or None.
 
     Cached, because the panel is redrawn every frame; failures are cached too so a broken file is
-    not decoded again on every frame.
+    not decoded again on every frame. With load=False only an already cached cover is returned: the
+    caller passes that while the cursor is moving, so scrolling never waits on an SD read + decode.
     """
     key = (path, w, h)
     hit = _lru_get(_DETAIL_ART, key)
     if hit is not None:
         return hit or None
+    if not load:
+        return None
     surf = False
     try:
         img = pygame.image.load(path)
@@ -2990,7 +2996,21 @@ class Kbd:
         return None
 
 
+_WRAPN = {}
+
+
 def wrap_n(font, text, width, n):
+    """Word-wrap to at most n lines. Memoised: the details panel re-wraps the same description every frame."""
+    key = (font, text, width, n)
+    hit = _WRAPN.get(key)
+    if hit is None:
+        if len(_WRAPN) > 500:
+            _WRAPN.clear()
+        hit = _WRAPN[key] = _wrap_n(font, text, width, n)
+    return list(hit)
+
+
+def _wrap_n(font, text, width, n):
     lines, cur = [], ""
     for w in text.split():
         t = (cur + " " + w).strip()
@@ -3070,6 +3090,23 @@ def _music_tracks():
                         tracks.append(path)
     return tracks
 
+MUSIC_RETRY_S = 30.0
+_music_retry_at = [0.0]
+
+
+def _music_tick(now=None):
+    """Per-frame check: start the next track once the current one has ended.
+
+    When nothing can be played (a track SDL_mixer cannot decode, no audio device, ...) the
+    attempt is not repeated every frame: each try walks the music folders, re-tries every
+    track and logs, which made every menu crawl. It backs off for MUSIC_RETRY_S instead."""
+    now = time.monotonic() if now is None else now
+    if now < _music_retry_at[0]:
+        return
+    if pygame.mixer.get_init() and not pygame.mixer.music.get_busy() and (_music_playlist or _music_tracks_cached()):
+        _music_retry_at[0] = 0.0 if _play_next_launcher_track() else now + MUSIC_RETRY_S
+
+
 def _start_launcher_music():
     global _music_playlist, _music_last
     tracks = _music_tracks()
@@ -3083,7 +3120,8 @@ def _start_launcher_music():
         random.shuffle(_music_playlist)
         if len(_music_playlist) > 1 and _music_playlist[0] == _music_last:
             _music_playlist.append(_music_playlist.pop(0))
-        _play_next_launcher_track()
+        if not _play_next_launcher_track():
+            _music_retry_at[0] = time.monotonic() + MUSIC_RETRY_S
         log("launcher music: %d track(s) found" % len(tracks))
     except Exception as e:
         log("launcher music unavailable: %s" % e)
@@ -3098,7 +3136,7 @@ def _play_next_launcher_track():
             pygame.mixer.music.play()
             _music_last = path
             log("launcher music playing: %s" % path)
-            return
+            return True
         except Exception as e:
             log("launcher music skipped %s: %s" % (path, e))
     tracks = _music_tracks()
@@ -3116,9 +3154,45 @@ def _play_next_launcher_track():
                 pygame.mixer.music.play()
                 _music_last = path
                 log("launcher music playing: %s" % path)
-                return
+                return True
             except Exception as e:
                 log("launcher music skipped %s: %s" % (path, e))
+    return False
+
+
+class FrameProfiler:
+    """Opt-in frame timing (RGOS_PROFILE=1). Every `interval` seconds it logs the average frame cost
+    and the slowest frame split into input/update, draw, present and background warm-up, so a laggy
+    screen shows exactly which part is slow. The idle wait in clock.tick() is not counted."""
+    SLOW_MS = 40.0
+
+    def __init__(self, enabled, emit, interval=5.0, clock=time.monotonic):
+        self.enabled, self.emit, self.interval, self.clock = enabled, emit, interval, clock
+        self._reset(clock())
+
+    def _reset(self, now):
+        self.t0, self.n, self.total, self.slow, self.worst = now, 0, 0.0, 0, None
+
+    def frame(self, update, draw, present, warm, label=""):
+        """Phase durations in seconds for one frame."""
+        if not self.enabled:
+            return
+        total = update + draw + present + warm
+        self.n += 1
+        self.total += total
+        if total * 1000.0 >= self.SLOW_MS:
+            self.slow += 1
+        if self.worst is None or total > self.worst[0]:
+            self.worst = (total, update, draw, present, warm, label)
+        now = self.clock()
+        if now - self.t0 >= self.interval and self.n:
+            avg = self.total / self.n * 1000.0
+            w = self.worst
+            self.emit("perf: %d frames, avg %.1f ms/frame (work only), %d over %d ms; worst %.0f ms = "
+                      "update %.0f + draw %.0f + present %.0f + warm %.0f [%s]"
+                      % (self.n, avg, self.slow, self.SLOW_MS, w[0] * 1000, w[1] * 1000, w[2] * 1000,
+                         w[3] * 1000, w[4] * 1000, w[5]))
+            self._reset(now)
 
 
 def main():
@@ -3274,11 +3348,14 @@ def main():
 
     meta_cache = {}
 
-    def game_meta(g):
-        """Saved SteamGridDB/Wikipedia details for a game; re-read from the card at most every 3 s."""
+    def game_meta(g, settled=True):
+        """Saved SteamGridDB/Wikipedia details for a game; re-read from the card at most every 3 s.
+        While the cursor is moving (settled=False) nothing is read: the cached copy, or {}, is used."""
         now = time.monotonic()
         ent = meta_cache.get(g["path"])
         if ent is None or now - ent[0] > 3.0:
+            if not settled:
+                return ent[1] if ent else {}
             if len(meta_cache) > 200:
                 meta_cache.clear()
             ent = meta_cache[g["path"]] = (now, artwork.load_meta(ROMS_ROOT, g["sid"], g["path"]))
@@ -3519,6 +3596,7 @@ def main():
         mark_calibrated()
 
     blanked = False
+    prof = FrameProfiler(os.environ.get("RGOS_PROFILE") == "1", log)
     while code is None:
         if os.path.exists(SCREENOFF_FILE):
             inp.poll()
@@ -3529,8 +3607,8 @@ def main():
             pygame.time.wait(120)
             continue
         blanked = False
-        if pygame.mixer.get_init() and not pygame.mixer.music.get_busy() and (_music_playlist or _music_tracks_cached()):
-            _play_next_launcher_track()
+        _pt0 = time.perf_counter()
+        _music_tick()
         _asc = art["sc"]
         if _asc is not None:
             _now = time.monotonic()
@@ -4082,6 +4160,7 @@ def main():
         if _now != clk_at:
             clk_at, clk = _now, time.strftime("%H:%M")
 
+        _pt1 = time.perf_counter()
         anim_moving = anim_tick()
         XMB_UI[0] = launcher_id == "xmb"
         CLASSIC_UI[0], CLASSIC_UI[1] = launcher_id == "rgclassic", classic_unit()
@@ -4798,9 +4877,10 @@ def main():
             tile_w, tile_h = 160, 130 + DY // 2
             ui_rect(canvas, SEL_BG, (px + 20, top_y + 14, tile_w, tile_h), 8)
             cover = None
+            _settled = time.monotonic() - last_act >= DETAIL_SETTLE_S
             if art_on():
                 _ap = art_index.lookup(g["sid"], g["path"])
-                cover = _detail_cover(_ap, tile_w - 8, tile_h - 8) if _ap else None
+                cover = _detail_cover(_ap, tile_w - 8, tile_h - 8, _settled) if _ap else None
             if cover is not None:
                 canvas.blit(cover, (px + 20 + (tile_w - cover.get_width()) // 2, top_y + 14 + (tile_h - cover.get_height()) // 2))
             else:
@@ -4810,7 +4890,7 @@ def main():
             for line in wrap_n(f_row, g["title"], 170, 2):
                 canvas.blit(f_row.render(line, True, TEXT), (px + 15, ty_))
                 ty_ += 24
-            _gm = game_meta(g) if art_on() else {}
+            _gm = game_meta(g, _settled) if art_on() else {}
             _yr = _gm.get("year") or ""
             canvas.blit(f_small.render("%.1f MB%s" % (g["size"] / 1048576, ("   %s" % _yr) if _yr else ""), True, DIM),
                         (px + 15, top_y + 300 + DY))
@@ -4847,10 +4927,14 @@ def main():
             pygame.draw.rect(canvas, ACCENT, (bx + 66, by + 17, max(6, 130 * bri_pct // 100), 10), border_radius=5)
             canvas.blit(f_small.render("%d%%" % bri_pct, True, TEXT), (bx + 208, by + 14))
 
+        _pt2 = time.perf_counter()
         present()
+        _pt3 = time.perf_counter()
         if flow_on:
             fmoving = (anim_moving or flow_fx != flow_t or flow_fv != 0.0 or time.monotonic() - last_act < 0.35)
             flow_warm(fcards, flow_t, 0.004 if fmoving else 0.012, fmoving)
+        if prof.enabled:
+            prof.frame(_pt1 - _pt0, _pt2 - _pt1, _pt3 - _pt2, time.perf_counter() - _pt3, "%s/%s" % (launcher_id, view))
         idle = (view in IDLE_VIEWS and not forced and time.monotonic() - last_act > 3.0
                 and time.time() >= bri_show_until)
         clock.tick(60 if anim_moving or (time.monotonic() - last_act < 0.5) else (15 if idle else 30))
