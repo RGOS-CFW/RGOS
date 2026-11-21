@@ -94,6 +94,9 @@ jobs:
         shell: bash
         env:
           INPUT_BUILD_ID: ${{ inputs.build_id }}
+          INPUT_DEVICE: ${{ inputs.device }}
+          INPUT_ARTIFACT: ${{ inputs.artifact }}
+          INPUT_ROCKNIX_URL: ${{ inputs.rocknix_url }}
         run: |
           set -euo pipefail
           build_id="$INPUT_BUILD_ID"
@@ -105,11 +108,11 @@ jobs:
             exit 2
           fi
           echo "build_id=$build_id" >> "$GITHUB_OUTPUT"
-          if [[ "${{ inputs.device }}" == "all" && -n "${{ inputs.rocknix_url }}" ]]; then
+          if [[ "$INPUT_DEVICE" == "all" && -n "$INPUT_ROCKNIX_URL" ]]; then
             echo "rocknix_url cannot be combined with device=all (each device has its own stock image)." >&2
             exit 2
           fi
-          echo "Building ${{ inputs.device }} artifact: ${{ inputs.artifact }} (ID: $build_id)"
+          echo "Building $INPUT_DEVICE artifact: $INPUT_ARTIFACT (ID: $build_id)"
 
       - name: Free disk space
         run: |
