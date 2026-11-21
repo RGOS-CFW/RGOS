@@ -7,6 +7,25 @@ mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null
 [ -c /dev/console ] && exec </dev/console >/dev/console 2>&1
 
+# Boot logo: paint bootlogo-<W>x<H>.raw (32-bit B,G,R,X rows, see tools/bmp2fb.py) onto the framebuffer as soon as it
+# exists, so the screen is never blank between U-Boot's logo and the first RG OS screen. Only touches a 32 bpp
+# framebuffer whose stride and width match the file; anything else is left alone.
+paint_logo() {
+  fb=/sys/class/graphics/fb0
+  [ -c /dev/fb0 ] && [ "$(cat $fb/bits_per_pixel 2>/dev/null)" = 32 ] || return 1
+  vs=$(cat $fb/virtual_size 2>/dev/null); w=${vs%%,*}
+  [ -n "$w" ] && [ "$(cat $fb/stride 2>/dev/null)" = "$((w * 4))" ] || return 1
+  for f in "$1"/bootlogo-"$w"x*.raw; do [ -f "$f" ] && cat "$f" > /dev/fb0 2>/dev/null && return 0; done
+  return 1
+}
+
+echo 0 > /sys/class/graphics/fbcon/cursor_blink 2>/dev/null
+LOGO_PID=""
+if [ -d /logo ]; then
+  ( n=0; until paint_logo /logo; do n=$((n + 1)); [ "$n" -ge 100 ] && break; sleep 0.1 2>/dev/null || sleep 1; done ) &
+  LOGO_PID=$!
+fi
+
 klog() { echo "rgos-initramfs: $*" > /dev/kmsg 2>/dev/null; }
 say()  { klog "$*"; echo "RG OS: $*"; }
 
@@ -62,7 +81,7 @@ mount -o move /sys   /sysroot/sys
 mount -o move /dev   /sysroot/dev
 
 for i in /usr/sbin/rgos-init /sbin/init; do
-  [ -x "/sysroot$i" ] && { trace "switch_root to $i"; sync; exec switch_root /sysroot "$i"; }
+  [ -x "/sysroot$i" ] && { trace "switch_root to $i"; sync; [ -n "$LOGO_PID" ] && kill "$LOGO_PID" 2>/dev/null; exec switch_root /sysroot "$i"; }
 done
 trace "no init found in SYSTEM"; sync
 say "no init found in SYSTEM"

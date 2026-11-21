@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Write the RG OS initramfs as an uncompressed newc cpio (no cpio tool and no kernel decompressor needed).
 
-usage: mkinitramfs.py <static busybox> <init script> <out.cpio>
-Contents: /bin/busybox, /bin/sh, /rgos-init (the script), /dev/console, /dev/null and the empty mount points.
+usage: mkinitramfs.py <static busybox> <init script> <out.cpio> [logo.raw ...]
+Contents: /bin/busybox, /bin/sh, /rgos-init (the script), /dev/console, /dev/null, the empty mount points and, when given,
+the raw boot logos in /logo (painted onto the framebuffer by the init script as soon as it exists).
 """
 import os
 import stat
@@ -20,33 +21,36 @@ def entry(name, mode, data=b"", ino=0, nlink=1, rdev=(0, 0)):
     return out
 
 
-def build(busybox, init):
+def build(busybox, init, logos=()):
     ents, ino = [], [0]
 
     def add(name, mode, data=b"", nlink=1, rdev=(0, 0)):
         ino[0] += 1
         ents.append(entry(name, mode, data, ino[0], nlink, rdev))
 
-    for d in ("bin", "sbin", "usr", "usr/bin", "usr/sbin", "dev", "proc", "sys", "run", "tmp", "flash", "sysroot"):
+    for d in ("bin", "sbin", "usr", "usr/bin", "usr/sbin", "dev", "proc", "sys", "run", "tmp", "flash", "sysroot") + (("logo",) if logos else ()):
         add(d, stat.S_IFDIR | 0o755, nlink=2)
     add("dev/console", stat.S_IFCHR | 0o600, rdev=(5, 1))
     add("dev/null", stat.S_IFCHR | 0o666, rdev=(1, 3))
     add("bin/busybox", stat.S_IFREG | 0o755, open(busybox, "rb").read())
     add("bin/sh", stat.S_IFLNK | 0o777, b"busybox")
     add("rgos-init", stat.S_IFREG | 0o755, open(init, "rb").read())
+    for path in logos:
+        add("logo/" + os.path.basename(path), stat.S_IFREG | 0o644, open(path, "rb").read())
     ents.append(entry("TRAILER!!!", 0, ino=0))
     blob = b"".join(ents)
     return blob + b"\0" * (-len(blob) % 512)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
+    if len(sys.argv) < 4:
         sys.exit(__doc__)
-    bb, init, out = sys.argv[1:]
-    for p in (bb, init):
+    bb, init, out = sys.argv[1:4]
+    logos = sys.argv[4:]
+    for p in (bb, init) + tuple(logos):
         if not os.path.isfile(p):
             sys.exit("missing: " + p)
-    data = build(bb, init)
+    data = build(bb, init, logos)
     with open(out, "wb") as f:
         f.write(data)
     print("initramfs: %s (%d bytes)" % (out, len(data)))
