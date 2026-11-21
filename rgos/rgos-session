@@ -90,6 +90,12 @@ if ! mountpoint -q /boot; then for d in /dev/mmcblk*p1; do [ -b "$d" ] && mount 
 python3 /opt/rgos/rgos-update boot 2>>/var/log/rgos-update.log
 [ $? -eq 10 ] && { sync; reboot -f; sleep 60; }
 fixperms
+# first-boot installer: an installer image carries /boot/rgos-payload; until /boot/rgos-installed.json exists the installer partitions the
+# card, unpacks PortMaster / the cores / the folder tree and asks for a reboot (it exits 0 when there is nothing to do)
+if [ -f /boot/rgos-payload/manifest.json ] && [ ! -f /boot/rgos-installed.json ]; then
+    python3 /opt/rgos/rgos-installer 2>>/var/log/rgos-installer.log
+    [ $? -eq 10 ] && { sync; reboot -f; sleep 60; }
+fi
 sh /opt/rgos/rgos-roms 2>>/var/log/rgos-roms.log
 if ! mountpoint -q /boot; then for d in /dev/mmcblk*p1; do [ -b "$d" ] && mount -t vfat "$d" /boot 2>/dev/null && break; done; fi
 src=$(awk '$2=="/boot"{print $1; exit}' /proc/mounts)
@@ -164,7 +170,7 @@ python3 /opt/rgos/rgos-input >> /var/log/rgos-input.log 2>&1 &
     { echo "== $(date) kernel $(uname -r) t=$t"; echo "--- pygame"
       T=""; command -v timeout >/dev/null 2>&1 && T="timeout 4"
       $T python3 -c 'import pygame; print("pygame", pygame.version.ver)' 2>&1
-      for f in /var/log/rgos-menu.log /var/log/rgos-input.log /var/log/rgos-launch.log /var/log/rgos-native.log /var/log/rgos-retroarch.log /var/log/rgos-roms.log /var/log/rgos-artwork.log /var/log/rgos-volume.log /var/log/rgos-overlay.log /var/log/rgos-gamemenu.log /var/log/rgos-audio.log /var/log/rgos-audio-prep.log /var/log/rgos-audio-load.log /var/log/rgos-wifi.log /var/log/rgos-bt.log /var/log/rgos-ssh.log; do echo "--- $f"; if [ -f "$f" ]; then tail -n 100 "$f" 2>&1; else echo "(not created yet: nothing has run that writes it; see rgos-native.txt after a port runs)"; fi; done
+      for f in /var/log/rgos-menu.log /var/log/rgos-input.log /var/log/rgos-launch.log /var/log/rgos-native.log /var/log/rgos-retroarch.log /var/log/rgos-roms.log /var/log/rgos-installer.log /var/log/rgos-artwork.log /var/log/rgos-volume.log /var/log/rgos-overlay.log /var/log/rgos-gamemenu.log /var/log/rgos-audio.log /var/log/rgos-audio-prep.log /var/log/rgos-audio-load.log /var/log/rgos-wifi.log /var/log/rgos-bt.log /var/log/rgos-ssh.log; do echo "--- $f"; if [ -f "$f" ]; then tail -n 100 "$f" 2>&1; else echo "(not created yet: nothing has run that writes it; see rgos-native.txt after a port runs)"; fi; done
       echo "--- settings dir"; id; grep -E ' (/|/var|/var/lib|/var/lib/rgos) ' /proc/mounts; ls -ld /var /var/lib /var/lib/rgos 2>&1
       ls -la /var/lib/rgos 2>&1; { touch /var/lib/rgos/.w && rm -f /var/lib/rgos/.w && echo "write test: ok"; } 2>&1 || echo "write test: FAILED"
       cat /var/log/rgos-state.log 2>&1
