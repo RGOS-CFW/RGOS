@@ -25,6 +25,38 @@ RELEASE_FILE = os.environ.get("RGOS_RELEASE_FILE", "/etc/rgos-release")
 SYS_MARK = ".rgos-sys-stamp"
 GC_RETRY_S = 30.0
 GC_VIDEO_DRIVERS = ("glcore", "gl")
+GC_OPTIONS_NAME = "dolphin-options.cfg"
+# Dolphin core options for the RG Rotate (Unisoc T618: 2x Cortex-A75 + 6x Cortex-A55, Mali-G52 MP2).
+# The GPU is the weak part, so everything stays at native resolution and the cheap-but-correct paths are used:
+# JIT + fastmem for the emulated CPU, DSP HLE for audio, GPU-side EFB copies, and a-sync ubershaders so a new
+# shader never freezes the game while it compiles. Users can override any line in <ROMS>/config/dolphin-options.cfg.
+GC_CORE_OPTIONS = (
+    ("dolphin_renderer", "Hardware"),
+    ("dolphin_efb_scale", "x1 (640 x 528)"),
+    ("dolphin_cpu_core", "JIT64"),
+    ("dolphin_cpu_clock_rate", "100%"),
+    ("dolphin_fastmem", "enabled"),
+    ("dolphin_dsp_hle", "enabled"),
+    ("dolphin_dsp_jit", "enabled"),
+    ("dolphin_shader_compilation_mode", "a-sync UberShaders"),
+    ("dolphin_wait_for_shaders", "disabled"),
+    ("dolphin_efb_to_texture", "enabled"),
+    ("dolphin_efb_scaled_copy", "disabled"),
+    ("dolphin_force_texture_filtering", "disabled"),
+    ("dolphin_gpu_texture_decoding", "disabled"),
+    ("dolphin_skip_dupe_frames", "enabled"),
+)
+# Used on the retry after a game died right after starting: the one option that can crash a kernel it does not suit.
+GC_SAFE_OPTIONS = (("dolphin_fastmem", "disabled"),)
+# RetroArch settings that only matter for GameCube: it often runs just under 60 fps, where plain double-buffered
+# vsync snaps down to 30. Adaptive vsync / a third swapchain image keep the in-between rates, and a bigger audio
+# buffer stops crackling on the frames that run long.
+GC_RUN_SETTINGS = (
+    ("video_adaptive_vsync", "true"),
+    ("video_max_swapchain_images", "3"),
+    ("video_hard_sync", "false"),
+    ("audio_latency", "96"),
+)
 
 FALLBACK_DEFAULT = {"gba": "mgba", "gb": "gambatte", "gbc": "gambatte", "nes": "nestopia"}
 FALLBACK_COMPAT = {"gba": ("mgba",), "gb": ("gambatte", "mgba"), "gbc": ("gambatte", "mgba"), "nes": ("nestopia", "fceumm")}
@@ -145,7 +177,7 @@ def osd_font():
     return next((p for p in OSD_FONTS if os.path.isfile(p)), "")
 
 
-def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, font="", video_driver=None):
+def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, font="", video_driver=None, core_options=None):
     q = lambda p: '"%s"' % p
     lines = ['audio_device = %s' % q(audio_device)]
     if font:
@@ -154,6 +186,10 @@ def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, fo
         lines.append('input_joypad_driver = %s' % q(joy_driver))
     if video_driver:
         lines.append('video_driver = %s' % q(video_driver))
+    if sid == "gc":
+        lines += ['%s = %s' % (k, q(v)) for k, v in GC_RUN_SETTINGS]
+    if core_options:
+        lines.append('core_options_path = %s' % q(core_options))
     if joy_index is not None:
         lines.append('input_player1_joypad_index = %s' % q(joy_index))
     lines += [
@@ -166,6 +202,41 @@ def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, fo
         lines += ['savefile_directory = %s' % q(os.path.join(roms_root, "saves")),
                   'savestate_directory = %s' % q(os.path.join(roms_root, "states"))]
     return "\n".join(lines) + "\n"
+
+
+def read_option_overrides(path):
+    """key = "value" lines of the user's own option file; anything that is not a dolphin_* option is ignored."""
+    out = {}
+    try:
+        with open(path, errors="replace") as f:
+            for line in f:
+                m = re.fullmatch(r'\s*(dolphin_[a-z0-9_]+)\s*=\s*"?([^"\r\n]*?)"?\s*', line)
+                if m:
+                    out[m.group(1)] = m.group(2)
+    except OSError:
+        pass
+    return out
+
+
+def gc_core_options(roms_root, run_dir, safe=False):
+    """Write the Dolphin core options for this launch and return the file's path ("" if it cannot be written).
+
+    Order of precedence: built-in tuned defaults < safe-mode changes (retry after a crash) < the user's own
+    <ROMS>/config/dolphin-options.cfg. The file lives in the run directory, so it is rebuilt on every launch.
+    """
+    opts = dict(GC_CORE_OPTIONS)
+    if safe:
+        opts.update(GC_SAFE_OPTIONS)
+    opts.update(read_option_overrides(os.path.join(roms_root, "config", GC_OPTIONS_NAME)))
+    path = os.path.join(run_dir, GC_OPTIONS_NAME)
+    try:
+        os.makedirs(run_dir, exist_ok=True)
+        with open(path, "w") as f:
+            f.write("".join('%s = "%s"\n' % kv for kv in sorted(opts.items())))
+    except OSError as e:
+        log("cannot write Dolphin core options %s: %s" % (path, e))
+        return ""
+    return path
 
 
 def make_dirs(sid, roms_root):
@@ -737,8 +808,11 @@ def launch_retroarch(sid, core, core_path, content):
     attempts = video_attempts(sid)
     history, rc, cmd = [], 0, []
     for n, video in enumerate(attempts):
+        gc_opts = gc_core_options(ROMS_ROOT, RUN_DIR, safe=n > 0) if sid == "gc" else None
+        if gc_opts and n > 0:
+            log("GameCube retry: Dolphin fastmem off")
         with open(cfg_run, "w") as f:
-            f.write(run_config(sid, ROMS_ROOT, audio, idx, drv, font, video))
+            f.write(run_config(sid, ROMS_ROOT, audio, idx, drv, font, video, gc_opts))
         cmd = build_command(core_path, content, ROMS_ROOT, cfg_run, verbose=True if sid == "gc" else None)
         log("starting%s: %s" % (" (video_driver %s)" % video if video else "", " ".join(cmd)))
         t0 = time.monotonic()

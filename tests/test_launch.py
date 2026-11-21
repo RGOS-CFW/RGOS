@@ -255,5 +255,49 @@ class GameCubeLaunchTests(unittest.TestCase):
         self.assertIn("SIGSEGV", report)
 
 
+    def test_run_config_adds_the_gc_pacing_settings_only_for_gamecube(self):
+        gc = self.launch.run_config("gc", "/r", "default", core_options="/run/o.cfg")
+        self.assertIn('video_adaptive_vsync = "true"', gc)
+        self.assertIn('audio_latency = "96"', gc)
+        self.assertIn('core_options_path = "/run/o.cfg"', gc)
+        other = self.launch.run_config("psx", "/r", "default")
+        self.assertNotIn("adaptive_vsync", other)
+        self.assertNotIn("core_options_path", other)
+
+    def test_gc_core_options_defaults_safe_mode_and_user_overrides(self):
+        L = self.launch
+        d = tempfile.mkdtemp(prefix="rgos-opt-")
+        read = lambda p: dict(l.rstrip("\n").split(" = ", 1) for l in open(p))
+        fast = read(L.gc_core_options(d, d))
+        self.assertEqual(fast["dolphin_fastmem"], '"enabled"')
+        self.assertEqual(fast["dolphin_efb_scale"], '"x1 (640 x 528)"')
+        self.assertEqual(read(L.gc_core_options(d, d, safe=True))["dolphin_fastmem"], '"disabled"')
+        os.makedirs(os.path.join(d, "config"))
+        with open(os.path.join(d, "config", "dolphin-options.cfg"), "w") as f:
+            f.write('dolphin_efb_scale = "x2 (1280 x 1056)"\nnot_dolphin = "x"\n# comment\ndolphin_fastmem = enabled\n')
+        mine = read(L.gc_core_options(d, d, safe=True))
+        self.assertEqual(mine["dolphin_efb_scale"], '"x2 (1280 x 1056)"')
+        self.assertEqual(mine["dolphin_fastmem"], '"enabled"')
+        self.assertNotIn("not_dolphin", mine)
+
+    def test_the_retry_after_a_crash_also_turns_fastmem_off(self):
+        L = self.launch
+        d = tempfile.mkdtemp(prefix="rgos-run-")
+        seen = []
+        codes = iter([-11, 0])
+
+        def fake_call(cmd, **kw):
+            seen.append(open(os.path.join(d, "dolphin-options.cfg")).read())
+            return next(codes)
+
+        with mock.patch.dict(os.environ, {"RGOS_NO_HW": "1"}), \
+             mock.patch.object(L, "RUN_DIR", d), mock.patch.object(L, "ROMS_ROOT", d), mock.patch.object(L, "BOOT_DIR", d), \
+             mock.patch.object(L, "LOG", os.path.join(d, "ra.log")), mock.patch.object(L, "TTY", os.path.join(d, "tty")), \
+             mock.patch.object(L, "SYS_INPUT", d), mock.patch.object(L.subprocess, "call", side_effect=fake_call):
+            L.launch_retroarch("gc", "dolphin", "/cores/dolphin_libretro.so", "/roms/gc/g.iso")
+        self.assertIn('dolphin_fastmem = "enabled"', seen[0])
+        self.assertIn('dolphin_fastmem = "disabled"', seen[1])
+
+
 if __name__ == "__main__":
     unittest.main()

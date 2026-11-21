@@ -24,6 +24,24 @@ The build is best-effort, like the other source-built cores: if it fails, a `!!`
 The Dolphin core may fail to load with `liblzo2.so.2: cannot open shared object file` when a prebuilt `dolphin_libretro.so` is used. RG OS now includes Debian's `liblzo2-2` runtime package in the base image so this dependency is present even for prebuilt cores. Rebuild the image or install `liblzo2-2` on an existing Debian-based RG OS image.
 
 
+## Performance tuning
+
+Every GameCube launch gets a tuned set of Dolphin core options, written to `/run/rgos/dolphin-options.cfg` and handed to RetroArch (`core_options_path`). They target the RG Rotate's Mali-G52 GPU, which is the usual bottleneck:
+
+* **Native resolution** (`dolphin_efb_scale = x1`). The biggest single speed-up; raise it only for light games.
+* **JIT CPU core + fastmem**, **DSP HLE**, GPU-side EFB copies, no forced texture filtering.
+* **A-sync ubershaders**, so a new effect never freezes the game while its shader compiles. The first minutes of a game can still hitch a little while the shader cache fills; it gets smoother with play.
+* **Frame pacing.** GameCube launches turn on adaptive vsync, a third swapchain image and a larger audio buffer, so a game that runs at 50-58 fps no longer drops to 30 fps or crackles. The CPU and GPU governors are already set to `performance` for GameCube (see `/boot/rgos-governor.txt`).
+* **Safe retry.** If a game dies within 30 s, the retry also turns fastmem off.
+
+To change any option, create `<ROMS>/config/dolphin-options.cfg` with lines such as:
+
+    dolphin_efb_scale = "x2 (1280 x 1056)"
+    dolphin_shader_compilation_mode = "sync UberShaders"
+    dolphin_fastmem = "disabled"
+
+Your lines win over the built-in ones, including in the retry. Remove the file to go back to the defaults. A prebuilt `dolphin_libretro.so` is unaffected by the build flag; a core built by `build.sh` is compiled with `-mtune=cortex-a75`.
+
 ## If a GameCube game closes right after launching
 
 RG OS now does these things itself; each one was a way for the game to "just close" without a message:

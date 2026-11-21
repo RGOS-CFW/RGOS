@@ -71,3 +71,12 @@ PortMaster's output is written to `rgos-native.log` (on the device: `/var/log/rg
 ## Still stuck
 
 Collect the files listed in [LOGS.md](LOGS.md) and ask on the Discord linked from the main README.
+
+## Black screen or kernel text between the boot logo and the first RG OS screen
+
+Power on shows three things in turn: U-Boot's `bootlogo.bmp`, then (until now) a blank or text screen while the kernel starts and RG OS brings up audio, the updater and the installer, then the menu with the startup splash. RG OS now paints the boot logo again from the initramfs (as soon as the framebuffer exists) and from `rgos-init`, so the logo stays up until the menu takes over. New builds also add `quiet vt.global_cursor_default=0` to the kernel command line, so kernel messages and the blinking cursor do not draw over it.
+
+* The early logo is only painted onto a 32-bit framebuffer whose width matches the logo (`/etc/rgos/bootlogo/bootlogo-<W>x<H>.raw`, made by `tools/bmp2fb.py` from `bootlogo/bootlogo-<device>.bmp` at build time). On any other framebuffer it is skipped and nothing is drawn.
+* If the logo appears with red and blue swapped, the framebuffer is RGB-ordered rather than the usual BGR-ordered XRGB8888; tell the maintainers, and use `RGOS_INITRD` / the stock extlinux file as a stopgap.
+* U-Boot's own logo (the very first picture) is drawn by the bootloader from `bootlogo.bmp` on the FAT partition and is not controlled by RG OS: it must be an uncompressed 24-bit BMP at the panel's size ([SD-CARD-LAYOUT.md](SD-CARD-LAYOUT.md)).
+* An existing card needs the new `SYSTEM` and `rgos-initrd.cpio` (an offline update carries both); patch an old `extlinux.conf` with `python3 initramfs/patch-extlinux.py <extlinux.conf> /rgos-initrd.cpio` to get the quiet arguments.

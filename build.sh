@@ -281,6 +281,16 @@ case "$DEVICE" in
     cp "$RA_CFG" "$ROOTFS/etc/rgos/retroarch-$DEVICE.cfg"
     ;;
 esac
+BOOTLOGO_RAW_DIR="$WORK/bootlogo-raw"
+rm -rf "$BOOTLOGO_RAW_DIR"
+if [[ -f "$HERE/bootlogo/bootlogo-$DEVICE.bmp" ]]; then
+  # raw copy of the boot logo, painted onto the framebuffer by the initramfs and by rgos-init long before the menu starts
+  if python3 "$HERE/tools/bmp2fb.py" "$HERE/bootlogo/bootlogo-$DEVICE.bmp" "$BOOTLOGO_RAW_DIR" >/dev/null; then
+    mkdir -p "$ROOTFS/etc/rgos/bootlogo" && cp "$BOOTLOGO_RAW_DIR"/*.raw "$ROOTFS/etc/rgos/bootlogo/"
+  else
+    echo "!! could not convert bootlogo-$DEVICE.bmp: no early boot logo in the image"; rm -rf "$BOOTLOGO_RAW_DIR"
+  fi
+fi
 if [[ -d "$HERE/splash" ]]; then
   mkdir -p "$ROOTFS/etc/rgos/splash"
   SPLASH_DEV="$DEVICE"
@@ -443,7 +453,7 @@ if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI )); then
         rm -rf "$WORK/dolphin-libretro"
         git clone -q --depth 1 --recurse-submodules --shallow-submodules "$GC_REPO" "$WORK/dolphin-libretro" || exit 1
         cp -r "$WORK/dolphin-libretro" "$ROOTFS/tmp/core-src/gc" || exit 1
-        chroot "$ROOTFS" sh -c 'cd /tmp/core-src/gc && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRETRO=ON -DENABLE_QT=OFF -DENABLE_NOGUI=OFF -DENABLE_X11=OFF -DENABLE_TESTS=OFF -DENABLE_ANALYTICS=OFF -DENABLE_LTO=OFF -DUSE_DISCORD_PRESENCE=OFF -DENABLE_CLI_TOOL=OFF && cmake --build build -j"$(nproc)"' || exit 1
+        chroot "$ROOTFS" sh -c 'cd /tmp/core-src/gc && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-mtune=cortex-a75 -DCMAKE_CXX_FLAGS=-mtune=cortex-a75 -DLIBRETRO=ON -DENABLE_QT=OFF -DENABLE_NOGUI=OFF -DENABLE_X11=OFF -DENABLE_TESTS=OFF -DENABLE_ANALYTICS=OFF -DENABLE_LTO=OFF -DUSE_DISCORD_PRESENCE=OFF -DENABLE_CLI_TOOL=OFF && cmake --build build -j"$(nproc)"' || exit 1
         so="$(find "$ROOTFS/tmp/core-src/gc" -name dolphin_libretro.so -type f | head -n1)"
         [[ -n "$so" ]] || exit 1
         install -m 755 "$so" "$LRDIR/dolphin_libretro.so" || exit 1
@@ -512,6 +522,21 @@ mount -t proc proc /proc 2>/dev/null; mount -t sysfs sys /sys 2>/dev/null; mount
 [ -e /dev/stderr ] || ln -s /proc/self/fd/2 /dev/stderr 2>/dev/null
 [ -d /dev/shm ] || { mkdir -p /dev/shm && mount -t tmpfs -o mode=1777 tmpfs /dev/shm 2>/dev/null; }
 [ -x /bin/busybox ] && /bin/busybox --install -s /usr/bin 2>/dev/null
+# Boot logo: paint bootlogo-<W>x<H>.raw (32-bit B,G,R,X rows, see tools/bmp2fb.py) onto the framebuffer as soon as it
+# exists, so the screen is never blank between U-Boot's logo and the first RG OS screen. Only touches a 32 bpp
+# framebuffer whose stride and width match the file; anything else is left alone.
+paint_logo() {
+  fb=/sys/class/graphics/fb0
+  [ -c /dev/fb0 ] && [ "$(cat $fb/bits_per_pixel 2>/dev/null)" = 32 ] || return 1
+  vs=$(cat $fb/virtual_size 2>/dev/null); w=${vs%%,*}
+  [ -n "$w" ] && [ "$(cat $fb/stride 2>/dev/null)" = "$((w * 4))" ] || return 1
+  for f in "$1"/bootlogo-"$w"x*.raw; do [ -f "$f" ] && cat "$f" > /dev/fb0 2>/dev/null && return 0; done
+  return 1
+}
+echo 0 > /sys/class/graphics/fbcon/cursor_blink 2>/dev/null
+# paint the logo the moment the framebuffer shows up (the wait below, module loading, audio bring-up and the updater can
+# take many seconds before the first RG OS screen); stops after the first success or 20 s
+( n=0; until paint_logo /etc/rgos/bootlogo; do n=$((n + 1)); [ "$n" -ge 200 ] && break; sleep 0.1 2>/dev/null || sleep 1; done ) &
 
 mountpoint -q /run || mount -t tmpfs tmpfs /run
 mountpoint -q /tmp || mount -t tmpfs tmpfs /tmp
@@ -642,7 +667,8 @@ BB="$ROOTFS/bin/busybox"
 [[ -x "$BB" ]] || { echo "!! $BB missing (busybox-static not installed in the rootfs?)"; exit 1; }
 if readelf -lW "$BB" 2>/dev/null | grep -q INTERP; then echo "!! $BB is dynamically linked; the initramfs needs a static busybox"; exit 1; fi
 INITRD_NAME="rgos-initrd.cpio"
-python3 "$HERE/initramfs/mkinitramfs.py" "$BB" "$HERE/initramfs/init" "$WORK/mnt/$INITRD_NAME"
+LOGO_RAWS=(); [[ -d "$BOOTLOGO_RAW_DIR" ]] && LOGO_RAWS=("$BOOTLOGO_RAW_DIR"/*.raw)
+python3 "$HERE/initramfs/mkinitramfs.py" "$BB" "$HERE/initramfs/init" "$WORK/mnt/$INITRD_NAME" ${LOGO_RAWS[@]+"${LOGO_RAWS[@]}"}
 EXT="$WORK/mnt/extlinux/extlinux.conf"; [[ -f "$EXT" ]] || EXT="$WORK/mnt/extlinux.conf"
 [[ -f "$EXT" ]] || { echo "!! no extlinux.conf on the boot partition"; exit 1; }
 rm -f "$WORK/mnt/white.cpio.gz"
