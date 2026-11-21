@@ -26,7 +26,7 @@ The three H700 consoles ship their U-Boot on the card, built for one RAM type. A
 
 ## 3. First boot
 
-- An **installer image** (`*-rgos-installer.img`) shows an RG OS Installer screen on the first boot with **Install** and **Power off** buttons (D-pad to choose, **A** to confirm). Install partitions the card, installs PortMaster and the cores, then restarts by itself; Power off switches the console off and leaves the card as it is. Do not switch the console off while an install is running ([INSTALLER.md](INSTALLER.md)). The points below describe a normal image.
+- An **installer image** (`*-rgos-installer.img`) shows an RG OS Installer screen on the first boot with two square **Install** and **Power off** buttons (D-pad to choose, **A** to confirm). Install partitions the card, installs PortMaster and the cores, then restarts by itself; Power off switches the console off and leaves the card as it is. Do not switch the console off while an install is running ([INSTALLER.md](INSTALLER.md)). The points below describe a normal image.
 
 - Insert the card and power on. Fully power off first if the console was running another system.
 - On the first boot RG OS creates the **ROMS** partition in the free space after the system partitions and formats it as exFAT (partition 3 on the H700 consoles, partition 4 on the RG Rotate). This is done by `rgos-roms` and logged in `/var/log/rgos-roms.log`. It only touches a card whose layout it recognises, and it backs up the old partition table to the boot partition (`rgos-mbr-backup.bin` or `rgos-gpt-backup.bin`).

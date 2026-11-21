@@ -1,10 +1,10 @@
 # First-boot installer
 
-An **installer image** works like the MustardOS / muOS one: you write it to an SD card and boot the console once. It opens on a welcome screen with two buttons, **Install** and **Power off**. Choose Install and a progress screen partitions the card and installs everything; when it finishes the device restarts into RG OS. Choose Power off and the console switches off without changing anything on the card.
+An **installer image** works like the MustardOS / muOS one: you write it to an SD card and boot the console once. It opens on a welcome screen with two square icon buttons side by side, **Install** (an arrow into a tray) and **Power off** (the power symbol). Choose Install and a progress screen partitions the card and installs everything; when it finishes the device restarts into RG OS. Choose Power off and the console switches off without changing anything on the card.
 
 | Control | On the welcome screen |
 |---|---|
-| D-pad up / down (or left / right) | Move between Install and Power off |
+| D-pad left / right (up / down works too) | Move between Install and Power off |
 | **A** (or START) | Confirm the highlighted button |
 
 If the console has no usable screen there is nothing to choose with, so the install runs on its own.
