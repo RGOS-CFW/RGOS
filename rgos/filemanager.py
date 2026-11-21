@@ -280,10 +280,14 @@ class FileManager:
             for src in clip:
                 if not os.path.lexists(src):
                     continue
-                (move_item if cut else copy_item)(src, dst)
+                result = (move_item if cut else copy_item)(src, dst)
+                if cut and result == src:  # already in this folder: nothing moved
+                    continue
                 n += 1
             if cut:
                 self.clip = []
+            if cut and not n:
+                return "Nothing to move: already in this folder"
             return "%s %d item%s" % ("Moved" if cut else "Pasted", n, "" if n == 1 else "s")
         return self._run("Moving..." if cut else "Copying...", fn)
 
