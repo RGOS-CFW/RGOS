@@ -76,6 +76,13 @@ def sh(args, timeout=30):
 
 
 
+def _device():
+    try:
+        return open(DEVICE_FILE).read().strip()
+    except OSError:
+        return ""
+
+
 def _natural(s):
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]
 
@@ -150,6 +157,21 @@ def _subdir(base, name):
         return None
 
 
+DEVICES = ("rg-rotate", "rg34xxsp", "rg35xxh", "rg35xxsp")
+
+
+def pick_tar(tars, device):
+    """Newest tar in the update folder that is not named for a different device.
+
+    build.sh names them rgos-update-<device>-<id>.tar, so a folder that holds the tars of several consoles
+    used to hand this device whichever name sorted last: a wrong-device tar that was rejected and renamed
+    .failed while the right one waited for another boot. Tars with no device in the name are still allowed.
+    """
+    others = [d for d in DEVICES if d != device]
+    mine = [t for t in tars if not any("-%s-" % d in t.lower() for d in others)]
+    return sorted(mine, key=_natural)[-1] if mine else None
+
+
 def find_update(parts):
     for dev in parts:
         mp = mounted_at(dev)
@@ -168,8 +190,9 @@ def find_update(parts):
                 tars = sorted(f for f in os.listdir(d) if TAR_RE.search(f) and not f.startswith(".") and os.path.isfile(os.path.join(d, f)))
             except OSError:
                 tars = []
-            if tars:
-                found = (dev, mp, ours, d, os.path.join(d, tars[-1]))
+            tar = pick_tar(tars, _device())
+            if tar:
+                found = (dev, mp, ours, d, os.path.join(d, tar))
                 break
         if found:
             return found
@@ -218,10 +241,7 @@ def read_tar(path):
         raise UpdateError("unsupported update format %r" % man.get("format"))
     if not ID_RE.match(str(man.get("id", ""))):
         raise UpdateError("manifest has no valid id")
-    try:
-        device = open(DEVICE_FILE).read().strip()
-    except OSError:
-        device = ""
+    device = _device()
     if man.get("device") != device:
         raise UpdateError("built for %r, this device is %r" % (man.get("device"), device))
     payload = {f: members["boot/" + f] for f in BOOT_FILES if "boot/" + f in members}
