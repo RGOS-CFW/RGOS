@@ -39,7 +39,10 @@ def read_conf(path):
     if not isinstance(conf, dict):
         conf = {}
     try:
-        fps = float(conf.get("fps", DEFAULT_FPS))
+        raw = conf.get("fps", DEFAULT_FPS)
+        if isinstance(raw, bool):
+            raise ValueError
+        fps = float(raw)
         if not 1 <= fps <= 60:
             raise ValueError
     except Exception:
