@@ -1943,7 +1943,8 @@ def flow_warm(cards, centre, budget, moving=False):
             for _d, i in order]
     for k in [k for k in _FLOW["jobs"] if k not in keys]:
         del _FLOW["jobs"][k]  # scrolled far away: drop half-built covers
-    levels = []
+    levels, lkeys = [], []
+    steam = _STEAM["on"]
     for (dist, i), k in zip(order, keys):
         g = cards[i]
         lv = _lru_get(_FLOW["cards"], k)
@@ -1963,9 +1964,11 @@ def flow_warm(cards, centre, budget, moving=False):
             if time.perf_counter() >= end:
                 if dist <= 2:
                     levels.append(lv)
+                    lkeys.append(k)
                 return
         if dist <= 2:
             levels.append(lv)
+            lkeys.append(k)
         if dist <= 3:
             _flow_title(g["title"], compact)
 
@@ -1990,6 +1993,26 @@ def flow_warm(cards, centre, budget, moving=False):
         ops[0] += 1
         return r
 
+    if steam:
+        # SteamOS draws only the focus size and the 80 % size and has no glow: build the hero for the focus first, then
+        # the next and previous ones (so the next press already has its backdrop), then the resting-size covers.
+        for lv in levels[:3]:
+            if _steam_hero_peek(lv[0]) is None:
+                if not room():
+                    return
+                timed(_steam_hero, lv[0])
+        small = max(16, int(round(S * 0.8)))
+        for lv, k in zip(levels, lkeys):
+            if lv[1] is None:
+                if not room():
+                    return
+                timed(_flow_build_level, lv, S, 1)
+            if (k, small) not in _STEAM["covers"]:
+                if not room():
+                    return
+                timed(_steam_cover, k, lv, S, small)
+        _FLOW["warm"] = sig
+        return
     for li in (0, 1):
         if _flow_glow_level(S, li, False) is None:
             if not room():
@@ -2023,6 +2046,7 @@ def flow_bg(c):
 
 
 def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk, bat, scanning):
+    _STEAM["on"] = False
     compact = H < 600
     arrows = bool(FONT_PATH[0])
     flow_bg(c)
@@ -2164,12 +2188,16 @@ STEAM_BLUE, STEAM_TEXT, STEAM_DIM, STEAM_YELLOW = (26, 159, 255), (199, 213, 224
 STEAM_GREEN, STEAM_GREEN2 = (112, 192, 52), (72, 128, 30)
 STEAM_PANEL, STEAM_LINE, STEAM_SEL = (22, 29, 38), (44, 60, 80), (52, 74, 100)
 STEAM_BTN = {"A": (91, 163, 43), "B": (214, 76, 62), "X": (26, 159, 255), "Y": (232, 188, 48)}
-STEAM_FADE = 0.28
+STEAM_FADE = 0.22
+HERO_DIV = 4            # the hero is composed at 1/4 size and upscaled once; it is blurred and shaded anyway
+HERO_CACHE = 6          # finished full-screen heroes kept (about 1.5 MB each)
+COVER_CACHE = 48        # per-width scaled capsule covers kept
 # the Steam-button menu: (target view, label); "home" and "power" are handled by the input code
 STEAM_MENU = (("home", "Home"), ("games", "Library"), ("recents", "Recent Games"), ("favorites", "Favorites"),
               ("tools", "Tools"), ("settings", "Settings"), ("power", "Power"))
-STEAM_UI = {"open": False, "slide": 0.0, "sel": 0, "wifi": None}
-_STEAM = {"grad": (None, None), "bg": (None, None, None), "shade": (None, None, None), "prev": None, "dim": (None, None)}
+STEAM_UI = {"open": False, "slide": 0.0, "sel": 0, "wifi": None, "rest": True}
+_STEAM = {"grad": (None, None), "shade": (None, None, None), "heroes": {}, "shown": None, "prev": None, "dim": (None, None),
+          "covers": {}, "btn": {}, "on": False}
 
 
 def steam_menu_index(view):
@@ -2201,53 +2229,102 @@ def steam_hints(hints, is_game, menu_open):
     return out
 
 
-def _steam_backdrop(c, base):
-    """Deck-style hero: navy gradient, the focused game's art blurred across the whole screen, then shaded on the left
-    and at the bottom so the title and prompts stay readable. Everything is cached (hero per capsule, shade per size);
-    moving to another capsule crossfades from the previous hero over STEAM_FADE seconds."""
-    gk = (W, H)
-    now = time.monotonic()
-    if _STEAM["grad"][0] != gk:
-        g = pygame.Surface((W, H))
-        for y in range(H):
-            g.fill(_mix(STEAM_BG2, STEAM_BG, min(1.0, y / (H * 0.8))), (0, y, W, 1))
+def _steam_layers(gk):
+    """Small-size gradient and the two shade layers, built once per screen size."""
+    if _STEAM["shade"][0] != gk:
+        sw, sh = max(8, W // HERO_DIV), max(8, H // HERO_DIV)
+        g = pygame.Surface((sw, sh), 0, 32)
+        for y in range(sh):
+            g.fill(_mix(STEAM_BG2, STEAM_BG, min(1.0, y / (sh * 0.8))), (0, y, sw, 1))
+        left = pygame.Surface((sw, sh), pygame.SRCALPHA)
+        for x in range(sw):
+            left.fill((8, 12, 18, int(185 * max(0.0, 1.0 - x / (sw * 0.8)))), (x, 0, 1, sh))
+        low = pygame.Surface((sw, sh), pygame.SRCALPHA)
+        y0 = int(sh * 0.42)
+        for y in range(y0, sh):
+            low.fill((8, 12, 18, int(215 * (y - y0) / float(max(1, sh - y0)))), (0, y, sw, 1))
         _STEAM["grad"] = (gk, g)
-    grad = _STEAM["grad"][1]
-    cur = _STEAM["bg"]
-    if cur[0] is not base or cur[1] != gk:
-        out = grad
-        if base is not None:
-            out = grad.copy()
-            try:
-                blur = pygame.transform.smoothscale(pygame.transform.smoothscale(base, (12, max(6, 12 * H // W))), (W, H))
-                blur.set_alpha(150)
-                out.blit(blur, (0, 0))
-            except Exception:
-                pass
-        if cur[2] is not None and cur[1] == gk:
-            _STEAM["prev"] = (cur[2], now)
-        _STEAM["bg"] = (base, gk, out)
-    out = _STEAM["bg"][2]
+        _STEAM["shade"] = (gk, left, low, (sw, sh))
+    return _STEAM["grad"][1], _STEAM["shade"]
+
+
+def _steam_hero_peek(base):
+    ent = _STEAM["heroes"].get(((W, H), id(base)))
+    return ent[1] if ent is not None and ent[0] is base else None
+
+
+def _steam_hero(base, ref=None):
+    """Finished hero for a capsule: navy gradient, the art blurred across the screen, then shaded on the left and at the
+    bottom so the title and prompts stay readable, all baked into ONE opaque surface. Showing it costs a single plain
+    blit per frame (the old code alpha-blended two full-screen shade layers on top of the gradient every frame). The
+    composing happens at 1/HERO_DIV size and is upscaled once, so building one is cheap enough to do at rest."""
+    hit = _steam_hero_peek(base)
+    if hit is not None:
+        return hit
+    gk = (W, H)
+    grad, (_gk, left, low, (sw, sh)) = _steam_layers(gk)
+    out = grad.copy()
+    if base is not None:
+        try:
+            blur = pygame.transform.smoothscale(pygame.transform.smoothscale(base, (12, max(6, 12 * H // W))), (sw, sh))
+            blur.set_alpha(150)
+            out.blit(blur, (0, 0))
+        except Exception:
+            pass
+    out.blit(left, (0, 0))
+    out.blit(low, (0, 0))
+    try:
+        hero = pygame.transform.smoothscale(out, (W, H))
+    except Exception:
+        hero = pygame.transform.scale(out, (W, H))
+    if ref is not None:
+        try:
+            hero = hero.convert(ref)  # same pixel format as the canvas: the per-frame blit is then a straight copy
+        except Exception:
+            pass
+    _lru_put(_STEAM["heroes"], (gk, id(base)), (base, hero), HERO_CACHE)
+    return hero
+
+
+def _steam_backdrop(c, base, rest=True):
+    """Draw the hero for the focused capsule. Moving to another capsule crossfades from the previous hero over
+    STEAM_FADE seconds. While the cursor is still travelling (rest False) the current hero is kept, so a held d-pad
+    never starts a crossfade per step and the backdrop changes once, when the cursor settles."""
+    now = time.monotonic()
+    shown = _STEAM["shown"]
+    if shown is None:
+        shown = _STEAM["shown"] = _steam_hero(base, c)
+    elif rest:
+        want = _steam_hero(base, c)
+        if want is not shown:
+            _STEAM["prev"] = (shown, now)
+            shown = _STEAM["shown"] = want
     prev = _STEAM["prev"]
-    if prev is not None and now - prev[1] < STEAM_FADE and prev[0] is not out:
+    if prev is not None and now - prev[1] < STEAM_FADE and prev[0] is not shown:
         c.blit(prev[0], (0, 0))
-        out.set_alpha(int(255 * (now - prev[1]) / STEAM_FADE))
-        c.blit(out, (0, 0))
-        out.set_alpha(255)
+        shown.set_alpha(int(255 * (now - prev[1]) / STEAM_FADE))
+        c.blit(shown, (0, 0))
+        shown.set_alpha(255)
         _anim_clock[2] = True
     else:
-        c.blit(out, (0, 0))
-    if _STEAM["shade"][0] != gk:
-        left = pygame.Surface((W, H), pygame.SRCALPHA)
-        for x in range(0, W, 3):
-            left.fill((8, 12, 18, int(185 * max(0.0, 1.0 - x / (W * 0.8)))), (x, 0, 3, H))
-        low = pygame.Surface((W, H), pygame.SRCALPHA)
-        y0 = int(H * 0.42)
-        for y in range(y0, H, 3):
-            low.fill((8, 12, 18, int(215 * (y - y0) / float(H - y0))), (0, y, W, 3))
-        _STEAM["shade"] = (gk, left, low)
-    c.blit(_STEAM["shade"][1], (0, 0))
-    c.blit(_STEAM["shade"][2], (0, 0))
+        c.blit(shown, (0, 0))
+
+
+def _steam_cover(key, lv, S, w):
+    """Capsule cover at width w without scaling inside the frame. The width is snapped (exactly S, exactly the resting
+    small size, else a multiple of 4) and the scaled surface cached, so a glide reuses surfaces instead of resizing
+    every card on every frame. Returns (surface, snapped width)."""
+    small = max(16, int(round(S * 0.8)))
+    wq = S if w >= S - 2 else small if abs(w - small) <= 2 else max(16, w - w % 4)
+    src = _flow_cover(lv, S, flow_level_index(wq, S))
+    if src.get_width() == wq:
+        return src, wq
+    ck = (key, wq)
+    ent = _lru_get(_STEAM["covers"], ck)
+    if ent is None or ent[0] is not lv[0]:
+        ent = (lv[0], pygame.transform.smoothscale(src, (wq, wq)))
+        _lru_put(_STEAM["covers"], ck, ent, COVER_CACHE)
+    return ent[1], wq
 
 
 def _steam_prompt(c, f_small, x, cy, key_, label, arrows):
@@ -2272,19 +2349,29 @@ def _steam_prompt_width(f_small, key_, label):
 
 
 def _steam_play_button(c, x, y, bw, bh, label, bf, focus):
-    """Deck Play button: rounded green gradient with a play triangle, lighter outline while it is the focus."""
-    r = 6
-    pygame.draw.rect(c, STEAM_GREEN2, (x, y, bw, bh), border_radius=r)
-    pygame.draw.rect(c, _mix(STEAM_GREEN, STEAM_GREEN2, 0.25), (x, y, bw, bh * 2 // 3), border_top_left_radius=r, border_top_right_radius=r)
-    pygame.draw.rect(c, STEAM_GREEN, (x + 2, y + 2, bw - 4, bh // 3), border_top_left_radius=r - 2, border_top_right_radius=r - 2)
-    if focus:
-        pygame.draw.rect(c, (255, 255, 255), (x - 2, y - 2, bw + 4, bh + 4), 2, border_radius=r + 2)
-    lt = bf.render(label, True, (255, 255, 255))
-    ix, cy = x + 20, y + bh // 2
-    tw = 12 if label == "Play" else 0
-    if tw:
-        pygame.draw.polygon(c, (255, 255, 255), [(ix, cy - 8), (ix, cy + 8), (ix + tw + 2, cy)])
-    c.blit(lt, (x + (bw + (tw + 8 if tw else 0) - lt.get_width()) // 2 + (6 if tw else 0), cy - lt.get_height() // 2))
+    """Deck Play button: rounded green gradient with a play triangle, lighter outline while it is the focus. The shape is
+    drawn once per (label, size, focus) and blitted afterwards; it is identical on every frame of a scroll."""
+    m = 4  # margin around the button for the focus outline
+    key = (label, bw, bh, focus)
+    sf = _STEAM["btn"].get(key)
+    if sf is None:
+        if len(_STEAM["btn"]) > 12:
+            _STEAM["btn"].clear()
+        r = 6
+        sf = pygame.Surface((bw + 2 * m, bh + 2 * m), pygame.SRCALPHA)
+        pygame.draw.rect(sf, STEAM_GREEN2, (m, m, bw, bh), border_radius=r)
+        pygame.draw.rect(sf, _mix(STEAM_GREEN, STEAM_GREEN2, 0.25), (m, m, bw, bh * 2 // 3), border_top_left_radius=r, border_top_right_radius=r)
+        pygame.draw.rect(sf, STEAM_GREEN, (m + 2, m + 2, bw - 4, bh // 3), border_top_left_radius=r - 2, border_top_right_radius=r - 2)
+        if focus:
+            pygame.draw.rect(sf, (255, 255, 255), (m - 2, m - 2, bw + 4, bh + 4), 2, border_radius=r + 2)
+        lt = bf.render(label, True, (255, 255, 255))
+        ix, cy = m + 20, m + bh // 2
+        tw = 12 if label == "Play" else 0
+        if tw:
+            pygame.draw.polygon(sf, (255, 255, 255), [(ix, cy - 8), (ix, cy + 8), (ix + tw + 2, cy)])
+        sf.blit(lt, (m + (bw + (tw + 8 if tw else 0) - lt.get_width()) // 2 + (6 if tw else 0), cy - lt.get_height() // 2))
+        _STEAM["btn"][key] = sf
+    c.blit(sf, (x - m, y - m))
 
 
 def _steam_wifi(c, right, cy, on):
@@ -2352,7 +2439,8 @@ def draw_steam_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, cl
     ci = int(round(fx))
     cur = (cards[ci % n] if n >= 3 else cards[max(0, min(n - 1, ci))]) if n else None
     base0 = _flow_draw_base(cur["hue"], cur["tag"], cur["abbr"], S, cur.get("icon"), cur.get("art"))[1][0] if cur else None
-    _steam_backdrop(c, base0)
+    _STEAM["on"] = True
+    _steam_backdrop(c, base0, STEAM_UI["rest"])
 
     # top bar: no panel, like gaming mode; clock, Wi-Fi and battery on the right, nothing on the left
     cy = top_h // 2 + 2
@@ -2391,7 +2479,7 @@ def draw_steam_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, cl
         wrap_ = n >= 3
         lo = int(math.floor(fx)) - 1 if wrap_ else 0
         idxs = range(lo, lo + min(n, 6)) if wrap_ else range(n)
-        pulse = 0.5 + 0.5 * math.sin(time.time() * 2.6)
+        pulse = round((0.5 + 0.5 * math.sin(time.time() * 2.6)) * 8) / 8.0  # 8 steps: an unchanged frame is not re-sent
         vis = []
         for i in idxs:
             d = i - fx
@@ -2401,11 +2489,11 @@ def draw_steam_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, cl
                 vis.append((abs(d), i, d, int(left), w))
         for _ad, i, d, left, w in sorted(vis, reverse=True):
             g = cards[i % n]
-            lv = _flow_draw_base(g["hue"], g["tag"], g["abbr"], S, g.get("icon"), g.get("art"))[1]
-            li = flow_level_index(w, S)
-            src = _flow_cover(lv, S, li)
-            surf = src if src.get_width() == w else pygame.transform.scale(src, (w, w))
+            ck, lv = _flow_draw_base(g["hue"], g["tag"], g["abbr"], S, g.get("icon"), g.get("art"))
+            surf, wq = _steam_cover(ck, lv, S, w)
             surf.set_alpha(int(max(0, min(255, (255 - 120 * min(abs(d), 1.0)) * fade))))
+            left += (w - wq) // 2  # a snapped cover stays centred on where the exact one would be
+            w = wq
             top = mid - w // 2
             sh = _flow_shadow(w)
             sh.set_alpha(int(190 * fade))
@@ -4277,6 +4365,8 @@ def main():
                 STEAM_UI["wifi"] = rd_net()
             flow_fx, flow_fv = _smooth_damp(flow_fx, flow_fv, flow_t, fdt)
             flow_fade = min(1.0, flow_fade + fdt * 6.0)
+            # the SteamOS backdrop only changes once the cursor settles (no input for a moment, or arrived)
+            STEAM_UI["rest"] = flow_fx == flow_t or (time.monotonic() - last_act > 0.12 and abs(flow_fx - flow_t) < 0.6)
             if flow_fx != flow_t or flow_fade < 1.0:
                 _anim_clock[2] = True
             if view == "home":
