@@ -1,4 +1,4 @@
-# RG OS
+# 🎮 RG OS 💿
 
 RG OS is an open source Linux emulation distribution for retro handhelds built on top of Debian using the ROCKNIX kernel and Device Trees.
 
@@ -14,5 +14,6 @@ By joining our [Discord Server](https://discord.gg/PmQeRvpGa), you can help grow
 
 # Credits & Thanks
 - Thanks to MuOS for being the entire inspiration behind this CFW.
+- Thanks to our testers for testing out the CFW, reporting bugs and giving feedback.
 - Credits to Noxwell for the ROCKNIX kernel and Device Trees for the Anbernic RG ROTATE.
 - Credits to ROCKNIX for the kernel and Device Trees.

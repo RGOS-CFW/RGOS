@@ -415,7 +415,9 @@ def save_state(st):
 
 def load_favorites():
     try:
-        with open(FAVORITES_FILE, "r", encoding="utf-8") as f:
+        # favorites.txt lives on the user-editable ROMS partition: tolerate a Windows BOM and non-UTF-8 bytes
+        # (a stray byte raised UnicodeDecodeError, which is not an OSError, and crashed the launcher at start)
+        with open(FAVORITES_FILE, "r", encoding="utf-8-sig", errors="replace") as f:
             return list(dict.fromkeys(line.strip() for line in f if line.strip()))
     except OSError:
         return []
@@ -458,6 +460,13 @@ def core_label(sid, state):
     if core not in SYSTEM_CORE_COMPATIBILITY.get(sid, ()):
         core = default_core(sid)
     return CORE_NAMES.get(core) or core.replace("_", " ") or "RetroArch"
+
+
+def game_runner_text(g, state):
+    """What runs a game, for the details panel: a native port, or RetroArch plus the chosen core."""
+    if g.get("core") == "native":
+        return "Native port"
+    return "RetroArch + " + core_label(g["sid"], state)
 
 
 def bios_dirs():
@@ -5004,7 +5013,7 @@ def main():
             _yr = _gm.get("year") or ""
             canvas.blit(f_small.render("%.1f MB%s" % (g["size"] / 1048576, ("   %s" % _yr) if _yr else ""), True, DIM),
                         (px + 15, top_y + 300 + DY))
-            canvas.blit(f_small.render("Native port", True, DIM), (px + 15, top_y + 322 + DY))
+            canvas.blit(f_small.render(fit(f_small, game_runner_text(g, state), 175), True, DIM), (px + 15, top_y + 322 + DY))
             _desc = _gm.get("description")
             if _desc:
                 _lh = f_small.get_linesize()

@@ -569,7 +569,7 @@ def run():
         write_status("hub: disabled in input.json")
         log("disabled in input.json; leaving the raw input devices alone")
         while not STOP:
-            time.sleep(3600)
+            time.sleep(1)  # not 3600: since PEP 475 a signal handler does not cut time.sleep short
         return 0
     os.makedirs("/run/rgos", exist_ok=True)
     spec = iconf.get("sources") or "auto"
