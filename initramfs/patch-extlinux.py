@@ -3,14 +3,14 @@
 APPEND line, so the kernel runs our init instead of the one built into ROCKNIX's kernel.
 
 usage: patch-extlinux.py <extlinux.conf> <initrd path on the boot partition, e.g. /rgos-initrd.cpio>
-Also adds "quiet" and "vt.global_cursor_default=0" when missing, so kernel messages and the blinking text cursor do not
+Also adds "quiet", "loglevel=0" and "vt.global_cursor_default=0" when missing, so kernel messages and the blinking text cursor do not
 draw over the boot logo. Idempotent: earlier INITRD lines and rdinit= options are replaced.
 """
 import re
 import sys
 
 
-QUIET_ARGS = ("quiet", "vt.global_cursor_default=0")
+QUIET_ARGS = ("quiet", "loglevel=0", "vt.global_cursor_default=0")
 
 
 def with_quiet(line):

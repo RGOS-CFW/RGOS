@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import glob
 import atexit, io, json, math, os, random, re, signal, subprocess, sys, threading, time
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import pygame
 from evpad import EvPads, CODES as EV_CODES, EV_KEY, EV_ABS
 import fbout
