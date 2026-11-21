@@ -94,7 +94,7 @@ def key_file_path(roms_root):
 
 def _read_key_file(path):
     try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(path, "r", encoding="utf-8-sig", errors="ignore") as f:  # -sig: Windows Notepad saves a BOM
             return f.readline().strip()
     except OSError:
         return ""
