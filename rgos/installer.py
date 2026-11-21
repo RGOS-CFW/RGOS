@@ -7,7 +7,8 @@ partition:
   /rgos-payload/manifest.json        {"format": 1, "id": ..., "device": ..., "components": [...]}
   /rgos-payload/<component>.tar.gz   one archive per component (PortMaster, the libretro cores, optional extras)
 
-On the first boot rgos-session runs `rgos-installer` (the screen) before anything else. It uses this module to
+On the first boot rgos-session runs `rgos-installer` (the screen) before anything else. The screen opens on a welcome page
+with two buttons, Install and Power off; nothing is touched on the card until Install is chosen. It uses this module to
 
   1. create and format the ROMS partition in the free space of the card (rgos-roms) and mount it,
   2. create the folder tree (roms/<system>, saves/, states/, bios/, ...),
@@ -53,6 +54,7 @@ LOG_COPY = "rgos-install-log.txt"
 FORMAT = 1
 MARGIN = 32 << 20           # free space that must be left on ROMS after everything is unpacked
 EXIT_REBOOT = 10            # exit status of rgos-installer: installed, reboot now
+EXIT_POWEROFF = 20          # exit status of rgos-installer: the person chose "Power off" on the welcome screen (same code as menu.py's EXIT_POWER)
 DEVICES = ("rg34xxsp", "rg35xxh", "rg35xxsp", "rg-rotate")
 CANVAS = {"rg-rotate": (720, 720), "rg34xxsp": (720, 480), "rg35xxh": (720, 540), "rg35xxsp": (720, 540)}
 DEVICE_NAMES = {"rg-rotate": "Anbernic RG Rotate", "rg34xxsp": "Anbernic RG34XXSP",

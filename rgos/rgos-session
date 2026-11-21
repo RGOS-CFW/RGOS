@@ -91,10 +91,13 @@ python3 /opt/rgos/rgos-update boot 2>>/var/log/rgos-update.log
 [ $? -eq 10 ] && { sync; reboot -f; sleep 60; }
 fixperms
 # first-boot installer: an installer image carries /boot/rgos-payload; until /boot/rgos-installed.json exists the installer partitions the
-# card, unpacks PortMaster / the cores / the folder tree and asks for a reboot (it exits 0 when there is nothing to do)
+# card, unpacks PortMaster / the cores / the folder tree and asks for a reboot (it exits 0 when there is nothing to do). It opens on an
+# Install / Power off screen: exit 20 means Power off was chosen, so the console is switched off without touching the card
 if [ -f /boot/rgos-payload/manifest.json ] && [ ! -f /boot/rgos-installed.json ]; then
     python3 /opt/rgos/rgos-installer 2>>/var/log/rgos-installer.log
-    [ $? -eq 10 ] && { sync; reboot -f; sleep 60; }
+    inst_rc=$?
+    [ $inst_rc -eq 10 ] && { sync; reboot -f; sleep 60; }
+    [ $inst_rc -eq 20 ] && { sync; poweroff -f; sleep 60; }
 fi
 sh /opt/rgos/rgos-roms 2>>/var/log/rgos-roms.log
 if ! mountpoint -q /boot; then for d in /dev/mmcblk*p1; do [ -b "$d" ] && mount -t vfat "$d" /boot 2>/dev/null && break; done; fi
