@@ -91,6 +91,13 @@ class KeyTests(unittest.TestCase):
             f.write(KEY + "\r\nsecond line ignored\n")
         self.assertEqual(artwork.load_key(self.tmp), KEY)
 
+    def test_key_file_with_utf8_bom_is_read(self):
+        # Windows Notepad prepends a BOM when saving "UTF-8"; the key must still validate
+        os.makedirs(os.path.join(self.tmp, "rgos-data"))
+        with open(os.path.join(self.tmp, "rgos-data", "steamgriddb-key.txt"), "wb") as f:
+            f.write(b"\xef\xbb\xbf" + KEY.encode() + b"\r\n")
+        self.assertEqual(artwork.load_key(self.tmp), KEY)
+
     def test_legacy_key_file_in_roms_root_still_read(self):
         with open(os.path.join(self.tmp, "steamgriddb-key.txt"), "w") as f:
             f.write(KEY + "\n")
