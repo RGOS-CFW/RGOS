@@ -929,7 +929,7 @@ RECENT_MAX = 20
 LAUNCHERS = [("rgos", "RG OS", "Classic tile launcher"), ("xmb", "RG XMB", "PlayStation-style cross media bar"),
              ("flow", "RG Flow", "Carousels: menu, systems, games"),
              ("rgclassic", "RG Classic", "Pixel launcher: tiles, lists and menus"),
-             ("steamos", "SteamOS", "Steam Deck gaming mode: hero backdrop, capsule row, Play button")]
+             ("steamos", "SteamOS", "Steam Deck gaming mode: hero backdrop, capsule row, Play button, MENU side panel")]
 DEFAULT_LAUNCHER = LAUNCHERS[0][0]
 
 
@@ -2149,30 +2149,68 @@ def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk
 
 # ---- SteamOS launcher (Steam Deck gaming-mode look) --------------------------------------------------------------
 # Reuses the RG Flow plumbing (cards, scrolling, cover cache, input) and only changes how a level is drawn: a left-
-# anchored capsule row with a pulsing focus ring, a title block with a green Play button and a coloured button-prompt
-# bar. The palette is fixed (it is the look being cloned) and does not follow the RG OS theme.
+# anchored capsule row with a pulsing focus ring, a title block with a green Play button, a crossfading hero backdrop,
+# a Steam-button side menu (MENU) and a Deck-style prompt bar (MENU/X on the left, A/B/Y on the right). The palette is
+# fixed (it is the look being cloned) and does not follow the RG OS theme.
 FLOW_LIKE = ("flow", "steamos")
 STEAM_BG, STEAM_BG2 = (14, 20, 27), (30, 45, 62)
 STEAM_BLUE, STEAM_TEXT, STEAM_DIM, STEAM_YELLOW = (26, 159, 255), (199, 213, 224), (132, 146, 160), (232, 188, 48)
 STEAM_GREEN, STEAM_GREEN2 = (112, 192, 52), (72, 128, 30)
+STEAM_PANEL, STEAM_LINE, STEAM_SEL = (22, 29, 38), (44, 60, 80), (52, 74, 100)
 STEAM_BTN = {"A": (91, 163, 43), "B": (214, 76, 62), "X": (26, 159, 255), "Y": (232, 188, 48)}
-_STEAM = {"grad": (None, None), "bg": (None, None, None), "shade": (None, None, None)}
+STEAM_FADE = 0.28
+# the Steam-button menu: (target view, label); "home" and "power" are handled by the input code
+STEAM_MENU = (("home", "Home"), ("games", "Library"), ("recents", "Recent Games"), ("favorites", "Favorites"),
+              ("tools", "Tools"), ("settings", "Settings"), ("power", "Power"))
+STEAM_UI = {"open": False, "slide": 0.0, "sel": 0, "wifi": None}
+_STEAM = {"grad": (None, None), "bg": (None, None, None), "shade": (None, None, None), "prev": None, "dim": (None, None)}
+
+
+def steam_menu_index(view):
+    return {"systems": 1, "games": 1, "recents": 2, "favorites": 3}.get(view, 0)
+
+
+def steam_clock(clk):
+    """24 h 'HH:MM' from the clock -> the Deck's default 12 h 'h:MM AM'."""
+    try:
+        h, m = clk.split(":")[:2]
+        h = int(h)
+    except ValueError:
+        return clk
+    return "%d:%s %s" % (h % 12 or 12, m[:2], "AM" if h < 12 else "PM")
+
+
+def steam_heading(crumb):
+    return {"": "Home", "Recents": "Recent Games"}.get(crumb, crumb)
+
+
+def steam_hints(hints, is_game, menu_open):
+    """Flow hints -> Deck prompts: A reads Play on a game and Select elsewhere, the MENU hint moves to the left side of
+    the bar, and X (rescan) is always offered. While the side menu is open only A and B apply."""
+    if menu_open:
+        return [("A", "Select"), ("B", "Back")]
+    out = [(k, ("Play" if is_game else "Select") if k == "A" else l) for k, l in hints if k != "MENU"]
+    if not any(k == "X" for k, _l in out):
+        out.append(("X", "Rescan"))
+    return out
 
 
 def _steam_backdrop(c, base):
     """Deck-style hero: navy gradient, the focused game's art blurred across the whole screen, then shaded on the left
-    and at the bottom so the title and prompts stay readable. Everything is cached (hero per capsule, shade per size)."""
+    and at the bottom so the title and prompts stay readable. Everything is cached (hero per capsule, shade per size);
+    moving to another capsule crossfades from the previous hero over STEAM_FADE seconds."""
     gk = (W, H)
+    now = time.monotonic()
     if _STEAM["grad"][0] != gk:
         g = pygame.Surface((W, H))
         for y in range(H):
             g.fill(_mix(STEAM_BG2, STEAM_BG, min(1.0, y / (H * 0.8))), (0, y, W, 1))
         _STEAM["grad"] = (gk, g)
     grad = _STEAM["grad"][1]
-    if base is None:
-        c.blit(grad, (0, 0))
-    else:
-        if _STEAM["bg"][0] is not base or _STEAM["bg"][1] != gk:
+    cur = _STEAM["bg"]
+    if cur[0] is not base or cur[1] != gk:
+        out = grad
+        if base is not None:
             out = grad.copy()
             try:
                 blur = pygame.transform.smoothscale(pygame.transform.smoothscale(base, (12, max(6, 12 * H // W))), (W, H))
@@ -2180,9 +2218,20 @@ def _steam_backdrop(c, base):
                 out.blit(blur, (0, 0))
             except Exception:
                 pass
-            _STEAM["bg"] = (base, gk, out)
-        c.blit(_STEAM["bg"][2], (0, 0))
-    if _STEAM.get("shade", (None,))[0] != gk:
+        if cur[2] is not None and cur[1] == gk:
+            _STEAM["prev"] = (cur[2], now)
+        _STEAM["bg"] = (base, gk, out)
+    out = _STEAM["bg"][2]
+    prev = _STEAM["prev"]
+    if prev is not None and now - prev[1] < STEAM_FADE and prev[0] is not out:
+        c.blit(prev[0], (0, 0))
+        out.set_alpha(int(255 * (now - prev[1]) / STEAM_FADE))
+        c.blit(out, (0, 0))
+        out.set_alpha(255)
+        _anim_clock[2] = True
+    else:
+        c.blit(out, (0, 0))
+    if _STEAM["shade"][0] != gk:
         left = pygame.Surface((W, H), pygame.SRCALPHA)
         for x in range(0, W, 3):
             left.fill((8, 12, 18, int(185 * max(0.0, 1.0 - x / (W * 0.8)))), (x, 0, 3, H))
@@ -2205,10 +2254,15 @@ def _steam_prompt(c, f_small, x, cy, key_, label, arrows):
     if col:
         pygame.draw.circle(c, col, (x + 12, cy), 12)
     else:
-        pygame.draw.rect(c, (44, 60, 80), (x, cy - 12, gw, 24), border_radius=12)
+        pygame.draw.rect(c, STEAM_LINE, (x, cy - 12, gw, 24), border_radius=12)
     c.blit(kt, (x + (gw - kt.get_width()) // 2, cy - kt.get_height() // 2))
     c.blit(lt, (x + gw + 7, cy - lt.get_height() // 2))
     return x + gw + 7 + lt.get_width()
+
+
+def _steam_prompt_width(f_small, key_, label):
+    kw = 24 if key_ in STEAM_BTN else f_small.size(key_.replace("<>", "L/R"))[0] + 16
+    return kw + 7 + f_small.size(label)[0]
 
 
 def _steam_play_button(c, x, y, bw, bh, label, bf, focus):
@@ -2227,6 +2281,60 @@ def _steam_play_button(c, x, y, bw, bh, label, bf, focus):
     c.blit(lt, (x + (bw + (tw + 8 if tw else 0) - lt.get_width()) // 2 + (6 if tw else 0), cy - lt.get_height() // 2))
 
 
+def _steam_wifi(c, right, cy, on):
+    """Three arcs and a dot, white while a Wi-Fi link is up and grey while it is not. Returns the x it starts at."""
+    col = (255, 255, 255) if on else (110, 122, 136)
+    cx, by = right - 12, cy + 8
+    for r in (6, 11, 16):
+        pygame.draw.arc(c, col, (cx - r, by - r, 2 * r, 2 * r), math.pi * 0.25, math.pi * 0.75, 2)
+    pygame.draw.circle(c, col, (cx, by), 2)
+    return right - 26
+
+
+def draw_steam_menu(c, f_small, f_row, bottom):
+    """The Steam-button panel: slides in from the left over a dimmed screen, profile on top, then the menu rows."""
+    s = STEAM_UI["slide"]
+    if s <= 0.001:
+        return
+    e = 1 - (1 - min(1.0, s)) ** 3
+    pw = max(250, int(W * 0.36))
+    if _STEAM["dim"][0] != (W, bottom):
+        d = pygame.Surface((W, bottom), pygame.SRCALPHA)
+        d.fill((4, 8, 14, 170))
+        _STEAM["dim"] = ((W, bottom), d)
+    d = _STEAM["dim"][1]
+    d.set_alpha(int(255 * e))
+    c.blit(d, (0, 0))
+    x = int(-pw * (1 - e))
+    pygame.draw.rect(c, STEAM_PANEL, (x, 0, pw, bottom))
+    pygame.draw.rect(c, STEAM_LINE, (x + pw - 1, 0, 1, bottom))
+    compact = H < 600
+    pad, r = 18, 18 if compact else 22
+    head = 58 if compact else 70
+    cy0 = head // 2 + 6
+    pygame.draw.circle(c, STEAM_LINE, (x + pad + r, cy0), r)
+    pygame.draw.circle(c, STEAM_TEXT, (x + pad + r, cy0), r, 2)
+    rg = f_small.render("RG", True, (255, 255, 255))
+    c.blit(rg, (x + pad + r - rg.get_width() // 2, cy0 - rg.get_height() // 2))
+    tx = x + pad + 2 * r + 12
+    nt = f_row.render("RG OS", True, (255, 255, 255))
+    c.blit(nt, (tx, cy0 - nt.get_height() + 2))
+    online = STEAM_UI["wifi"]
+    pygame.draw.circle(c, STEAM_GREEN if online else (110, 122, 136), (tx + 4, cy0 + 12), 4)
+    c.blit(f_small.render("Online" if online else "Offline", True, STEAM_DIM), (tx + 14, cy0 + 12 - f_small.get_height() // 2 + 1))
+    y = head + 14
+    pygame.draw.rect(c, STEAM_LINE, (x + pad, y - 8, pw - 2 * pad, 1))
+    rh = max(30, min(46, (bottom - y - 8) // len(STEAM_MENU)))
+    for i, (_k, label) in enumerate(STEAM_MENU):
+        sel = i == STEAM_UI["sel"]
+        ry = y + i * rh
+        if sel:
+            pygame.draw.rect(c, STEAM_SEL, (x + 10, ry, pw - 20, rh - 4), border_radius=6)
+            pygame.draw.rect(c, STEAM_BLUE, (x + 10, ry + 4, 4, rh - 12), border_radius=2)
+        t = f_row.render(fit(f_row, label, pw - 70), True, (255, 255, 255) if sel else STEAM_TEXT)
+        c.blit(t, (x + 30, ry + (rh - 4 - t.get_height()) // 2))
+
+
 def draw_steam_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk, bat, scanning):
     compact = H < 600
     arrows = bool(FONT_PATH[0])
@@ -2240,7 +2348,7 @@ def draw_steam_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, cl
     base0 = _flow_draw_base(cur["hue"], cur["tag"], cur["abbr"], S, cur.get("icon"), cur.get("art"))[1][0] if cur else None
     _steam_backdrop(c, base0)
 
-    # top bar: no panel, like gaming mode; clock and battery on the right, nothing on the left
+    # top bar: no panel, like gaming mode; clock, Wi-Fi and battery on the right, nothing on the left
     cy = top_h // 2 + 2
     right = W - 24
     if bat:
@@ -2255,12 +2363,14 @@ def draw_steam_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, cl
         pygame.draw.rect(c, col, (bx + 25, by + 4, 3, 6))
         pygame.draw.rect(c, col, (bx + 3, by + 3, max(2, 19 * pct // 100), 8))
         right = bx - 18
-    info = _flow_font(20 if compact else 22).render("Scanning..." if scanning else clk, True, (255, 255, 255))
+    if STEAM_UI["wifi"] is not None:
+        right = _steam_wifi(c, right, cy, STEAM_UI["wifi"]) - 14
+    info = _flow_font(20 if compact else 22).render("Scanning..." if scanning else steam_clock(clk), True, (255, 255, 255))
     c.blit(info, (right - info.get_width(), cy - info.get_height() // 2))
 
     # section heading above the row, like "Recent Games"
     hf = _flow_font(22 if compact else 26)
-    ht = hf.render(fit(hf, crumb or "Home", W // 2), True, (255, 255, 255))
+    ht = hf.render(fit(hf, steam_heading(crumb) or "Home", W - 56), True, (255, 255, 255))
     c.blit(ht, (28, top_h - 2))
 
     # capsule row, focus anchored on the left; the others follow at 80 % and dimmed
@@ -2316,7 +2426,7 @@ def draw_steam_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, cl
         label = "Play" if "game" in cur else "Shut down" if cur.get("id") == "power" else "Open"
         bf = _flow_font(20 if compact else 22)
         bw, bh = max(150, bf.size(label)[0] + 76), 38 if compact else 44
-        _steam_play_button(c, 28, y, bw, bh, label, bf, True)
+        _steam_play_button(c, 28, y, bw, bh, label, bf, not STEAM_UI["open"])
         nx = 28 + bw + 12
         if "game" in cur:
             fav = bool(cur.get("fav"))
@@ -2337,21 +2447,19 @@ def draw_steam_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, cl
             c.blit(vt, (nx, max(y - 4 + ht_.get_height(), y + bh + 2 - vt.get_height())))
             nx += max(ht_.get_width(), vt.get_width()) + 34
 
-    # bottom bar: Steam-style button on the left, button prompts on the right
+    # bottom bar: MENU on the left like the Steam button, button prompts on the right
     by = H - bar_h
+    cyb = by + bar_h // 2
     pygame.draw.rect(c, (40, 56, 74), (0, by, W, 1))
-    pygame.draw.circle(c, (44, 60, 80), (38, by + bar_h // 2), 15)
-    pygame.draw.circle(c, STEAM_TEXT, (38, by + bar_h // 2), 15, 2)
-    rg = f_small.render("RG", True, (255, 255, 255))
-    c.blit(rg, (38 - rg.get_width() // 2, by + bar_h // 2 - rg.get_height() // 2))
-    widths = []
-    for key_, label in reversed(list(hints)):
-        kw = f_small.size(key_.replace("<>", "L/R"))[0] + 16 if key_ not in STEAM_BTN else 24
-        widths.append((key_, label, kw + 7 + f_small.size(label)[0]))
-    x = W - 24 - sum(w for _k, _l, w in widths) - 22 * (len(widths) - 1)
-    for key_, label, w in reversed(widths):
-        _steam_prompt(c, f_small, x, by + bar_h // 2, key_, label, arrows)
-        x += w + 22
+    left_end = 24 if STEAM_UI["open"] else _steam_prompt(c, f_small, 24, cyb, "MENU", "Menu", arrows) + 22
+    prompts = steam_hints(hints, bool(cur and "game" in cur), STEAM_UI["open"])
+    while len(prompts) > 2 and sum(_steam_prompt_width(f_small, k, l) for k, l in prompts) + 22 * (len(prompts) - 1) > W - 24 - left_end:
+        prompts.pop(0)
+    x = W - 24 - sum(_steam_prompt_width(f_small, k, l) for k, l in prompts) - 22 * (len(prompts) - 1)
+    for key_, label in prompts:
+        _steam_prompt(c, f_small, x, cyb, key_, label, arrows)
+        x += _steam_prompt_width(f_small, key_, label) + 22
+    draw_steam_menu(c, f_small, f_row, by)
 
 
 def rd_file(path):
@@ -2801,6 +2909,17 @@ def read_brightness():
         return int(v), stamp
     except (OSError, ValueError):
         return None
+
+
+def read_online():
+    """True while a wireless interface reports its link up (the Deck's top-right Wi-Fi icon)."""
+    try:
+        for name in sorted(os.listdir("/sys/class/net")):
+            if name.startswith(("wlan", "wlp", "wl")) and rd_file("/sys/class/net/%s/operstate" % name).strip() == "up":
+                return True
+    except OSError:
+        pass
+    return False
 
 
 def read_battery():
@@ -3299,7 +3418,7 @@ def main():
     rows, list_x, list_w, top_y, row_h = 8 + DY // 44, 20, 450 + DX, 84, 44
     PH = 352 + DY
     clock = pygame.time.Clock()
-    rd_bri, rd_bat = throttled(read_brightness, 0.1), throttled(read_battery, 10.0)
+    rd_bri, rd_bat, rd_net = throttled(read_brightness, 0.1), throttled(read_battery, 10.0), throttled(read_online, 5.0)
     last_act, clk_at, clk = time.monotonic(), 0, ""
     IDLE_VIEWS = ("home", "systems", "games", "recents", "tools", "settings")
     code = None
@@ -3467,8 +3586,25 @@ def main():
                 elif a in ("b", "menu"):
                     dd_set(dd["kind"], dd["orig"])
                     dd = None
+            elif launcher_id == "steamos" and STEAM_UI["open"] and view in ("home", "systems", "games", "recents", "favorites"):
+                if a in ("up", "down"):
+                    STEAM_UI["sel"] = (STEAM_UI["sel"] + (1 if a == "down" else -1)) % len(STEAM_MENU)
+                elif a in ("b", "menu"):
+                    STEAM_UI["open"] = False
+                elif a == "a":
+                    STEAM_UI["open"] = False
+                    target = STEAM_MENU[STEAM_UI["sel"]][0]
+                    if target == "power":
+                        code = EXIT_POWER
+                    elif target == "games":
+                        view = "systems"
+                        sys_idx = min(sys_idx, max(0, len(vsys) - 1))
+                    else:
+                        view = target
             elif a == "menu":
-                if view == "home" and launcher_id in FLOW_LIKE:
+                if launcher_id == "steamos" and view in ("home", "systems", "games", "recents", "favorites"):
+                    STEAM_UI["open"], STEAM_UI["sel"] = True, steam_menu_index(view)
+                elif view == "home" and launcher_id in FLOW_LIKE:
                     flow_t = 0
                     flow_fade = 0.0
                 elif view in ("systems", "games", "recents", "favorites") and launcher_id in FLOW_LIKE:
@@ -4052,6 +4188,14 @@ def main():
             elif fn_:
                 flow_t = max(0, min(fn_ - 1, flow_t))
             fdt = _anim_clock[1]
+            if launcher_id == "steamos":
+                s_tgt = 1.0 if STEAM_UI["open"] else 0.0
+                STEAM_UI["slide"] += (s_tgt - STEAM_UI["slide"]) * min(1.0, fdt * 14.0)
+                if abs(s_tgt - STEAM_UI["slide"]) < 0.01:
+                    STEAM_UI["slide"] = s_tgt
+                else:
+                    _anim_clock[2] = True
+                STEAM_UI["wifi"] = rd_net()
             flow_fx, flow_fv = _smooth_damp(flow_fx, flow_fv, flow_t, fdt)
             flow_fade = min(1.0, flow_fade + fdt * 6.0)
             if flow_fx != flow_t or flow_fade < 1.0:
