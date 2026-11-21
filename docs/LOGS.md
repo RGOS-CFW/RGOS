@@ -15,7 +15,7 @@
 
 ## On the device (`/var/log/`)
 
-`rgos-menu.log`, `rgos-input.log`, `rgos-launch.log`, `rgos-native.log`, `rgos-retroarch.log`, `rgos-roms.log`, `rgos-artwork.log`, `rgos-wifi.log`, `rgos-gamemenu.log`, `rgos-update.log`. Many of these are bundled into `rgos-logs.txt`.
+`rgos-menu.log`, `rgos-input.log`, `rgos-launch.log`, `rgos-native.log`, `rgos-retroarch.log`, `rgos-roms.log`, `rgos-installer.log`, `rgos-artwork.log`, `rgos-wifi.log`, `rgos-gamemenu.log`, `rgos-update.log`. Many of these are bundled into `rgos-logs.txt`.
 
 ## Reporting a problem
 

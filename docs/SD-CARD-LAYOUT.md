@@ -37,6 +37,7 @@ Put the card in a PC; the boot partition is the small FAT one.
 |---|---|
 | `rgos-governor.txt` | CPU/GPU governor while a native port runs (`default` keeps the stock one). See [PORTS.md](PORTS.md) |
 | `retroarch-gc-video.txt` | Force the GameCube video driver: `glcore`, `gl` or `vulkan`. See [GAMECUBE.md](GAMECUBE.md) |
+| `rgos-install.txt` | Options for the first-boot installer (`skip_install=1`, `keep_payload=1`, `skip=`). See [INSTALLER.md](INSTALLER.md) |
 | `ssh-password.txt` | Custom root password for SSH. See [NETWORKING.md](NETWORKING.md) |
 | `authorized_keys` or `authorized_keys.txt` | SSH public keys for key login |
 
