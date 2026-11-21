@@ -397,7 +397,8 @@ class Wiring(unittest.TestCase):
         self.assertLess(i_upd, i_inst)
         self.assertLess(i_inst, i_roms)
         self.assertIn("[ -f /boot/rgos-payload/manifest.json ] && [ ! -f /boot/rgos-installed.json ]", s)
-        self.assertIn("[ $? -eq 10 ] && { sync; reboot -f; sleep 60; }", s[i_inst:i_roms])
+        self.assertIn("[ $inst_rc -eq 10 ] && { sync; reboot -f; sleep 60; }", s[i_inst:i_roms])
+        self.assertIn("[ $inst_rc -eq 20 ] && { sync; poweroff -f; sleep 60; }", s[i_inst:i_roms])
         self.assertIn("/var/log/rgos-installer.log", s[s.index("for f in /var/log/rgos-menu.log"):])
 
     def test_session_hook_and_installer_agree_on_the_file_names(self):
@@ -405,6 +406,10 @@ class Wiring(unittest.TestCase):
         self.assertIn("/boot/%s/%s" % (installer.PAYLOAD, installer.MANIFEST), s)
         self.assertIn("/boot/%s" % installer.DONE_FILE, s)
         self.assertEqual(installer.EXIT_REBOOT, 10)
+        self.assertEqual(installer.EXIT_POWEROFF, 20)
+
+    def test_power_off_uses_the_same_exit_status_as_the_menu(self):
+        self.assertEqual(installer.EXIT_POWEROFF, helpers.load_menu().EXIT_POWER)
 
     def test_build_has_an_installer_mode(self):
         b = read("build.sh")
@@ -470,6 +475,48 @@ class Screen(unittest.TestCase):
         self.assertTrue(all(len(x) <= 10 or " " not in x for x in lines))
         self.assertEqual(" ".join(lines), "one two three four five six")
         self.assertEqual(ui.wrap(FakeFont(), "averyveryverylongwordwithoutspaces", 8 * 5), ["averyveryverylongwordwithoutspaces"])
+
+    def test_the_welcome_screen_draws_with_either_button_selected(self):
+        ui = load_ui()
+        pg, canvas = mock.MagicMock(), mock.MagicMock()
+        fonts = (FakeFont(), FakeFont(), FakeFont())
+        for dev, size in installer.CANVAS.items():
+            for sel in (0, 1):
+                ui.draw_welcome(pg, canvas, size, fonts, sel, dev)
+        ui.draw_welcome(pg, canvas, (720, 480), fonts, 0, "")
+        self.assertTrue(canvas.blit.called)
+
+    def test_welcome_buttons_are_install_then_power_off(self):
+        ui = load_ui()
+        self.assertEqual(ui.CHOICES, ("install", "poweroff"))
+        self.assertEqual([ui.CHOICE_LABELS[c] for c in ui.CHOICES], ["Install", "Power off"])
+
+    def test_welcome_navigation_and_confirm(self):
+        ui = load_ui()
+        mi = ui.menu_input
+        self.assertEqual(mi(0, ui.EV_KEY, ui.KEY_DOWN, 1), (1, None))
+        self.assertEqual(mi(1, ui.EV_KEY, ui.KEY_UP, 1), (0, None))
+        self.assertEqual(mi(0, ui.EV_KEY, ui.KEY_UP, 1), (1, None))       # wraps round
+        self.assertEqual(mi(1, ui.EV_KEY, ui.KEY_RIGHT, 1), (0, None))
+        self.assertEqual(mi(0, ui.EV_ABS, ui.ABS_HAT0Y, 1), (1, None))   # hat axes work like the D-pad keys
+        self.assertEqual(mi(1, ui.EV_ABS, ui.ABS_HAT0X, -1), (0, None))
+        self.assertEqual(mi(0, ui.EV_ABS, ui.ABS_HAT0Y, 0), (0, None))   # hat released: nothing
+        self.assertEqual(mi(0, ui.EV_KEY, ui.BTN_A, 1), (0, "install"))
+        self.assertEqual(mi(1, ui.EV_KEY, ui.BTN_A, 1), (1, "poweroff"))
+        self.assertEqual(mi(1, ui.EV_KEY, ui.BTN_START, 1), (1, "poweroff"))
+
+    def test_welcome_ignores_releases_and_other_buttons(self):
+        ui = load_ui()
+        self.assertEqual(ui.menu_input(0, ui.EV_KEY, ui.BTN_A, 0), (0, None))      # release
+        self.assertEqual(ui.menu_input(0, ui.EV_KEY, ui.BTN_B, 1), (0, None))      # B does nothing here
+        self.assertEqual(ui.menu_input(1, ui.EV_KEY, ui.KEY_DOWN, 0), (1, None))
+
+    def test_installing_starts_only_after_install_is_chosen(self):
+        """Power off must return before the Installer thread is ever started, so the card is untouched."""
+        ui = load_ui()
+        src = read("rgos", "rgos-installer")
+        self.assertLess(src.index("return installer.EXIT_POWEROFF"), src.index("    start(inst)\n"))
+        self.assertLess(src.index("draw_welcome, sel"), src.index("    start(inst)\n"))
 
     def test_nothing_to_do_exits_zero_without_a_screen(self):
         ui = load_ui()

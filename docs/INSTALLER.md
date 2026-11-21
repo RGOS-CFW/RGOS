@@ -1,6 +1,13 @@
 # First-boot installer
 
-An **installer image** works like the MustardOS / muOS one: you write it to an SD card, boot the console once, and a progress screen partitions the card and installs everything. When it finishes the device restarts into RG OS.
+An **installer image** works like the MustardOS / muOS one: you write it to an SD card and boot the console once. It opens on a welcome screen with two buttons, **Install** and **Power off**. Choose Install and a progress screen partitions the card and installs everything; when it finishes the device restarts into RG OS. Choose Power off and the console switches off without changing anything on the card.
+
+| Control | On the welcome screen |
+|---|---|
+| D-pad up / down (or left / right) | Move between Install and Power off |
+| **A** (or START) | Confirm the highlighted button |
+
+If the console has no usable screen there is nothing to choose with, so the install runs on its own.
 
 ## Build
 
@@ -10,6 +17,8 @@ An **installer image** works like the MustardOS / muOS one: you write it to an S
 It takes the same environment variables as a normal image ([BUILDING.md](BUILDING.md)). Write the `.img` to the whole card like any other image ([GETTING-STARTED.md](GETTING-STARTED.md)).
 
 ## What the installer does
+
+Everything below happens after you choose **Install**.
 
 | Step | What happens |
 |---|---|
@@ -62,4 +71,4 @@ To stop the installer for good on a card that keeps failing, delete the `rgos-pa
 
 - The boot partition keeps the size of the stock ROCKNIX image, and the payload has to fit on it next to `SYSTEM`. `build.sh` stops with an error when it does not.
 - Offline updates (`./build.sh <device> update`) are built the normal way and replace only `SYSTEM` and the boot files, so they work on an installed card.
-- Code: `rgos/installer.py` (logic), `rgos/rgos-installer` (screen), `tools/mkpayload.py` (payload packer), hook in `rgos/rgos-session`.
+- Code: `rgos/installer.py` (logic), `rgos/rgos-installer` (welcome and progress screens; exit status 10 = restart, 20 = power off), `tools/mkpayload.py` (payload packer), hook in `rgos/rgos-session`.

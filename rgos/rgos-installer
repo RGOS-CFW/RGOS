@@ -2,9 +2,12 @@
 """RG OS first-boot installer screen. Started by rgos-session before the ROMS partition exists.
 
 Does nothing (exit 0) unless the boot partition carries /rgos-payload and no /rgos-installed.json (see installer.py).
-Otherwise it draws a progress screen on the framebuffer while installer.Installer works in a thread.
+Otherwise it opens on a welcome screen with two buttons, Install and Power off (D-pad up/down or left/right to choose, A to
+confirm). Install draws a progress screen on the framebuffer while installer.Installer works in a thread; Power off leaves
+the card untouched. Without a usable screen there is nothing to choose with, so the install simply runs.
 
-Exit status: 10 = installed, rgos-session reboots now; 0 = nothing to do, or the person chose to boot RG OS without finishing.
+Exit status: 10 = installed, rgos-session reboots now; 20 = Power off was chosen, rgos-session powers the console off;
+0 = nothing to do, or the person chose to boot RG OS without finishing.
 On a failure the screen stays up: A retries, B boots RG OS anyway (the installer runs again on the next boot).
 """
 import math
@@ -18,7 +21,11 @@ import installer  # noqa: E402
 
 BG, PANEL, ACCENT = (24, 22, 18), (38, 35, 28), (240, 184, 0)
 TEXT, DIM, OK, BAD = (245, 238, 220), (158, 148, 118), (126, 217, 120), (255, 99, 71)
-BTN_A, BTN_B = 0x131, 0x130
+BTN_A, BTN_B, BTN_START = 0x131, 0x130, 0x13b
+KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT = 0x220, 0x221, 0x222, 0x223
+EV_KEY, EV_ABS, ABS_HAT0X, ABS_HAT0Y = 1, 3, 0x10, 0x11
+CHOICES = ("install", "poweroff")
+CHOICE_LABELS = {"install": "Install", "poweroff": "Power off"}
 REBOOT_DELAY = 4.0
 
 
@@ -106,6 +113,62 @@ def draw(pg, canvas, size, fonts, snap, t, countdown=None):
     canvas.blit(f_small.render(foot, True, DIM), (m, bar_y + bar_h + 8))
 
 
+def menu_input(sel, typ, code, val):
+    """One input event on the welcome screen -> (new selection, chosen action or None).
+
+    Up/left and down/right (D-pad keys or the hat axes) move between the two buttons, A or START confirms.
+    """
+    step = 0
+    if typ == EV_KEY and val == 1:
+        if code in (KEY_UP, KEY_LEFT):
+            step = -1
+        elif code in (KEY_DOWN, KEY_RIGHT):
+            step = 1
+        elif code in (BTN_A, BTN_START):
+            return sel, CHOICES[sel]
+    elif typ == EV_ABS and code in (ABS_HAT0X, ABS_HAT0Y) and val in (-1, 1):
+        step = val
+    return (sel + step) % len(CHOICES), None
+
+
+def draw_welcome(pg, canvas, size, fonts, sel, device=""):
+    """The first screen: what is about to happen, then the Install and Power off buttons."""
+    W, H = size
+    f_title, f_row, f_small = fonts
+    canvas.fill(BG)
+    m = 28
+    canvas.blit(f_title.render("RG OS", True, ACCENT), (m, 20))
+    canvas.blit(f_small.render("Installer", True, DIM), (m + f_title.size("RG OS")[0] + 12, 34))
+    dev = installer.DEVICE_NAMES.get(device, device)
+    if dev:
+        s = f_small.render(dev, True, DIM)
+        canvas.blit(s, (W - m - s.get_width(), 34))
+    pg.draw.line(canvas, PANEL, (m, 64), (W - m, 64), 2)
+
+    y = 88
+    intro = ("RG OS is ready to be installed on this SD card.",
+             "Install sets up the card and restarts into RG OS. Games on an existing ROMS partition are never deleted.")
+    for k, text in enumerate(intro):
+        for ln in wrap(f_row if k == 0 else f_small, text, W - 2 * m):
+            canvas.blit((f_row if k == 0 else f_small).render(ln, True, TEXT if k == 0 else DIM), (m, y))
+            y += 28 if k == 0 else 22
+        y += 6
+
+    bw, bh, gap = min(360, W - 2 * m), 56, 16
+    top = max(y + 14, (H - (2 * bh + gap)) // 2 + 20)
+    bx = (W - bw) // 2
+    for i, key in enumerate(CHOICES):
+        box = (bx, top + i * (bh + gap), bw, bh)
+        on = i == sel
+        pg.draw.rect(canvas, ACCENT if on else PANEL, box, border_radius=10)
+        if not on:
+            pg.draw.rect(canvas, DIM, box, 2, border_radius=10)
+        label = f_row.render(CHOICE_LABELS[key], True, BG if on else TEXT)
+        canvas.blit(label, (box[0] + (bw - label.get_width()) // 2, box[1] + (bh - 24) // 2))
+    foot = f_small.render("D-pad  Choose        A  Confirm", True, DIM)
+    canvas.blit(foot, ((W - foot.get_width()) // 2, H - 40))
+
+
 def show_headless(inst):
     """No usable screen: run without one, report on the console, never block the boot."""
     inst.run()
@@ -147,6 +210,29 @@ def main():
         th.start()
         return th
 
+    def show(draw_fn, *args):
+        try:
+            draw_fn(pygame, canvas, (W, H), fonts, *args)
+            fb.present(canvas)
+        except Exception as e:
+            installer.log("draw failed: %s" % e)
+
+    # welcome screen: nothing on the card is touched until Install is chosen
+    sel = 0
+    while True:
+        show(draw_welcome, sel, installer.device_id())
+        pads.wait(0.2)
+        choice = None
+        for typ, code, val in pads.read():
+            sel, picked = menu_input(sel, typ, code, val)
+            choice = choice or picked
+        if choice == "poweroff":
+            installer.log("person chose Power off on the welcome screen; nothing was changed")
+            return installer.EXIT_POWEROFF
+        if choice == "install":
+            installer.log("person chose Install")
+            break
+
     start(inst)
     done_at = None
     while True:
@@ -155,11 +241,7 @@ def main():
         if snap["finished"] and snap["ok"] and done_at is None:
             done_at = t
         countdown = None if done_at is None else REBOOT_DELAY - (t - done_at)
-        draw(pygame, canvas, (W, H), fonts, snap, t, countdown)
-        try:
-            fb.present(canvas)
-        except Exception as e:
-            installer.log("draw failed: %s" % e)
+        show(draw, snap, t, countdown)
         if countdown is not None and countdown <= 0:
             return installer.EXIT_REBOOT
         pads.wait(0.1)
