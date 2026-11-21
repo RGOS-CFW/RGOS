@@ -246,13 +246,28 @@ def search_terms(title):
     return out[:4]
 
 
+_ROMAN_RE = re.compile(r"(ii|iii|iv|vi|vii|viii|ix|xi|xii)")
+
+
+def _numbers(norm):
+    """Sequel markers in a normalised title: tokens with a digit (2, x3) and roman numerals (ii, vii)."""
+    return {t for t in norm.split() if any(c.isdigit() for c in t) or _ROMAN_RE.fullmatch(t)}
+
+
 def pick_match(results, term):
-    """Best SteamGridDB search hit for term as (hit, score), or (None, 0.0)."""
+    """Best SteamGridDB search hit for term as (hit, score), or (None, 0.0).
+
+    A hit whose sequel number differs from the title's is never a match: the text similarity alone
+    scores "Sonic the Hedgehog" 0.95 against "Sonic the Hedgehog 2" and picked the wrong game's cover.
+    """
     want = _norm(term)
+    want_nums = _numbers(want)
     best, best_s = None, 0.0
     for r in results or []:
         name = _norm(str(r.get("name", "")))
         if not name:
+            continue
+        if name != want and _numbers(name) != want_nums:
             continue
         s = 1.0 if name == want else difflib.SequenceMatcher(None, want, name).ratio()
         if s > best_s + 1e-9:
