@@ -486,6 +486,27 @@ class Screen(unittest.TestCase):
         ui.draw_welcome(pg, canvas, (720, 480), fonts, 0, "")
         self.assertTrue(canvas.blit.called)
 
+    def test_welcome_buttons_are_two_equal_squares_side_by_side_on_every_screen(self):
+        ui = load_ui()
+        for dev, (W, H) in installer.CANVAS.items():
+            a, b = ui.button_boxes((W, H), 170)
+            self.assertEqual(a[2], a[3], dev)
+            self.assertEqual(b[2], b[3], dev)
+            self.assertEqual(a[2], b[2], dev)
+            self.assertEqual(a[1], b[1], dev)
+            self.assertLess(a[0] + a[2], b[0], dev)
+            self.assertGreaterEqual(a[0], 0)
+            self.assertLessEqual(b[0] + b[2], W)
+            self.assertGreaterEqual(a[1], 170)
+            self.assertLessEqual(a[1] + a[3], H - 40, dev)
+
+    def test_each_welcome_button_draws_its_icon(self):
+        ui = load_ui()
+        for kind in ui.CHOICES:
+            pg, canvas = mock.MagicMock(), mock.MagicMock()
+            ui.draw_icon(pg, canvas, kind, 100, 100, 40, (1, 2, 3))
+            self.assertTrue(pg.draw.method_calls, kind)
+
     def test_welcome_buttons_are_install_then_power_off(self):
         ui = load_ui()
         self.assertEqual(ui.CHOICES, ("install", "poweroff"))
