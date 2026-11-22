@@ -23,6 +23,19 @@ The choice only applies to a **new** ROMS partition. A card that already has a f
 
 If the console has no usable screen there is nothing to choose with, so the install runs on its own.
 
+## Menu motion
+
+The welcome screen and the format popup move like the RG OS launcher. The motion is a port of the launcher's (`rgos/uimotion.py`, same spring constants, easing and frame rates as `menu.py`), so the two feel the same:
+
+- **Entrance.** The Install and Power off tiles pop in one after another: each glides up and fades in with a small stagger.
+- **Focus ring.** One ring springs between the tiles with about 5% overshoot and breathes softly when it rests.
+- **Tiles.** The selected tile lifts 4 px, eases to its selected colour (the same eased 3D buttons as the launcher), and gets a diagonal shine sweep every few seconds. Embers drift up behind everything.
+- **Caption.** The line under the tiles fades up after every move.
+- **Format popup.** It rises in each time it opens; each row's colour, border and radio dot ease in and out as the highlight moves, and the welcome screen stays dimmed behind it with the ring where it was.
+- **Between screens.** Welcome, popup and install console crossfade into each other (0.18 s for the popup, 0.35 s into the console), and the console's progress bar glides to each new value.
+
+Like the launcher, it draws at 60 frames per second only while something moves (and for half a second after a button press), at 30 otherwise and at 15 after three idle seconds; the console never drops below 30 because it keeps scrolling. While you are using the menu the CPU and GPU clocks are held at `performance` (`rgos/uiboost.py`, `RGOS_UI_BOOST=0` turns it off) and put back when the installer exits.
+
 ## Build
 
     sudo ./build.sh rg34xxsp installer      # out/rg34xxsp-rgos-installer.img

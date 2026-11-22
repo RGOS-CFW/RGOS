@@ -14,6 +14,12 @@ nothing in it is real. It lasts 10 to 15 seconds at least and keeps scrolling un
 Exit status: 10 = installed, rgos-session reboots now; 20 = Power off was chosen, rgos-session powers the console off;
 0 = nothing to do, or the person chose to boot RG OS without finishing.
 On a failure the screen stays up: A retries, B boots RG OS anyway (the installer runs again on the next boot).
+
+The menu moves like the RG OS launcher (uimotion.py is a port of its motion): the tiles pop in one after another, one focus ring
+springs between them and breathes, the focused tile lifts and gets a shine sweep, embers drift up behind, the caption fades up
+after each move, the format popup rises in, and screens crossfade into each other. The loop runs at full frame rate only while
+something moves and drops to an idle rate when the screen settles; the CPU / GPU clocks are held up while the person is
+interacting (uiboost.py, as in the launcher).
 """
 import math
 import os
@@ -24,8 +30,11 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import installer  # noqa: E402
+import uimotion  # noqa: E402
+import uiboost  # noqa: E402
 
 BG, PANEL, ACCENT = (20, 19, 16), (36, 33, 27), (240, 184, 0)
+SEL_BG = (84, 70, 20)                       # the launcher's MustardOS selected-tile colour
 EDGE, PANEL_HI = (58, 54, 44), (52, 47, 36)
 TEXT, DIM, OK, BAD = (245, 238, 220), (158, 148, 118), (126, 217, 120), (255, 99, 71)
 BTN_A, BTN_B, BTN_START = 0x131, 0x130, 0x13b
@@ -35,6 +44,13 @@ CHOICES = ("install", "poweroff")
 CHOICE_LABELS = {"install": "Install", "poweroff": "Power off"}
 FORMAT_CHOICES = installer.ROMS_FORMATS    # fat32, exfat, ext4: the rows of the popup, top to bottom
 REBOOT_DELAY = 4.0
+CHOICE_SUBS = {"install": "Pick a storage format, then install RG OS", "poweroff": "Switch the console off, nothing is changed"}
+FRAME_FAST, FRAME_NORMAL, FRAME_IDLE = 1 / 60, 1 / 30, 1 / 15    # the launcher's rates: moving / just used / left alone
+CONSOLE_FADE = 0.35                         # the welcome screen fades into the install console this slowly
+
+
+def colors():
+    return {"BG": BG, "PANEL": PANEL, "SEL_BG": SEL_BG, "ACCENT": ACCENT, "TEXT": TEXT, "DIM": DIM}
 
 
 def wrap(font, text, width):
@@ -307,9 +323,9 @@ def fit(font, text, width):
     return text
 
 
-def draw_console(pg, canvas, size, font, feed, snap, t, countdown=None):
+def draw_console(pg, canvas, size, font, feed, snap, t, countdown=None, mo=None):
     """Green-on-black scrolling console: a title strip, the last screenful of feed lines, the error / restart notice, a prompt,
-    and a slim bar at the bottom that shows the real install progress."""
+    and a slim bar at the bottom that shows the real install progress (glides to each new value when there is a Motion)."""
     W, H = size
     pad = 14
     lh = font.size("Ag")[1] + 3
@@ -343,6 +359,8 @@ def draw_console(pg, canvas, size, font, feed, snap, t, countdown=None):
             pg.draw.rect(canvas, CON_COL["ok"], (pad + font.size(label)[0], y + 2, max(6, font.size("M")[0]), lh - 4))
     # the real install progress, as a thin bar above the footer text
     frac = max(0.0, min(1.0, snap.get("fraction", 0.0) or 0.0))
+    if mo is not None:
+        frac = max(0.0, min(1.0, mo.val("progress", frac, 8.0)))
     bar_y = H - foot_h + 2
     pg.draw.rect(canvas, (0, 45, 18), (pad, bar_y, W - 2 * pad, 4), border_radius=2)
     if fail:
@@ -395,19 +413,25 @@ def format_input(sel, typ, code, val):
     return (sel + step) % len(FORMAT_CHOICES), None
 
 
-def draw_format_popup(pg, canvas, size, fonts, sel, device=""):
-    """The "which format for the ROMS partition?" popup: the welcome screen dimmed behind a panel with one row per file system."""
+def draw_format_popup(pg, canvas, size, fonts, sel, device="", mo=None):
+    """The "which format for the ROMS partition?" popup: the welcome screen dimmed behind a panel with one row per file system.
+
+    With a Motion (`mo`) the panel rises in each time it opens and the rows are the launcher's buttons: the selected one eases
+    to its colour, lifts its border in and fills its radio dot; the highlight glides between rows instead of jumping.
+    """
     W, H = size
     f_title, f_row, f_small = fonts
-    draw_welcome(pg, canvas, size, fonts, 0, device)
+    mo = mo or uimotion.Motion(pg, size, colors(), settled=True)
+    draw_welcome(pg, canvas, size, fonts, 0, device, mo)
     shade = pg.Surface((W, H), pg.SRCALPHA)
     shade.fill((0, 0, 0, 200))
     canvas.blit(shade, (0, 0))
 
+    rise = int((1.0 - uimotion.out_cubic(mo.since("format", 0.4) / 0.30)) * 16)
     row_h, pad = 60, 20
     pw = min(W - 56, 600)
     ph = pad + 28 + 4 + 20 + 12 + row_h * len(FORMAT_CHOICES) + 4 + 20 + 12 + 1 + 12 + 22 + pad - 6
-    px, py = (W - pw) // 2, max(8, (H - ph) // 2)
+    px, py = (W - pw) // 2, max(8, (H - ph) // 2) + rise
     pg.draw.rect(canvas, EDGE, (px - 1, py - 1, pw + 2, ph + 2), border_radius=19)
     pg.draw.rect(canvas, BG, (px, py, pw, ph), border_radius=18)
     canvas.blit(f_row.render("Storage format", True, TEXT), (px + pad, py + pad))
@@ -417,12 +441,12 @@ def draw_format_popup(pg, canvas, size, fonts, sel, device=""):
     for i, key in enumerate(FORMAT_CHOICES):
         on = i == sel
         box = (px + pad, y, pw - 2 * pad, row_h - 8)
-        pg.draw.rect(canvas, ACCENT if on else PANEL, box, border_radius=12)
-        fg, sub = (BG, (70, 52, 0)) if on else (TEXT, DIM)
+        hl, _lift = mo.button(canvas, box, SEL_BG if on else PANEL, 12, 3, on, ("fmt", i))
+        fg, sub = uimotion.mix(DIM, TEXT, hl), uimotion.mix(DIM, (200, 190, 160), hl)
         cx, cy = box[0] + 26, box[1] + (row_h - 8) // 2
-        pg.draw.circle(canvas, fg, (cx, cy), 9, 0 if on else 2)       # radio dot
-        if on:
-            pg.draw.circle(canvas, ACCENT, (cx, cy), 4)
+        pg.draw.circle(canvas, uimotion.mix(DIM, ACCENT, hl), (cx, cy), 9, 2)       # radio dot, fills as the row is selected
+        if hl > 0:
+            pg.draw.circle(canvas, ACCENT, (cx, cy), max(1, int(5 * hl)))
         canvas.blit(f_row.render(installer.FORMAT_LABELS[key], True, fg), (box[0] + 50, box[1] + 6))
         hint = installer.FORMAT_HINTS[key].replace("Recommended. ", "")
         canvas.blit(f_small.render(hint, True, sub), (box[0] + 50, box[1] + 30))
@@ -430,8 +454,8 @@ def draw_format_popup(pg, canvas, size, fonts, sel, device=""):
             tag = "RECOMMENDED"
             tw, th = f_small.size(tag)[0] + 18, f_small.size(tag)[1] + 4
             tx, ty = box[0] + box[2] - tw - 14, box[1] + 8
-            pg.draw.rect(canvas, BG if on else PANEL_HI, (tx, ty, tw, th), border_radius=th // 2)
-            canvas.blit(f_small.render(tag, True, ACCENT if on else DIM), (tx + 9, ty + 2))
+            pg.draw.rect(canvas, uimotion.mix(PANEL_HI, BG, hl), (tx, ty, tw, th), border_radius=th // 2)
+            canvas.blit(f_small.render(tag, True, uimotion.mix(DIM, ACCENT, hl)), (tx + 9, ty + 2))
         y += row_h
     canvas.blit(f_small.render("An existing ROMS partition keeps its format.", True, DIM), (px + pad, y + 2))
     pg.draw.line(canvas, EDGE, (px + pad, y + 28), (px + pw - pad, y + 28), 1)
@@ -464,11 +488,18 @@ def draw_icon(pg, canvas, kind, cx, cy, r, col):
         pg.draw.line(canvas, col, (cx, cy - r), (cx, cy - int(r * 0.1)), w)
 
 
-def draw_welcome(pg, canvas, size, fonts, sel, device=""):
-    """The first screen: what is about to happen, then the Install and Power off buttons."""
+def draw_welcome(pg, canvas, size, fonts, sel, device="", mo=None):
+    """The first screen: what is about to happen, then the Install and Power off tiles, moving like the launcher's home screen.
+
+    The tiles pop in one after another (glide up, fade in), one focus ring springs to the selected tile and breathes there, the
+    selected tile lifts, eases to its colour and gets a shine sweep now and then, embers drift up behind, and the caption
+    under the tiles fades up after every move. Without a Motion (`mo`) it is drawn finished, once.
+    """
     W, H = size
     f_title, f_row, f_small = fonts
+    mo = mo or uimotion.Motion(pg, size, colors(), settled=True)
     canvas.fill(BG)
+    mo.draw_embers(canvas)
     m = 28
     header(pg, canvas, size, fonts, device)
 
@@ -482,18 +513,34 @@ def draw_welcome(pg, canvas, size, fonts, sel, device=""):
     canvas.blit(f_small.render("Games on an existing ROMS partition are never deleted.", True, DIM), (m + 20, y + 1))
     y += 28
 
-    for i, (key, box) in enumerate(zip(CHOICES, button_boxes((W, H), y))):
-        on = i == sel
-        fg = BG if on else TEXT
-        bx, by, side = box[0], box[1], box[2]
-        if on:
-            pg.draw.rect(canvas, (110, 84, 0), (bx - 4, by - 4, side + 8, side + 8), border_radius=24)
-        pg.draw.rect(canvas, ACCENT if on else PANEL, box, border_radius=20)
-        if not on:
-            pg.draw.rect(canvas, EDGE, box, 1, border_radius=20)
-        draw_icon(pg, canvas, key, bx + side // 2, by + int(side * 0.40), int(side * 0.24), fg)
-        label = f_row.render(CHOICE_LABELS[key], True, fg)
-        canvas.blit(label, (bx + (side - label.get_width()) // 2, by + side - 42))
+    boxes = button_boxes((W, H), y)
+    el = mo.since("welcome", reset_ring=True)
+    sub_p = uimotion.out_cubic(mo.changed("welcome-sel", sel) / 0.30)
+    bx0, by0, side = boxes[sel][0], boxes[sel][1], boxes[sel][2]
+    speed, rem = mo.ring_step(bx0, by0 - uimotion.LIFT_PX)
+
+    def paint(i):
+        key, box = CHOICES[i], boxes[i]
+
+        def go(surf, bx, by):
+            on = i == sel
+            hl, lift = mo.button(surf, (bx, by, side, side), SEL_BG if on else PANEL, 20, 6, on, ("tile", i), False)
+            by -= lift
+            draw_icon(pg, surf, key, bx + side // 2, by + int(side * 0.40), int(side * 0.24), uimotion.mix(DIM, ACCENT, hl))
+            label = f_row.render(CHOICE_LABELS[key], True, uimotion.mix(DIM, TEXT, hl))
+            surf.blit(label, (bx + (side - label.get_width()) // 2, by + side - 42))
+            if on and surf is canvas:
+                mo.shine(surf, (bx, by, side, side), 20, hl)
+        return go
+
+    for i, box in enumerate(boxes):
+        mo.pop(canvas, box, uimotion.out_cubic((el - 0.05 - 0.06 * i) / 0.42), paint(i))
+    mo.draw_ring(canvas, side, side, uimotion.out_cubic((el - 0.30) / 0.30) if el < 0.7 else 1.0, speed, rem, 20)
+
+    cap = f_small.render(CHOICE_SUBS[CHOICES[sel]], True, DIM)
+    if sub_p < 1.0:
+        cap.set_alpha(int(255 * sub_p))
+    canvas.blit(cap, ((W - cap.get_width()) // 2, by0 + side + 16 + int((1.0 - sub_p) * 6)))
     hint_bar(pg, canvas, size, f_small, [("D-pad", "Choose"), ("A", "Confirm")])
 
 
@@ -510,6 +557,14 @@ def show_headless(inst):
 
 
 def main():
+    boost = uiboost.UiBoost()      # CPU / GPU clocks up while the person uses the menu; always put back before leaving
+    try:
+        return run(boost)
+    finally:
+        boost.restore()
+
+
+def run(boost):
     if installer.pending() is None:
         return 0
     inst = installer.Installer()
@@ -531,28 +586,52 @@ def main():
         mono_path = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
         mono = pygame.font.Font(mono_path, 14) if os.path.exists(mono_path) else pygame.font.Font(None, 20)
         pads = evpad.EvPads()
+        mo = uimotion.Motion(pygame, (W, H), colors())
     except Exception as e:  # pygame / framebuffer problem: install anyway
         installer.log("installer screen unavailable (%s); running without it" % e)
         return show_headless(inst)
+
+    last_act = [time.monotonic()]
+
+    def pace(settles=True):
+        """How long to wait for input before the next frame: full rate while something moves or was just pressed, the
+        launcher's idle rate when left alone on a menu (the console keeps scrolling, so it never goes below 30 fps)."""
+        quiet = time.monotonic() - last_act[0]
+        if mo.moving or quiet < 0.5:
+            return FRAME_FAST
+        return FRAME_IDLE if settles and quiet > 3.0 else FRAME_NORMAL
+
+    def events():
+        """Pad events since the last frame; any of them counts as the person being there (clocks stay up, frame rate up)."""
+        ev = pads.read()
+        if ev:
+            last_act[0] = time.monotonic()
+            boost.poke()
+        return ev
 
     def start(i):
         th = threading.Thread(target=i.run, daemon=True)
         th.start()
         return th
 
-    def show(draw_fn, *args):
+    def frame(draw_fn, key, fade, *args):
+        """One frame: advance the clock, draw, crossfade if the screen changed, put it on the display."""
+        mo.tick()
+        if mo.moving:
+            boost.poke()
+        boost.tick()
         try:
-            draw_fn(pygame, canvas, (W, H), fonts, *args)
+            draw_fn(*args)
+            mo.transition(canvas, key, fade)
             fb.present(canvas)
         except Exception as e:
             installer.log("draw failed: %s" % e)
 
+    def show(draw_fn, *args):
+        frame(lambda: draw_fn(pygame, canvas, (W, H), fonts, *args, mo=mo), draw_fn.__name__, uimotion.FADE_S)
+
     def show_console(feed, snap, t, countdown):
-        try:
-            draw_console(pygame, canvas, (W, H), mono, feed, snap, t, countdown)
-            fb.present(canvas)
-        except Exception as e:
-            installer.log("draw failed: %s" % e)
+        frame(lambda: draw_console(pygame, canvas, (W, H), mono, feed, snap, t, countdown, mo=mo), "console", CONSOLE_FADE)
 
     # welcome screen: nothing on the card is touched until Install is chosen and a ROMS format has been picked
     sel = 0
@@ -560,9 +639,9 @@ def main():
     fmt = None
     while fmt is None:
         show(draw_welcome, sel, installer.device_id())
-        pads.wait(0.2)
+        pads.wait(pace())
         choice = None
-        for typ, code, val in pads.read():
+        for typ, code, val in events():
             sel, picked = menu_input(sel, typ, code, val)
             choice = choice or picked
         if choice == "poweroff":
@@ -573,9 +652,9 @@ def main():
             # popup: which file system for the ROMS partition? B returns to the welcome screen
             while True:
                 show(draw_format_popup, fmt_sel, installer.device_id())
-                pads.wait(0.2)
+                pads.wait(pace())
                 action = None
-                for typ, code, val in pads.read():
+                for typ, code, val in events():
                     fmt_sel, picked = format_input(fmt_sel, typ, code, val)
                     action = action or picked
                 if action == "back":
@@ -601,8 +680,8 @@ def main():
         show_console(feed, snap, t, countdown)
         if countdown is not None and countdown <= 0:
             return installer.EXIT_REBOOT
-        pads.wait(0.1)
-        for typ, code, val in pads.read():
+        pads.wait(pace(False))
+        for typ, code, val in events():
             if typ != 1 or val != 1 or not (snap["finished"] and snap["error"]):
                 continue
             if code == BTN_A:
