@@ -8,12 +8,16 @@ choose, A to confirm, B to go back), then draws a progress screen on the framebu
 thread; Power off leaves the card untouched. Without a usable screen there is nothing to choose with, so the install simply
 runs (with the default, exFAT).
 
+While installing, the screen is a fake "kernel exploit" console (green text scrolling on black, see ConsoleFeed): pure decoration,
+nothing in it is real. It lasts 10 to 15 seconds at least and keeps scrolling until the real install has finished.
+
 Exit status: 10 = installed, rgos-session reboots now; 20 = Power off was chosen, rgos-session powers the console off;
 0 = nothing to do, or the person chose to boot RG OS without finishing.
 On a failure the screen stays up: A retries, B boots RG OS anyway (the installer runs again on the next boot).
 """
 import math
 import os
+import random
 import sys
 import threading
 import time
@@ -114,6 +118,181 @@ def draw(pg, canvas, size, fonts, snap, t, countdown=None):
             canvas.blit(f_small.render(snap["detail"][:90], True, TEXT), (m, bar_y - 26))
         foot = "Do not turn off the console"
     canvas.blit(f_small.render(foot, True, DIM), (m, bar_y + bar_h + 8))
+
+
+CON_BG = (0, 0, 0)
+CON_COL = {"info": (40, 225, 80), "ok": (150, 255, 170), "warn": (235, 190, 40), "err": BAD, "dim": (0, 125, 45),
+           "hex": (0, 165, 60)}
+CONSOLE_SECONDS = (10.0, 15.0)    # the fake exploit takes at least this long (picked at random per run)
+CONSOLE_KEEP = 300                # lines remembered; only the last screenful is ever drawn
+FINAL_GAP = 0.35                  # seconds between the closing lines
+
+
+def console_script(rng, device_name=""):
+    """The scripted part of the fake exploit as [(text, kind, weight)]: weight is how long the line takes relative to the others."""
+    out = []
+    kva = lambda: "0xffffff80%08x" % rng.getrandbits(32)
+    uva = lambda: "0x0000007f%08x" % rng.getrandbits(32)
+
+    def add(text, kind="info", w=None):
+        out.append((text, kind, w if w is not None else rng.uniform(0.5, 1.8)))
+
+    def dump(n):
+        for _ in range(n):
+            row = " ".join("%02x" % rng.getrandbits(8) for _ in range(16))
+            add("%s: %s" % (kva(), row), "hex", 0.12)
+
+    add("rgos-pwn 1.3.37 - kernel privilege escalation toolkit", "ok", 0.8)
+    add("[*] target : %s / aarch64 / linux" % (device_name or "handheld"), "info", 0.6)
+    add("[*] checking environment ...", "info", 0.6)
+    add("[+] ptrace_scope=0, unprivileged userns available", "ok")
+    add("[*] reading /proc/kallsyms", "info")
+    add("[+] commit_creds          @ %s" % kva(), "ok", 0.3)
+    add("[+] prepare_kernel_cred   @ %s" % kva(), "ok", 0.3)
+    add("[+] init_task             @ %s" % kva(), "ok", 0.3)
+    add("[+] selinux_state         @ %s" % kva(), "ok", 0.3)
+    add("[*] leaking KASLR slide ...")
+    for _ in range(4):
+        add("[-] probe %s ... miss" % kva(), "dim", 0.25)
+    add("[+] KASLR slide = 0x%08x" % (rng.getrandbits(12) << 20), "ok")
+    dump(4)
+    add("[*] spraying kmalloc-512 (4096 objects)")
+    add("[##########----------] 50%", "warn", 0.9)
+    add("[####################] 100%", "warn", 0.9)
+    add("[+] heap groomed, 4096/4096 slots owned", "ok")
+    add("[*] opening /dev/ptmx, racing tty_ldisc teardown")
+    add("[!] race lost, retrying (attempt 1/8)", "warn", 0.7)
+    add("[!] race lost, retrying (attempt 2/8)", "warn", 0.7)
+    add("[+] race won on attempt 3, use-after-free triggered", "ok", 1.2)
+    dump(5)
+    add("[*] corrupting freelist pointer @ %s" % kva())
+    add("[*] reclaiming freed object with controlled data")
+    add("[+] arbitrary kernel write primitive acquired", "ok", 1.2)
+    add("[*] walking task list to find pid 1")
+    add("[+] task_struct(init) @ %s" % kva(), "ok", 0.4)
+    add("[*] overwriting cred: uid=gid=euid=egid=0")
+    add("[+] uid=0(root) gid=0(root) groups=0(root)", "ok", 1.0)
+    add("[*] clearing capability bounding set restrictions")
+    add("[*] selinux_state.enforcing: 1 -> 0")
+    add("[+] SELinux permissive", "ok", 0.5)
+    add("[*] remounting / read-write")
+    add("[+] / is rw", "ok", 0.4)
+    dump(3)
+    add("[*] staging payload at %s" % uva())
+    add("[*] writing partition table")
+    add("[*] formatting ROMS partition")
+    add("[+] stage 1 complete", "ok", 0.9)
+    add("[*] hooking sys_call_table[%d]" % rng.randint(60, 290))
+    add("[*] unpacking libretro cores")
+    dump(4)
+    add("[*] injecting PortMaster")
+    add("[+] stage 2 loaded @ %s" % kva(), "ok", 0.8)
+    add("[*] verifying SHA-256 of every module")
+    add("[+] all checksums match", "ok", 0.6)
+    return out
+
+
+def console_filler(rng):
+    """One more line of noise, for when the real install takes longer than the scripted part."""
+    kva = "0xffffff80%08x" % rng.getrandbits(32)
+    kind = rng.randint(0, 6)
+    if kind <= 2:
+        return "%s: %s" % (kva, " ".join("%02x" % rng.getrandbits(8) for _ in range(16))), "hex"
+    if kind == 3:
+        return "[*] flushing icache %s - 0xffffff80%08x" % (kva, rng.getrandbits(32)), "info"
+    if kind == 4:
+        return "[+] gadget @ %s: ldp x29, x30, [sp], #0x10 ; ret" % kva, "ok"
+    if kind == 5:
+        return "[*] reclaiming slab page %s" % kva, "info"
+    return "[~] syncing stage buffers (%d dirty pages)" % rng.randint(8, 900), "warn"
+
+
+class ConsoleFeed:
+    """The text on the fake exploit console: what has been printed so far, driven by the clock and by the real install.
+
+    The scripted lines are spread over the first 90% of `duration` seconds (10 to 15, random). After that it keeps printing noise
+    until the real install has finished AND `duration` is over, then prints the closing lines. It never ends before the real
+    work does, and it freezes when the install fails (the caller shows the error under it).
+    """
+
+    def __init__(self, now, device_name="", rng=None, duration=None):
+        self.rng = rng or random.Random()
+        self.duration = duration if duration else self.rng.uniform(*CONSOLE_SECONDS)
+        self.t0 = now
+        script = console_script(self.rng, device_name)
+        total = sum(w for _, _, w in script)
+        acc, self.body, self.times = 0.0, [], []
+        for text, kind, w in script:
+            acc += w
+            self.body.append((text, kind))
+            self.times.append(self.t0 + 0.9 * self.duration * acc / total)
+        self.final = [("[+] stage 2 complete, payload installed", "ok"), ("[*] syncing disks ...", "info"),
+                      ("[+] root access: GRANTED", "ok"), ("[+] done", "ok")]
+        self.lines, self.i, self.j = [], 0, 0
+        self.final_at = None
+        self.next_filler = 0.0
+
+    @property
+    def complete(self):
+        return self.final_at is not None and self.j >= len(self.final)
+
+    def update(self, now, installed, failed):
+        if failed:
+            return
+        while self.i < len(self.body) and self.times[self.i] <= now:
+            self.lines.append(self.body[self.i])
+            self.i += 1
+        if self.final_at is None:
+            if self.i < len(self.body):
+                pass
+            elif installed and now - self.t0 >= self.duration:
+                self.final_at = now
+            elif now >= self.next_filler:
+                self.lines.append(console_filler(self.rng))
+                self.next_filler = now + self.rng.uniform(0.07, 0.2)
+        if self.final_at is not None:
+            while self.j < len(self.final) and now - self.final_at >= self.j * FINAL_GAP:
+                self.lines.append(self.final[self.j])
+                self.j += 1
+        del self.lines[:-CONSOLE_KEEP]
+
+
+def fit(font, text, width):
+    """Cut `text` so it is no wider than `width` pixels."""
+    while len(text) > 1 and font.size(text)[0] > width:
+        text = text[:-1]
+    return text
+
+
+def draw_console(pg, canvas, size, font, feed, snap, t, countdown=None):
+    """Green-on-black scrolling console: the last screenful of feed lines, then the error / restart notice, then a prompt."""
+    W, H = size
+    pad = 12
+    lh = font.size("Ag")[1] + 3
+    canvas.fill(CON_BG)
+    rows = max(3, (H - 2 * pad - lh) // lh)
+    view = list(feed.lines)
+    fail = bool(snap["error"])
+    if fail:
+        view.append(("", "info"))
+        view += [(ln, "err") for ln in wrap(font, "[!] FAILED: " + snap["error"], W - 2 * pad)[:4]]
+        view += [("", "info"), ("A  Try again        B  Start RG OS anyway", "ok")]
+    elif countdown is not None:
+        view.append(("[*] restarting in %d ..." % max(0, int(countdown + 0.99)), "ok"))
+    prompt = not fail and countdown is None
+    view = view[-(rows - 1 if prompt else rows):]
+    y = pad
+    for text, kind in view:
+        if text:
+            canvas.blit(font.render(fit(font, text, W - 2 * pad), True, CON_COL[kind]), (pad, y))
+        y += lh
+    if prompt:
+        label = "root@rgos:/# "
+        canvas.blit(font.render(label, True, CON_COL["ok"]), (pad, y))
+        if int(t * 2) % 2 == 0:
+            pg.draw.rect(canvas, CON_COL["ok"], (pad + font.size(label)[0], y + 2, max(6, font.size("M")[0]), lh - 4))
+    foot = "Details: rgos-install-log.txt on the boot partition" if fail else "Do not turn off the console"
+    canvas.blit(font.render(foot, True, CON_COL["dim"]), (pad, H - pad - lh + 3))
 
 
 def menu_input(sel, typ, code, val):
@@ -283,6 +462,8 @@ def main():
         path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
         mk = (lambda s: pygame.font.Font(path, s)) if os.path.exists(path) else (lambda s: pygame.font.Font(None, int(s * 1.3)))
         fonts = (mk(34), mk(19), mk(15))
+        mono_path = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+        mono = pygame.font.Font(mono_path, 14) if os.path.exists(mono_path) else pygame.font.Font(None, 20)
         pads = evpad.EvPads()
     except Exception as e:  # pygame / framebuffer problem: install anyway
         installer.log("installer screen unavailable (%s); running without it" % e)
@@ -296,6 +477,13 @@ def main():
     def show(draw_fn, *args):
         try:
             draw_fn(pygame, canvas, (W, H), fonts, *args)
+            fb.present(canvas)
+        except Exception as e:
+            installer.log("draw failed: %s" % e)
+
+    def show_console(feed, snap, t, countdown):
+        try:
+            draw_console(pygame, canvas, (W, H), mono, feed, snap, t, countdown)
             fb.present(canvas)
         except Exception as e:
             installer.log("draw failed: %s" % e)
@@ -334,14 +522,17 @@ def main():
 
     inst = installer.Installer(fmt=fmt)
     start(inst)
+    device_name = installer.DEVICE_NAMES.get(installer.device_id(), "")
+    feed = ConsoleFeed(time.time(), device_name)
     done_at = None
     while True:
         t = time.time()
         snap = inst.snapshot()
-        if snap["finished"] and snap["ok"] and done_at is None:
+        feed.update(t, bool(snap["finished"] and snap["ok"]), bool(snap["error"]))
+        if feed.complete and done_at is None:
             done_at = t
         countdown = None if done_at is None else REBOOT_DELAY - (t - done_at)
-        show(draw, snap, t, countdown)
+        show_console(feed, snap, t, countdown)
         if countdown is not None and countdown <= 0:
             return installer.EXIT_REBOOT
         pads.wait(0.1)
@@ -351,6 +542,7 @@ def main():
             if code == BTN_A:
                 inst = installer.Installer(fmt=fmt)
                 start(inst)
+                feed = ConsoleFeed(time.time(), device_name)
             elif code == BTN_B:
                 installer.log("person chose to boot RG OS without finishing the install")
                 return 0

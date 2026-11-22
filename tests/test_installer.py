@@ -713,5 +713,87 @@ class Screen(unittest.TestCase):
             self.assertEqual(ui.show_headless(inst), 0)
 
 
+class ConsoleScreen(unittest.TestCase):
+    """The fake "kernel exploit" console shown while installing."""
+
+    def feed(self, seed=1, duration=None):
+        import random
+        ui = load_ui()
+        return ui, ui.ConsoleFeed(100.0, "RG34XX-SP", random.Random(seed), duration)
+
+    def test_the_fake_run_lasts_ten_to_fifteen_seconds(self):
+        for seed in range(30):
+            ui, f = self.feed(seed)
+            self.assertGreaterEqual(f.duration, 10.0)
+            self.assertLessEqual(f.duration, 15.0)
+
+    def test_it_scrolls_and_is_not_done_before_the_real_install_is(self):
+        ui, f = self.feed(duration=12.0)
+        f.update(100.5, False, False)
+        early = len(f.lines)
+        self.assertGreater(early, 0)
+        f.update(105.0, False, False)
+        self.assertGreater(len(f.lines), early)
+        for now in (112.0, 130.0, 300.0):     # installer still busy: keeps printing, never finishes
+            f.update(now, False, False)
+            self.assertFalse(f.complete)
+        n = len(f.lines)
+        f.update(300.5, False, False)
+        self.assertGreaterEqual(len(f.lines), n)
+
+    def test_it_finishes_only_when_installed_and_the_time_is_up(self):
+        ui, f = self.feed(duration=12.0)
+        f.update(104.0, True, False)           # installer already done but the show is not over
+        self.assertFalse(f.complete)
+        self.assertIsNone(f.final_at)
+        f.update(112.5, True, False)
+        f.update(114.0, True, False)
+        self.assertTrue(f.complete)
+        self.assertEqual(f.lines[-1][0], "[+] done")
+
+    def test_a_failure_freezes_the_feed(self):
+        ui, f = self.feed(duration=12.0)
+        f.update(105.0, False, False)
+        n = len(f.lines)
+        f.update(140.0, False, True)
+        self.assertEqual(len(f.lines), n)
+        self.assertFalse(f.complete)
+
+    def test_lines_are_short_enough_for_the_smallest_screen(self):
+        ui, f = self.feed()
+        f.update(1000.0, False, False)
+        self.assertTrue(all(len(t) <= 84 for t, k, w in ui.console_script(f.rng, "RG34XX-SP")))
+        self.assertTrue(all(k in ui.CON_COL for t, k in f.lines))
+
+    def test_nothing_in_the_feed_is_kept_forever(self):
+        ui, f = self.feed(duration=10.0)
+        for i in range(2000):
+            f.update(100.0 + i * 0.5, False, False)
+        self.assertLessEqual(len(f.lines), ui.CONSOLE_KEEP)
+
+    def test_every_state_draws(self):
+        ui, f = self.feed(duration=10.0)
+        f.update(1000.0, True, False)
+        f.update(1001.0, True, False)
+        pg, canvas = mock.MagicMock(), mock.MagicMock()
+        font = FakeFont()
+        for dev, size in installer.CANVAS.items():
+            ok = {"error": "", "finished": True, "ok": True}
+            for snap, cd, t in (({"error": "", "finished": False, "ok": False}, None, 0.0),
+                                ({"error": "", "finished": False, "ok": False}, None, 0.5),
+                                (ok, 3.2, 1.0),
+                                ({"error": "the ROMS partition was not created (see /var/log/rgos-roms.log) " * 3,
+                                  "finished": True, "ok": False}, None, 1.0)):
+                ui.draw_console(pg, canvas, size, font, f, snap, t, cd)
+        self.assertTrue(canvas.blit.called)
+
+    def test_the_install_screen_is_the_console(self):
+        src = read("rgos", "rgos-installer")
+        loop = src[src.index("    start(inst)\n"):]
+        self.assertIn("show_console(feed, snap, t, countdown)", loop)
+        self.assertEqual(loop.count("ConsoleFeed("), 2)     # first run and the "try again" retry
+
+
+
 if __name__ == "__main__":
     unittest.main()

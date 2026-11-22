@@ -30,6 +30,10 @@ If the console has no usable screen there is nothing to choose with, so the inst
 
 It takes the same environment variables as a normal image ([BUILDING.md](BUILDING.md)). Write the `.img` to the whole card like any other image ([GETTING-STARTED.md](GETTING-STARTED.md)).
 
+## The install screen
+
+While it installs, the screen is a fake "kernel exploit" console: green text scrolling on black (addresses, hex dumps, "race won", "uid=0(root)" and so on), with a blinking prompt at the bottom. It is only for show: nothing in it is real and none of it touches the console. It runs for 10 to 15 seconds (picked at random each time) at the very least. If the real install takes longer it keeps scrolling until the install is finished, then prints a few closing lines and restarts. If the install fails, the scrolling stops and the reason appears in red under it with the same **A** / **B** choices as before (see below). The text is generated in `console_script()` in `rgos/rgos-installer`.
+
 ## What the installer does
 
 Everything below happens after you choose **Install**.
