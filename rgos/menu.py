@@ -918,7 +918,7 @@ def anim_val(key, target, omega=20.0):
 
 # screen transitions: moving between menus slides + crossfades; popups / dropdowns crossfade
 _VT = {"last": None, "t0": 0.0, "dur": 0.0, "dir": 0, "kind": ""}
-TR_SLIDE = 56
+TR_SLIDE = 44
 VT_DEPTH = {"home": 0, "systems": 1, "tools": 1, "settings": 1, "recents": 1, "favorites": 1, "kbd": 3}
 SPRING_K, SPRING_C = rgclassic.SPRING_K, rgclassic.SPRING_C
 HOME_INTRO_S = 1.0
@@ -4437,7 +4437,7 @@ def main():
             _VT["last"] = _vk
         elif _vk != _VT["last"]:
             if _vk[0] != _VT["last"][0]:
-                _VT.update(kind="slide", dur=0.26, dir=1 if VT_DEPTH.get(_vk[0], 2) >= VT_DEPTH.get(_VT["last"][0], 2) else -1)
+                _VT.update(kind="slide", dur=0.30, dir=1 if VT_DEPTH.get(_vk[0], 2) >= VT_DEPTH.get(_VT["last"][0], 2) else -1)
             else:
                 _VT.update(kind="fade", dur=0.18, dir=0)
             vt_old.blit(vt_buf, (0, 0))
@@ -4449,11 +4449,15 @@ def main():
             vt_new.blit(canvas, (0, 0))
             _e = _out_cubic(_vp)
             if _VT["kind"] == "slide":
-                canvas.fill(BG)
-                vt_old.set_alpha(int(255 * (1.0 - _e)))
-                canvas.blit(vt_old, (-_VT["dir"] * int(TR_SLIDE * _e), 0))
-                vt_new.set_alpha(min(255, int(255 * _e * 1.5)))
-                canvas.blit(vt_new, (_VT["dir"] * int(TR_SLIDE * (1.0 - _e)), 0))
+                # header and footer stay put; only the content area moves. The old screen stays underneath and the new
+                # one glides in over it (ease-out, fading in quickly), so there is never a dip to black or a gap.
+                _r = pygame.Rect(0, 66, W, H - 66 - 40)
+                _q = 1.0 - (1.0 - _vp) ** 5
+                canvas.set_clip(_r)
+                canvas.blit(vt_old, _r.topleft, _r)
+                vt_new.set_alpha(int(255 * min(1.0, _vp * 2.4)))
+                canvas.blit(vt_new, (_r.x + _VT["dir"] * int(TR_SLIDE * (1.0 - _q)), _r.y), _r)
+                canvas.set_clip(None)
             else:
                 vt_old.set_alpha(255)
                 canvas.blit(vt_old, (0, 0))
