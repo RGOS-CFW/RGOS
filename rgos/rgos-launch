@@ -27,7 +27,12 @@ GC_RETRY_S = 30.0
 GC_VIDEO_DRIVERS = ("glcore", "gl")
 # Hardware-rendered cores need a real GL context; RetroArch's default video driver does not give Flycast one, so the
 # Dreamcast died ~4 s after start with no log. Same approach as GameCube: pin a GL driver and retry with the other.
-DC_VIDEO_DRIVERS = ("gl", "glcore")
+# The Debian RetroArch in the image is built against OpenGL ES: it has the drivers vulkan, gl (= GLES), sdl2 and null, and
+# NO "glcore". Pinning "glcore" only made RetroArch warn and fall back, so Dreamcast uses "gl" alone (the GLES driver).
+DC_VIDEO_DRIVERS = ("gl",)
+# RetroArch prints this when a core asks for a desktop OpenGL context and the frontend is a GLES build. No video driver or
+# retry can fix it: the core itself has to be a GLES build (build.sh builds one).
+GL_MISMATCH = "compiled against OpenGLES"
 HW_VIDEO = {"gc": (GC_VIDEO_DRIVERS, "retroarch-gc-video.txt"), "dreamcast": (DC_VIDEO_DRIVERS, "retroarch-dc-video.txt")}
 GC_OPTIONS_NAME = "dolphin-options.cfg"
 # Dolphin core options for the RG Rotate (Unisoc T618: 2x Cortex-A75 + 6x Cortex-A55, Mali-G52 MP2).
@@ -363,6 +368,16 @@ def video_attempts(sid, boot_dir=None):
     except OSError:
         pass
     return list(drivers)
+
+
+def gl_mismatch(text):
+    """True when the log shows a desktop-OpenGL core running under a GLES-only RetroArch."""
+    return GL_MISMATCH in (text or "")
+
+
+GL_MISMATCH_HELP = ("This %s core asks for desktop OpenGL, but RetroArch on this device is a GLES build, so it cannot start. "
+                    "Use a GLES build of the core: rebuild the image (build.sh builds one) or put a GLES-built %s_libretro.so "
+                    "in cores/ on the ROMS card. The libretro buildbot core is desktop-GL only.")
 
 
 TAIL_BYTES = 256 * 1024
@@ -841,6 +856,9 @@ def launch_retroarch(sid, core, core_path, content):
         dt = time.monotonic() - t0
         log("retroarch exited rc=%s (%s) after %.1fs" % (rc, rc_text(rc), dt))
         failed = rc != 0 or "[ERROR]" in tail(LOG, 40)
+        if sid in HW_VIDEO and failed and gl_mismatch(tail(LOG, 60)):
+            log("%s core needs desktop OpenGL but RetroArch is a GLES build; retrying cannot help" % sid)
+            break
         if sid in HW_VIDEO and failed and dt < GC_RETRY_S and n + 1 < len(attempts):
             history.append((video, rc, dt, tail(LOG, 60)))
             log("%s failed to start with video_driver %s; retrying with %s" % (sid, video, attempts[n + 1]))
@@ -848,7 +866,10 @@ def launch_retroarch(sid, core, core_path, content):
         break
     save_report(pads, idx, drv, cmd, rc, history, core_path)
     if dt < EARLY_FAIL_S and (rc != 0 or "[ERROR]" in tail(LOG, 40)):
-        show_error("RG OS: %s failed to start (%s)" % (core or "RetroArch", rc_text(rc)), tail(LOG))
+        detail = tail(LOG)
+        if gl_mismatch(tail(LOG, 60)):
+            detail = GL_MISMATCH_HELP % (core or "emulator", core or "name") + "\n\n" + detail
+        show_error("RG OS: %s failed to start (%s)" % (core or "RetroArch", rc_text(rc)), detail)
     return rc
 
 

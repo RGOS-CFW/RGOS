@@ -115,6 +115,10 @@ DEBIAN_MIRROR="${DEBIAN_MIRROR:-http://deb.debian.org/debian}"
 PSX_REPO="${PSX_REPO:-https://github.com/libretro/pcsx_rearmed.git}"
 GENESIS_REPO="${GENESIS_REPO:-https://github.com/libretro/Genesis-Plus-GX.git}"
 GC_REPO="${GC_REPO:-https://github.com/libretro/dolphin.git}"
+# Dreamcast: the Debian RetroArch is a GLES build, the libretro buildbot Flycast is desktop-GL only (it dies with "Requesting
+# OpenGL context, but RetroArch is compiled against OpenGLES"), so Flycast is built here as a GLES core. DC_REPO=none skips it.
+DC_REPO="${DC_REPO:-https://github.com/flyinghead/flycast.git}"
+DC_MAKE_ARGS="${DC_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
 STELLA_REPO="${STELLA_REPO:-https://github.com/libretro/stella2014-libretro.git}"
 ATARI800_REPO="${ATARI800_REPO:-https://github.com/libretro/libretro-atari800.git}"
 PROSYSTEM_REPO="${PROSYSTEM_REPO:-https://github.com/libretro/prosystem-libretro.git}"
@@ -374,16 +378,17 @@ if ls "$HERE"/cores/*_libretro.so >/dev/null 2>&1; then
   echo "==> Copying prebuilt cores from cores/"; cp "$HERE"/cores/*_libretro.so "$LRDIR/"
 fi
 [[ "$DEVICE" == "rg-rotate" ]] || rm -f "$LRDIR/dolphin_libretro.so"
-WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0
+WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0; WANT_DC=0
 [[ "$NGP_SRC" != none && ! -e "$LRDIR/mednafen_ngp_libretro.so" ]] && WANT_NGP=1
 [[ "$PSX_REPO" != none && ! -e "$LRDIR/pcsx_rearmed_libretro.so" ]] && WANT_PSX=1
 have_core() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so "$ROOTFS/usr/lib/libretro/$1"_libretro.so "$ROOTFS/usr/local/lib/libretro/$1"_libretro.so; do [[ -e "$f" ]] && return 0; done; return 1; }
 [[ "$GENESIS_REPO" != none ]] && ! have_core genesis_plus_gx && WANT_GEN=1
 [[ "$GC_REPO" != none && ! -e "$LRDIR/dolphin_libretro.so" ]] && WANT_GC=1
+[[ "$DC_REPO" != none && ! -e "$LRDIR/flycast_libretro.so" ]] && WANT_DC=1
 [[ "$STELLA_REPO" != none ]] && ! have_core stella2014 && WANT_ATARI=1
 [[ "$ATARI800_REPO" != none ]] && ! have_core atari800 && WANT_ATARI=1
 [[ "$PROSYSTEM_REPO" != none ]] && ! have_core prosystem && WANT_ATARI=1
-if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI )); then
+if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC )); then
   echo "==> Installing a compiler in the rootfs to build libretro cores"
   rm -rf "$ROOTFS/tmp/core-src"; mkdir -p "$ROOTFS/tmp/core-src"
   cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
@@ -443,6 +448,24 @@ if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI )); then
         install -m 755 "$ROOTFS"/tmp/core-src/psx/pcsx_rearmed_libretro.so "$LRDIR/pcsx_rearmed_libretro.so"
       ); then echo "   pcsx_rearmed_libretro.so built"
       else echo "!! could not build pcsx_rearmed: PlayStation falls back to mednafen_psx (Beetle PSX, slower; software renderer)"; fi
+    fi
+    if (( WANT_DC )); then
+      echo "==> Building the Dreamcast core (flycast, OpenGL ES to match RetroArch)"
+      if (
+        set -e
+        command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
+        rm -rf "$WORK/flycast"
+        git clone -q --depth 1 --recurse-submodules --shallow-submodules "$DC_REPO" "$WORK/flycast"
+        cp -r "$WORK/flycast" "$ROOTFS/tmp/core-src/dc"
+        chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libgles-dev libegl-dev zlib1g-dev libcurl4-openssl-dev pkg-config
+        chroot "$ROOTFS" sh -c "cd /tmp/core-src/dc && make -f Makefile $DC_MAKE_ARGS -j\"\$(nproc)\""
+        so="$(find "$ROOTFS/tmp/core-src/dc" -name flycast_libretro.so -type f | head -n1)"
+        [[ -n "$so" ]]
+        # a desktop-GL build would crash at start exactly like the buildbot core, so refuse it here
+        strings "$so" | grep -qi 'GLES' || { echo "flycast_libretro.so has no GLES code (check DC_MAKE_ARGS)"; exit 1; }
+        install -m 755 "$so" "$LRDIR/flycast_libretro.so"
+      ); then echo "   flycast_libretro.so built (GLES)"
+      else echo "!! could not build Flycast: Dreamcast will have no core (the buildbot Flycast is desktop-GL and cannot run on this RetroArch; put a GLES-built flycast_libretro.so in cores/ and rebuild)"; rm -f "$LRDIR/flycast_libretro.so"; fi
     fi
     if (( WANT_GC )); then
       echo "==> Building the GameCube core (Dolphin libretro, GameCube only in the menu; RG Rotate)"
