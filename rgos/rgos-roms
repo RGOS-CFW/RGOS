@@ -4,6 +4,17 @@ LOG=/var/log/rgos-roms.log
 ROMS_GUID="5E0D5A1C-52F0-4C6B-9D3E-524F4D530003"
 say() { echo "$(date +%T 2>/dev/null) $*" >> "$LOG"; }
 
+# file system for a NEW (blank) ROMS partition: $RGOS_ROMS_FS (set by the installer), else the word in /boot/rgos-roms-fs, else exfat.
+# A partition that already holds a file system is never reformatted, so this only matters the first time.
+fs="${RGOS_ROMS_FS:-}"
+[ -n "$fs" ] || fs=$(head -n 1 /boot/rgos-roms-fs 2>/dev/null)
+fs=$(printf '%s' "$fs" | tr -d ' \r\n' | tr 'A-Z' 'a-z')
+case "$fs" in
+    fat32|vfat|fat) fs=fat32; mkfs_cmd=mkfs.vfat; ptype_dos=c; ptype_gpt=0700 ;;
+    ext4)           fs=ext4;  mkfs_cmd=mkfs.ext4; ptype_dos=83; ptype_gpt=8300 ;;
+    *)              fs=exfat; mkfs_cmd=mkfs.exfat; ptype_dos=7; ptype_gpt=0700 ;;
+esac
+
 src=$(awk '$2=="/boot"{print $1; exit}' /proc/mounts)
 case "$src" in
     /dev/mmcblk*p1) disk=${src%p1} ;;
@@ -12,8 +23,8 @@ esac
 mkdir -p /run/rgos 2>/dev/null
 pttype=$(blkid -p -o value -s PTTYPE "$disk" 2>/dev/null)
 case "$pttype" in
-    gpt) pn=4; need="sgdisk mkfs.exfat blkid" ;;
-    dos) pn=3; need="sfdisk mkfs.exfat blkid" ;;
+    gpt) pn=4; need="sgdisk $mkfs_cmd blkid" ;;
+    dos) pn=3; need="sfdisk $mkfs_cmd blkid" ;;
     *)   say "partition table of $disk is '$pttype' (not gpt or dos): not touching it"; exit 0 ;;
 esac
 part="${disk}p${pn}"
@@ -34,7 +45,7 @@ if [ "$pttype" = gpt ]; then
 else
     roms_info() { sfdisk -d "$disk" 2>/dev/null | grep "^${part} "; }
     roms_exists() { [ -n "$(roms_info)" ]; }
-    roms_is_ours() { roms_info | grep -qiE 'type=7([,[:space:]]|$)'; }
+    roms_is_ours() { roms_info | grep -qiE 'type=(7|c|83)([,[:space:]]|$)'; }
     p2_end() { sfdisk -d "$disk" 2>/dev/null | grep "^${disk}p2 " | sed -E 's/.*start= *([0-9]+),.*size= *([0-9]+),.*/\1 \2/' | awk 'NF==2 {print $1 + $2 - 1; exit}'; }
 fi
 
@@ -42,13 +53,13 @@ if ! roms_exists; then
     p2_last=$(p2_end)
     case "$p2_last" in ''|*[!0-9]*) say "cannot read the end of partition 2 (got '$p2_last'): giving up"; exit 0 ;; esac
     start=$(( (p2_last + 1 + ROMS_ALIGN - 1) / ROMS_ALIGN * ROMS_ALIGN ))
-    say "no partition $pn on $disk ($pttype; partition 2 ends at sector $p2_last): creating ROMS from sector $start to the end of the card"
+    say "no partition $pn on $disk ($pttype; partition 2 ends at sector $p2_last): creating ROMS ($fs) from sector $start to the end of the card"
     if [ "$pttype" = gpt ]; then
         [ -f /boot/rgos-gpt-backup.bin ] || { sgdisk -b /boot/rgos-gpt-backup.bin "$disk" >> "$LOG" 2>&1; sync; }
-        sgdisk -e -n "4:${start}:0" -t 4:0700 -c 4:ROMS -u "4:${ROMS_GUID}" "$disk" >> "$LOG" 2>&1
+        sgdisk -e -n "4:${start}:0" -t "4:${ptype_gpt}" -c 4:ROMS -u "4:${ROMS_GUID}" "$disk" >> "$LOG" 2>&1
     else
         [ -f /boot/rgos-mbr-backup.bin ] || { dd if="$disk" of=/boot/rgos-mbr-backup.bin bs=512 count=1 >> "$LOG" 2>&1; sync; }
-        echo "${start},,7" | sfdisk --append --no-reread --no-tell-kernel "$disk" >> "$LOG" 2>&1
+        echo "${start},,${ptype_dos}" | sfdisk --append --no-reread --no-tell-kernel "$disk" >> "$LOG" 2>&1
     fi
     sync
     if ! roms_exists; then say "partition $pn was NOT created (see the output above)"; exit 0; fi
@@ -69,10 +80,15 @@ fstype=$(blkid -p -o value -s TYPE "$part" 2>/dev/null)
 if [ -n "$fstype" ]; then
     say "$part already holds '$fstype': nothing to do"; exit 0
 fi
-say "formatting $part as exFAT (label ROMS)"
-if mkfs.exfat -L ROMS "$part" >> "$LOG" 2>&1; then
+say "formatting $part as $fs (label ROMS)"
+case "$fs" in
+    fat32) mkfs.vfat -F 32 -n ROMS "$part" >> "$LOG" 2>&1 ;;
+    ext4)  mkfs.ext4 -F -m 0 -L ROMS "$part" >> "$LOG" 2>&1 ;;
+    *)     mkfs.exfat -L ROMS "$part" >> "$LOG" 2>&1 ;;
+esac
+if [ $? -eq 0 ]; then
     sync; say "ROMS ready: $(blkid -p -o value -s TYPE "$part" 2>/dev/null)"
 else
-    say "mkfs.exfat FAILED on $part (it stays empty and is retried on the next boot)"
+    say "$mkfs_cmd FAILED on $part (it stays empty and is retried on the next boot)"
 fi
 exit 0
