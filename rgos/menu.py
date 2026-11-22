@@ -895,6 +895,164 @@ def anim_tick():
     return moving
 
 
+# ---- motion shared by the RG OS tile and RG XMB launchers (ported from RG Classic) ---------------------------------
+# entrance (staggered pop-in), a spring focus ring with hop / squash / ghost trail, shine and sparkle on the focus,
+# drifting embers, and per-item pulses. Everything is time based; _anim_clock[2] is raised while something moves so the
+# main loop runs at full frame rate and relaxes to the idle rate once it settles.
+_out_cubic, _out_back, _c01 = rgclassic._out_cubic, rgclassic._out_back, rgclassic._c01
+SPRING_K, SPRING_C = rgclassic.SPRING_K, rgclassic.SPRING_C
+HOME_INTRO_S = 1.0
+_HOME_FX = {"key": None, "t0": 0.0, "last": 0.0, "idx": None, "sel_t": 0.0}
+_RING = {"p": None, "v": [0.0, 0.0], "tgt": None, "dist": 1.0, "trail": []}
+_RING_SURF, _SHINE_SURF = {}, {}
+_EMB = {"size": None, "ps": []}
+_XFX = {"cat": None, "sel": None, "cat_t": -9.0, "sel_t": -9.0}
+
+
+def home_intro(key, now=None):
+    """Seconds since the home screen of launcher `key` started its entrance; the entrance replays when the home screen
+    comes back after not being drawn (returning from a game or a sub-view) or when the launcher is switched."""
+    now = time.monotonic() if now is None else now
+    if _HOME_FX["key"] != key or now - _HOME_FX["last"] > 0.3:
+        _HOME_FX["key"], _HOME_FX["t0"], _HOME_FX["idx"] = key, now, None
+        _RING["p"] = None
+    _HOME_FX["last"] = now
+    el = now - _HOME_FX["t0"]
+    if el < HOME_INTRO_S + 0.6:
+        _anim_clock[2] = True
+    return el
+
+
+def _ring_step(tx, ty, dt, now):
+    """Damped spring (slight overshoot) pulling the focus ring to (tx, ty); returns (speed, distance left)."""
+    st = _RING
+    if st["p"] is None:
+        st["p"], st["v"], st["tgt"], st["trail"] = [float(tx), float(ty)], [0.0, 0.0], (tx, ty), []
+    if st["tgt"] != (tx, ty):
+        st["dist"], st["tgt"] = max(1.0, math.hypot(tx - st["p"][0], ty - st["p"][1])), (tx, ty)
+    p, v = st["p"], st["v"]
+    n = int(dt / 0.008) + 1
+    h = dt / n
+    for _ in range(n):
+        for a, g in ((0, tx), (1, ty)):
+            v[a] += (SPRING_K * (g - p[a]) - SPRING_C * v[a]) * h
+            p[a] += v[a] * h
+    rem, speed = math.hypot(tx - p[0], ty - p[1]), math.hypot(v[0], v[1])
+    if rem < 0.35 and speed < 6.0:
+        p[0], p[1], v[0], v[1], rem, speed = float(tx), float(ty), 0.0, 0.0, 0.0, 0.0
+    else:
+        _anim_clock[2] = True
+    tr = st["trail"]
+    tr.append((now, p[0], p[1]))
+    while tr and now - tr[0][0] > 0.2:
+        tr.pop(0)
+    return speed, rem
+
+
+def _ring_surf(w, h, radius, alpha):
+    key = (w, h, radius, tuple(ACCENT[:3]))
+    s = _RING_SURF.get(key)
+    if s is None:
+        if len(_RING_SURF) > 48:
+            _RING_SURF.clear()
+        col = tuple(ACCENT[:3])
+        s = pygame.Surface((w + 12, h + 12), pygame.SRCALPHA)
+        pygame.draw.rect(s, col + (64,), (0, 0, w + 12, h + 12), 5, border_radius=radius + 6)
+        pygame.draw.rect(s, col + (255,), (6, 6, w, h), 3, border_radius=radius)
+        _RING_SURF[key] = s
+    s.set_alpha(max(0, min(255, int(alpha))))
+    return s
+
+
+def _shine_surf(h):
+    s = _SHINE_SURF.get(h)
+    if s is None:
+        if len(_SHINE_SURF) > 16:
+            _SHINE_SURF.clear()
+        s = pygame.Surface((h + 22, h), pygame.SRCALPHA)
+        for r in range(h):
+            pygame.draw.line(s, (255, 255, 255, 56), (h - r, r), (h - r + 18, r))
+        _SHINE_SURF[h] = s
+    return s
+
+
+def _draw_ring(c, now, bw, bh, cur_in, speed, rem, radius=18):
+    """The focus ring: hops and stretches along the travel axis while it moves, leaves a ghost trail when fast, and when
+    resting pulses, sweeps a diagonal shine and twinkles."""
+    if cur_in <= 0.05 or _RING["p"] is None:
+        return
+    x, y = _RING["p"]
+    vx, vy = _RING["v"]
+    svx, svy = min(8, int(abs(vx) / 90)), min(6, int(abs(vy) / 90))
+    k = min(cur_in, 1.15)
+    w2, h2 = max(8, int((bw + svx) * k + 0.5)), max(8, int((bh + svy) * k + 0.5))
+    arc = int(math.sin(math.pi * _c01(1.0 - rem / _RING["dist"])) * 4 + 0.5) if rem > 0.5 else 0
+    rx, ry = int(x + bw / 2.0 - w2 / 2.0 + 0.5), int(y + bh / 2.0 - h2 / 2.0 + 0.5) - arc
+    moving = speed > 60 or rem > 1.5
+    if speed > 140:
+        for lag, a in ((0.05, 110), (0.10, 55)):
+            old = [q for q in _RING["trail"] if q[0] <= now - lag]
+            if old and math.hypot(old[-1][1] - x, old[-1][2] - y) > 5:
+                c.blit(_ring_surf(bw, bh, radius, a), (int(old[-1][1]) - 6, int(old[-1][2]) - 6))
+    c.blit(_ring_surf(w2, h2, radius, 255 if moving else 205 + 50 * math.sin(now * 5.0)), (rx - 6, ry - 6))
+    if moving or cur_in < 1.0:
+        return
+    ph = (now % 3.2) / 0.65
+    if ph < 1.0:
+        band = _shine_surf(h2)
+        old_clip = c.get_clip()
+        c.set_clip(pygame.Rect(rx + 4, ry + 4, w2 - 8, h2 - 8))
+        c.blit(band, (rx - h2 + int(ph * (w2 + h2 + 20)), ry))
+        c.set_clip(old_clip)
+    bk = int(now / 0.85)
+    rr = random.Random(bk * 7 + 3)
+    sx, sy = rx + rr.randrange(8, max(9, w2 - 8)), ry + rr.randrange(6, max(7, h2 - 6))
+    sp = (now % 0.85) / 0.85
+    if sp < 0.15 or 0.35 <= sp < 0.55:
+        pygame.draw.rect(c, TEXT, (sx, sy, 2, 2))
+    elif sp < 0.35:
+        pygame.draw.rect(c, TEXT, (sx - 2, sy, 6, 2))
+        pygame.draw.rect(c, TEXT, (sx, sy - 2, 2, 6))
+
+
+def home_embers(c, now, dt):
+    """Three layers of slow embers in the accent colour drifting up behind the tiles."""
+    u = max(1, W // 320)
+    if _EMB["size"] != (W, H):
+        r = random.Random(7)
+        _EMB["ps"] = [[r.uniform(0, W), r.uniform(0, H), r.uniform(10, 26), r.uniform(0, 6.28), i % 3] for i in range(30)]
+        _EMB["size"] = (W, H)
+    top = H * 0.2
+    for e in _EMB["ps"]:
+        lay = e[4]
+        e[1] -= e[2] * (0.6 + 0.4 * lay) * dt * u * 0.6
+        if e[1] < -4:
+            e[1], e[0] = H + 4.0, random.uniform(0, W)
+        x = int(e[0] + (2 + 1.5 * lay) * math.sin(now * (0.6 + 0.25 * lay) + e[3]))
+        y = int(e[1])
+        k = 0.16 + 0.12 * lay + 0.22 * (0.5 + 0.5 * math.sin(now * 4.0 + e[3] * 7.0))
+        if y < top:
+            k *= max(0.0, y) / top
+        if k > 0.03:
+            sz = u * (2 if lay == 2 else 1)
+            pygame.draw.rect(c, _mix(BG, ACCENT, min(1.0, k)), (x, y, sz, sz))
+
+
+def xmb_fx(cat_i, sel_i, now, el):
+    """Time since the XMB category / item last changed (drives the pulse rings and the item pop)."""
+    st = _XFX
+    if el < 0.02:
+        st["cat"], st["sel"], st["cat_t"], st["sel_t"] = cat_i, sel_i, -9.0, -9.0
+    if st["cat"] != cat_i:
+        st["cat"], st["sel"], st["cat_t"], st["sel_t"] = cat_i, sel_i, now, now
+    elif st["sel"] != sel_i:
+        st["sel"], st["sel_t"] = sel_i, now
+    cat_t, sel_t = now - st["cat_t"], now - st["sel_t"]
+    if cat_t < 0.6 or sel_t < 0.5:
+        _anim_clock[2] = True
+    return {"now": now, "intro": el, "cat_t": cat_t, "sel_t": sel_t, "sel_i": sel_i}
+
+
 XMB_UI = [False]
 _GLASS = {}
 
@@ -938,13 +1096,14 @@ def ui_rect(surf, col, rect, radius=0):
         surf.blit(_glass_face(w, h, radius, _glass_tint(), 105), (x, y))
 
 
-def draw_button(surf, rect, base, radius=12, depth=4, sel=False):
+def draw_button(surf, rect, base, radius=12, depth=4, sel=False, key=None, border=True):
     x, y, w, h = rect
-    st = _BTN_ANIM.get(rect)
+    bk = rect if key is None else key
+    st = _BTN_ANIM.get(bk)
     if st is None:
         if len(_BTN_ANIM) > 300:
             _BTN_ANIM.clear()
-        st = _BTN_ANIM[rect] = [1.0 if sel else 0.0, base, base]
+        st = _BTN_ANIM[bk] = [1.0 if sel else 0.0, base, base]
     st[1 if sel else 2] = base
     target = 1.0 if sel else 0.0
     if abs(st[0] - target) < 0.002:
@@ -975,7 +1134,7 @@ def draw_button(surf, rect, base, radius=12, depth=4, sel=False):
     surf.blit(sh, (x, y + lift))
     pygame.draw.rect(surf, side, (x, y + depth, w, h), border_radius=radius)
     surf.blit(_btn_face(w, h, base, radius), (x, y))
-    if hl > 0:
+    if hl > 0 and border:
         pygame.draw.rect(surf, _mix(base, ACCENT, hl), (x, y, w, h), 2 if h < 80 else 3, border_radius=radius)
     return hl, lift
 
@@ -1608,7 +1767,12 @@ def _xmb_silk_steps(g, f, t):
         yield
 
 
-def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade):
+def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade, fx=None):
+    now = fx["now"] if fx else 0.0
+    el = fx["intro"] if fx else 9.0
+    cat_t = fx["cat_t"] if fx else 9.0
+    fsel_t = fx["sel_t"] if fx else 9.0
+    sel_i = fx["sel_i"] if fx else -1
     ax, bar_y, big, small, sp_x = 170, int(H * 0.26), 76, 50, 118
     sp, gap = 56 + max(0, H - 480) // 10, 16
     for i, (cid, cname) in enumerate(XMB_CATS):
@@ -1619,12 +1783,33 @@ def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade):
         t = max(0.0, 1.0 - abs(d))
         t = t * t * (3.0 - 2.0 * t)
         size = int(round((small + (big - small) * t) / 4.0)) * 4
+        ip, ai, yo = 1.0, 1.0, 0
+        if el < 1.2:   # entrance: the categories drop in one after another with a little overshoot
+            ip = _out_back((el - 0.045 * i) / 0.40)
+            if ip <= 0.02:
+                continue
+            ai, yo = min(1.0, ip * 1.6), -int((1.0 - ip) * 40)
+            size = max(8, int(size * min(ip, 1.12)) // 4 * 4)
+        yc = bar_y + yo + int(round(2.0 * math.sin(now * 2.2) * t * t))
         if t > 0.05:
-            pygame.draw.circle(c, xmb_tint(x, bar_y, 0.09 * t), (x, bar_y), int(size * 0.62))
-        c.blit(xmb_icon(cid, size, _mix(DIM, TEXT, t), 0.5 + 0.5 * t), (x - size // 2, bar_y - size // 2))
+            glow = int(size * 0.62 + 2.0 * t * math.sin(now * 2.4))
+            pygame.draw.circle(c, xmb_tint(x, yc, (0.09 + 0.035 * math.sin(now * 2.4 + 1.0)) * t * ai), (x, yc), glow)
+        if i == cat_i and cat_t < 0.55:   # ring pulse when a category is picked
+            pp = _out_cubic(cat_t / 0.55)
+            pygame.draw.circle(c, xmb_tint(x, yc, 0.40 * (1.0 - pp)), (x, yc), int(size * (0.50 + 0.60 * pp)), 2)
+        c.blit(xmb_icon(cid, size, _mix(DIM, TEXT, t), (0.5 + 0.5 * t) * ai), (x - size // 2, yc - size // 2))
+        if i == cat_i and fx and t > 0.9 and el > 0.7:   # twinkle beside the focused category
+            rr = random.Random(int(now / 0.9) * 7 + 3)
+            ang, rad = rr.uniform(0.0, 6.283), size * rr.uniform(0.28, 0.5)
+            sx, sy, ph = x + int(math.cos(ang) * rad), yc + int(math.sin(ang) * rad), (now % 0.9) / 0.9
+            if ph < 0.15 or 0.35 <= ph < 0.55:
+                pygame.draw.rect(c, TEXT, (sx, sy, 2, 2))
+            elif ph < 0.35:
+                pygame.draw.rect(c, TEXT, (sx - 2, sy, 6, 2))
+                pygame.draw.rect(c, TEXT, (sx, sy - 2, 2, 6))
         if t > 0.3:
-            lab = f_row.render(cname, True, _xq(_mix(BG, TEXT, t)))
-            c.blit(lab, (x - lab.get_width() // 2, bar_y + big // 2 + 8))
+            lab = f_row.render(cname, True, _xq(_mix(BG, TEXT, t * ai)))
+            c.blit(lab, (x - lab.get_width() // 2, bar_y + yo + big // 2 + 8))
     colx = int(round(ax + (cat_i - cx_f) * sp_x))
     y0 = bar_y + big // 2 + 8 + 26 + sp // 2 + 6
     for i, it in enumerate(items):
@@ -1636,18 +1821,33 @@ def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade):
             continue
         sel_t = max(0.0, 1.0 - abs(d))
         sel_t = sel_t * sel_t * (3.0 - 2.0 * sel_t)
-        al = (1.0 + min(0.0, d)) * fade * fade * (3.0 - 2.0 * fade)
+        k = max(0, int(round(d)))
+        fi = _c01((fade - 0.06 * k) / 0.40)   # items slide in from the right, staggered, after a category change
+        fi = fi * fi * (3.0 - 2.0 * fi)
+        if el < 1.6:
+            ii = _c01((el - 0.28 - 0.05 * k) / 0.40)
+            fi = min(fi, ii * ii * (3.0 - 2.0 * ii))
+        al = (1.0 + min(0.0, d)) * fi
         if d > 0:
             al *= max(0.0, min(1.0, (H - 44 - y) / 30.0))
         if al <= 0.02:
             continue
         al *= 0.80 + 0.20 * sel_t
+        cxi = colx + int((1.0 - fi) * 36)
         isz = int(round((34 + 14 * sel_t) / 2.0)) * 2
+        if i == sel_i and fsel_t < 0.35:   # pop when the cursor lands on an item
+            isz = int(isz * (1.0 + 0.16 * math.sin(math.pi * _c01(fsel_t / 0.35)))) // 2 * 2
         yi = int(round(y))
         if sel_t > 0.05:
-            pygame.draw.circle(c, xmb_tint(colx, y, 0.08 * sel_t * al), (colx, yi), int(isz * 0.62))
-        c.blit(xmb_icon(it["icon"], isz, _mix(DIM, TEXT, sel_t), al), (colx - isz // 2, yi - isz // 2))
-        tx = colx + 40
+            pygame.draw.circle(c, xmb_tint(cxi, y, 0.08 * sel_t * al), (cxi, yi), int(isz * 0.62))
+        if i == sel_i and fsel_t < 0.45:
+            pp = _out_cubic(fsel_t / 0.45)
+            pygame.draw.circle(c, xmb_tint(cxi, y, 0.35 * (1.0 - pp) * al), (cxi, yi), int(isz * (0.50 + 0.50 * pp)), 2)
+        c.blit(xmb_icon(it["icon"], isz, _mix(DIM, TEXT, sel_t), al), (cxi - isz // 2, yi - isz // 2))
+        if sel_t > 0.5 and fx:   # a chevron nudging toward the selected item
+            mx = cxi - isz // 2 - 16 + int(3 * math.sin(now * 5.0))
+            pygame.draw.polygon(c, xmb_tint(mx, y, 0.55 * sel_t * al), [(mx, yi - 6), (mx, yi + 6), (mx + 8, yi)])
+        tx = cxi + 40
         lab = f_row.render(fit(f_row, it["label"], W - tx - 20), True, _xq(_mix(BG, _mix(DIM, TEXT, 0.40 + 0.60 * sel_t), al)))
         c.blit(lab, (tx, yi - lab.get_height() // 2 - int(round(10 * sel_t))))
         if sel_t > 0.2 and it.get("sub"):
@@ -3539,10 +3739,12 @@ def main():
             xdt = _anim_clock[1]
             xmb_cx, xmb_cv = _smooth_damp(xmb_cx, xmb_cv, xmb_cat, xdt)
             xmb_vy, xmb_vv = _smooth_damp(xmb_vy, xmb_vv, xmb_sel[xcat], xdt)
-            xmb_fade = min(1.0, xmb_fade + xdt * 6.0)
+            xmb_fade = min(1.0, xmb_fade + xdt * 4.2)
+            now_x = time.monotonic()
+            xfx = xmb_fx(xmb_cat, xmb_sel[xcat], now_x, home_intro("xmb", now_x))
             if xmb_cx != xmb_cat or xmb_vy != xmb_sel[xcat] or xmb_fade < 1.0:
                 _anim_clock[2] = True
-            draw_xmb_home(canvas, f_row, f_small, xmb_cx, xmb_cat, xitems, xmb_vy, xmb_fade)
+            draw_xmb_home(canvas, f_row, f_small, xmb_cx, xmb_cat, xitems, xmb_vy, xmb_fade, xfx)
             hint = "Left/Right Category   Up/Down Item   A Open   X Rescan"
             if dd is not None:
                 draw_xmb_dropdown(canvas, f_small, dd, dd_options(dd["kind"]))
@@ -3562,6 +3764,8 @@ def main():
                 draw_xmb_dropdown(canvas, f_small, dd, dd_options(dd["kind"]))
                 hint = "Up/Down Browse   A Select   B Cancel"
         elif view == "home":
+            now_ = time.monotonic()
+            el = home_intro("rgos", now_)
             gap = 14
             nrows_h = (len(HOME_ITEMS) + HOME_COLS - 1) // HOME_COLS
             bw, bh = (W - 40 - (HOME_COLS - 1) * gap) // HOME_COLS, (H - top_y - 48 - (nrows_h - 1) * gap) // nrows_h
@@ -3573,27 +3777,58 @@ def main():
                     "tools": "Files, ports, RetroArch",
                     "settings": "Theme, Wi-Fi, info, controls",
                     "power": "Shut down RG OS"}
-            for i, (hid, hname) in enumerate(HOME_ITEMS):
-                bx, by, sel = x0 + (i % HOME_COLS) * (bw + gap), top_y + (i // HOME_COLS) * (bh + gap), i == home_idx
-                hl, lift = draw_button(canvas, (bx, by, bw, bh), SEL_BG if sel else PANEL, 18, 6, sel)
+            if _HOME_FX["idx"] != home_idx:
+                _HOME_FX["idx"], _HOME_FX["sel_t"] = home_idx, now_
+            sub_p = _out_cubic((now_ - _HOME_FX["sel_t"]) / 0.30)
+            ring_speed, ring_rem = _ring_step(x0 + (home_idx % HOME_COLS) * (bw + gap),
+                                              top_y + (home_idx // HOME_COLS) * (bh + gap) - LIFT_PX, _anim_clock[1], now_)
+            ring_rest = ring_speed <= 60 and ring_rem <= 1.5
+            if sub_p < 1.0:
+                _anim_clock[2] = True
+            home_embers(canvas, now_, _anim_clock[1])
+
+            def paint_tile(surf, bx, by, hid, hname, sel, key=None):
+                hl, lift = draw_button(surf, (bx, by, bw, bh), SEL_BG if sel else PANEL, 18, 6, sel, key, False)
                 by -= lift
+                bob = int(round(2.0 * math.sin(now_ * 2.6))) if sel and hl >= 0.99 and ring_rest else 0
+                a_ = sub_p if sel else 1.0
+                sub_dy = int((1.0 - a_) * 6)
                 if bh < 130:
                     icx, tx = bx + 62, bx + 128
-                    ICONS[hid](canvas, icx, by + bh // 2, _mix(DIM, ACCENT, hl), _mix(PANEL, SEL_BG, hl))
+                    ICONS[hid](surf, icx, by + bh // 2 + bob, _mix(DIM, ACCENT, hl), _mix(PANEL, SEL_BG, hl))
                     title = f_row.render(fit(f_row, hname, bw - (tx - bx) - 14), True, _mix(DIM, TEXT, hl))
                     sub_lines = wrap(f_small, subs[hid], bw - (tx - bx) - 14)[:2]
                     th_, lh_ = title.get_height(), f_small.get_linesize() + 1
                     ty0 = by + (bh - (th_ + 4 + lh_ * len(sub_lines))) // 2
-                    canvas.blit(title, (tx, ty0))
+                    surf.blit(title, (tx, ty0))
                     for li, ln in enumerate(sub_lines):
-                        canvas.blit(f_small.render(ln, True, DIM), (tx, ty0 + th_ + 4 + li * lh_))
-                    continue
+                        ss = f_small.render(ln, True, DIM)
+                        if a_ < 1.0:
+                            ss.set_alpha(int(255 * a_))
+                        surf.blit(ss, (tx, ty0 + th_ + 4 + li * lh_ + sub_dy))
+                    return
                 cx = bx + bw // 2
-                ICONS[hid](canvas, cx, by + 44 + vo, _mix(DIM, ACCENT, hl), _mix(PANEL, SEL_BG, hl))
+                ICONS[hid](surf, cx, by + 44 + vo + bob, _mix(DIM, ACCENT, hl), _mix(PANEL, SEL_BG, hl))
                 title = f_row.render(hname, True, _mix(DIM, TEXT, hl))
-                canvas.blit(title, (cx - title.get_width() // 2, by + 84 + vo))
+                surf.blit(title, (cx - title.get_width() // 2, by + 84 + vo))
                 sub = f_small.render(fit(f_small, subs[hid], bw - 24), True, DIM)
-                canvas.blit(sub, (cx - sub.get_width() // 2, by + 114 + vo))
+                if a_ < 1.0:
+                    sub.set_alpha(int(255 * a_))
+                surf.blit(sub, (cx - sub.get_width() // 2, by + 114 + vo + sub_dy))
+
+            for i, (hid, hname) in enumerate(HOME_ITEMS):
+                bx, by, sel = x0 + (i % HOME_COLS) * (bw + gap), top_y + (i // HOME_COLS) * (bh + gap), i == home_idx
+                pp_ = _out_back((el - 0.06 - 0.07 * i) / 0.32)   # entrance: tiles pop in one after another
+                if el >= 1.0 or abs(pp_ - 1.0) < 0.004:
+                    paint_tile(canvas, bx, by, hid, hname, sel)
+                elif pp_ > 0.04:
+                    tmp = pygame.Surface((bw + 12, bh + 30), pygame.SRCALPHA)
+                    paint_tile(tmp, 6, 14, hid, hname, sel, (bx, by, bw, bh))
+                    w2, h2 = max(4, int((bw + 12) * pp_)), max(4, int((bh + 30) * pp_))
+                    sc = pygame.transform.smoothscale(tmp, (w2, h2))
+                    sc.set_alpha(min(255, int(pp_ * 420)))
+                    canvas.blit(sc, (bx - 6 + (bw + 12 - w2) // 2, by - 14 + (bh + 30 - h2) // 2))
+            _draw_ring(canvas, now_, bw, bh, _out_back((el - 0.42) / 0.30) if el < 0.8 else 1.0, ring_speed, ring_rem)
             hint = "A Open   X Rescan   START+SELECT Power off"
             if dd is not None:
                 draw_xmb_dropdown(canvas, f_small, dd, dd_options(dd["kind"]))
