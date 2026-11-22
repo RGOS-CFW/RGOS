@@ -41,7 +41,7 @@ and the choice is kept across games and reboots. It only works while a game runs
 RetroArch renders through DRM/KMS, so pixels written into `/dev/fb0` never show over a running game. While RetroArch
 is the foreground program (`/run/rgos/ingame` has `"kind": "retroarch"`):
 
-* **Volume** is shown with RetroArch's on-screen message (`SHOW_MSG` network command) by `rgos-overlay`.
+* **Volume** is drawn by `rgos-overlay` on a hardware overlay plane (the same one native ports use), which the display controller composites above the game, so the bar is the top layer. If the display has no free plane, it falls back to RetroArch's on-screen message (`SHOW_MSG` network command). `RGOS_OVERLAY_DRM=0` forces the message.
 * **Menu tap** sends `MENU_TOGGLE`, which opens RetroArch's own RGUI menu above the game (paused); tap Menu again to
   close it. Use its Quick Menu for Resume, Save State, Load State, Restart and Close Content.
 

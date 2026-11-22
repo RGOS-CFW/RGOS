@@ -10,11 +10,13 @@ How it behaves around a program that is also drawing to the framebuffer:
   * while it is visible it is checked 30 times a second: if the program repainted the area, the new pixels are saved
     and the bar is drawn again on top;
   * when it times out the saved pixels are put back, unless the program already painted over the bar itself.
-While RetroArch runs (/run/rgos/ingame says so) the bar is shown with RetroArch's own on-screen message instead, because
-RetroArch renders through DRM/KMS and a framebuffer write would never appear over the game.
+While any game runs (/run/rgos/ingame exists), RetroArch included, /dev/fb0 is hidden behind the game's DRM/KMS output, so
+the bar goes on a hardware overlay plane (drmplane.py): the display controller composites it above the game's own plane, so it
+is the top layer whatever the game draws. If no plane can be had, RetroArch gets its own on-screen message instead (SHOW_MSG)
+and a native port gets the old framebuffer bar. RGOS_OVERLAY_DRM=0 skips the plane (RetroArch then always uses SHOW_MSG).
 The bar's colours follow the launcher theme (the launcher writes /run/rgos/theme).
 
-Environment: RGOS_FB_DEV (/dev/fb0), RGOS_FB_ROTATE (same meaning as for the launcher), RGOS_RUN (/run/rgos),
+Environment: RGOS_OVERLAY_DRM (1; 0 = never use an overlay plane), RGOS_FB_DEV (/dev/fb0), RGOS_FB_ROTATE (same meaning as for the launcher), RGOS_RUN (/run/rgos),
 RGOS_VOLUME_FILE, RGOS_THEME_FILE, RGOS_OVERLAY_HOLD (seconds the bar stays, default 1.5).
 """
 import fcntl, json, os, socket, struct, sys, time
@@ -31,6 +33,7 @@ FBIOGET_VSCREENINFO, FBIOGET_FSCREENINFO = 0x4600, 0x4602
 DEFAULT_THEME = {"BG": (13, 15, 26), "PANEL": (24, 28, 46), "ACCENT": (255, 99, 71), "TEXT": (232, 235, 245)}
 GAME_FLAG = os.environ.get("RGOS_GAME_FLAG", os.path.join(RUN_DIR, "ingame"))
 RA_ADDR = ("127.0.0.1", int(os.environ.get("RGOS_RA_PORT", "55355") or 55355))
+USE_DRM = os.environ.get("RGOS_OVERLAY_DRM", "1") != "0"
 BAR_W, BAR_H, BASE_W = 260, 44, 720       # bar size and the canvas width it was designed for (the launcher's)
 
 
@@ -112,6 +115,15 @@ def ra_message(text, addr=RA_ADDR):
         return False
     finally:
         s.close()
+
+
+def volume_target(game, retroarch, drm_bad, use_drm=None):
+    """Where the volume bar is drawn: "drm" (hardware overlay plane, above any DRM/KMS game), "ra" (RetroArch's own on-screen
+    message, when no plane can be had) or "fb" (the framebuffer, which only shows when no game is running)."""
+    use_drm = USE_DRM if use_drm is None else use_drm
+    if game and use_drm and not drm_bad:
+        return "drm"
+    return "ra" if retroarch else "fb"
 
 
 def logical_size(xres, yres, rotate):
@@ -354,20 +366,21 @@ def run():
                 quiet = time.monotonic() - start < BOOT_QUIET and v[0] == seen_pct
                 seen_stamp, seen_pct = v[1], v[0]
                 if not quiet:
-                    if retroarch_running():
-                        ra_message(volume_text(v[0]))     # RetroArch draws over the game; /dev/fb0 would be invisible
-                    elif game_running() and not drm_bad:
-                        try:                              # native port: a hardware overlay plane above its DRM output
+                    where = volume_target(game_running(), retroarch_running(), drm_bad)
+                    if where == "drm":
+                        try:                              # a hardware overlay plane above the game's DRM output: top layer
                             drm_bar = drm_bar or DrmBar(ov.screen, load_drm())
                             drm_bar.show(v[0], HOLD)
                         except Exception as e:
-                            log("overlay plane failed (%r); using the framebuffer" % e)
+                            log("overlay plane failed (%r); falling back" % e)
                             drm_bad = True
                             if drm_bar:
                                 drm_bar.hide()
                             drm_bar = None
-                            ov.show(v[0])
-                    else:
+                            where = volume_target(True, retroarch_running(), drm_bad)
+                    if where == "ra":
+                        ra_message(volume_text(v[0]))     # no plane: RetroArch draws the bar itself, over its own picture
+                    elif where == "fb":
                         ov.show(v[0])
             busy = ov.tick()
             if drm_bar is not None:
