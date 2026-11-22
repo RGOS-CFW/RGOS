@@ -5,7 +5,7 @@ Open **Settings** from the home screen. Rows, in order:
 | Setting | What it does |
 |---|---|
 | **Theme** | Colour scheme. See [LAUNCHERS-AND-THEMES.md](LAUNCHERS-AND-THEMES.md) |
-| **Launcher** | RG OS, RG XMB, RG Flow or RG Classic |
+| **Launcher** | RG OS, RG XMB or RG Classic |
 | **Startup splash** | On, video only or off; X previews |
 | **Emulators** | Pick the RetroArch core used for each system ([SYSTEMS.md](SYSTEMS.md)) |
 | **Missing BIOS check** | Lists missing BIOS files and where they go ([BIOS.md](BIOS.md)) |

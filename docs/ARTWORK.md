@@ -1,8 +1,7 @@
 # Game artwork (SteamGridDB)
 
 RG OS can download cover art for your games from [SteamGridDB](https://www.steamgriddb.com).
-Covers show on the game cards of the **RG Flow** launcher (Games, Recents and Favorites) and in
-the details panel on the right of the game list in the other launchers.
+Covers show in the details panel on the right of the game list.
 
 ## Setup
 
