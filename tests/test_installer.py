@@ -795,5 +795,268 @@ class ConsoleScreen(unittest.TestCase):
 
 
 
+class MotionTests(unittest.TestCase):
+    """uimotion.py is a port of the launcher's motion: same numbers, same behaviour, and the installer screens use it."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(ROOT, "rgos"))
+        self.addCleanup(sys.path.remove, os.path.join(ROOT, "rgos"))
+        import uimotion
+        self.um = uimotion
+        self.menu = helpers.load_menu()
+        self.pg = mock.MagicMock()
+        self.now = [100.0]
+        self.colors = {"BG": (1, 1, 1), "PANEL": (30, 30, 30), "SEL_BG": (80, 70, 20), "ACCENT": (240, 184, 0),
+                       "TEXT": (240, 240, 240), "DIM": (150, 150, 150)}
+
+    def mo(self, size=(720, 480), settled=False):
+        return self.um.Motion(self.pg, size, self.colors, settled, lambda: self.now[0])
+
+    def step(self, mo, dt=1 / 60):
+        self.now[0] += dt
+        return mo.tick(self.now[0])
+
+    def test_constants_and_easing_match_the_launcher(self):
+        um, menu = self.um, self.menu
+        self.assertEqual((um.SPRING_K, um.SPRING_C), (menu.SPRING_K, menu.SPRING_C))
+        self.assertEqual((um.ANIM_STEPS, um.ANIM_SPEED, um.LIFT_PX), (menu.ANIM_STEPS, menu.ANIM_SPEED, menu.LIFT_PX))
+        self.assertEqual(um.INTRO_S, menu.HOME_INTRO_S)
+        for p in (-0.5, 0.0, 0.2, 0.5, 0.9, 1.0, 1.5):
+            self.assertEqual(um.out_cubic(p), menu._out_cubic(p))
+            self.assertEqual(um.out_back(p), menu._out_back(p))
+            self.assertEqual(um.out_back(p, 2.6), menu._out_back(p, 2.6))
+        self.assertEqual(um.mix((0, 100, 255), (255, 0, 0), 0.5), menu._mix((0, 100, 255), (255, 0, 0), 0.5))
+        pos, vel, mpos, mvel = 0.0, 0.0, 0.0, 0.0
+        for _ in range(120):
+            pos, vel = um.smooth_damp(pos, vel, 10.0, 1 / 60, 20.0)
+            mpos, mvel = menu._smooth_damp(mpos, mvel, 10.0, 1 / 60, 20.0)
+            self.assertEqual((pos, vel), (mpos, mvel))
+
+    def test_the_focus_ring_follows_the_launchers_spring_exactly(self):
+        mo, menu = self.mo(), self.menu
+        menu._RING["p"] = None
+        for tx, ty, n in ((100, 50, 1), (300, 50, 90), (300, 200, 90), (60, 20, 90)):
+            for _ in range(n if n > 1 else 1):
+                self.step(mo, 1 / 60)
+                mine = mo.ring_step(tx, ty)
+                theirs = menu._ring_step(tx, ty, mo.dt, self.now[0])
+                self.assertEqual(mine, theirs)
+                self.assertEqual(mo.ring["p"], menu._RING["p"])
+
+    def test_the_ring_overshoots_a_little_then_settles_and_stops_asking_for_frames(self):
+        mo = self.mo()
+        self.step(mo)
+        mo.ring_step(0, 0)
+        peak, settled_at = 0.0, None
+        for i in range(600):
+            self.step(mo)
+            mo.ring_step(200, 0)
+            peak = max(peak, mo.ring["p"][0])
+            if settled_at is None and mo.ring["p"][0] == 200.0 and mo.ring["v"][0] == 0.0:
+                settled_at = i
+        self.assertGreater(peak, 200.0)
+        self.assertLess(peak, 200.0 * 1.08)           # about 5% overshoot, never wild
+        self.assertIsNotNone(settled_at)
+        self.assertLess(settled_at / 60.0, 1.5)
+        self.assertFalse(self.step(mo))               # at rest: the last frame asked for nothing
+        mo.ring_step(200, 0)
+        self.assertFalse(self.step(mo))
+
+    def test_a_long_frame_cannot_blow_the_spring_up(self):
+        mo = self.mo()
+        self.step(mo, 0.05)
+        mo.ring_step(0, 0)
+        for _ in range(200):
+            self.step(mo, 5.0)                        # tick() caps dt at 50 ms
+            mo.ring_step(300, 120)
+            self.assertLess(abs(mo.ring["p"][0]), 600)
+            self.assertLess(abs(mo.ring["p"][1]), 300)
+
+    def test_tick_reports_whether_the_last_frame_moved(self):
+        mo = self.mo()
+        self.assertFalse(self.step(mo))
+        mo.busy()
+        self.assertTrue(self.step(mo))
+        self.assertFalse(self.step(mo))               # asked once, so only one fast frame follows
+
+    def test_val_glides_without_overshoot_and_snaps_on_first_use(self):
+        mo = self.mo()
+        self.step(mo)
+        self.assertEqual(mo.val("a", 5.0), 5.0)       # first use: no glide from zero
+        last = 5.0
+        for _ in range(200):
+            self.step(mo)
+            v = mo.val("a", 9.0)
+            self.assertGreaterEqual(v, last)
+            self.assertLessEqual(v, 9.0)
+            last = v
+        self.assertEqual(last, 9.0)
+        self.assertFalse(self.step(mo))
+        self.now[0] += 2.0                            # not drawn for a while: snaps instead of gliding from the old value
+        mo.tick(self.now[0])
+        self.assertEqual(mo.val("a", 1.0), 1.0)
+
+    def test_entrance_replays_after_a_gap_and_is_skipped_when_settled(self):
+        mo = self.mo()
+        self.step(mo)
+        self.assertAlmostEqual(mo.since("x"), 0.0, places=3)
+        for _ in range(30):
+            self.step(mo)
+            mo.since("x")
+        self.assertGreater(mo.since("x"), 0.4)
+        self.now[0] += 1.0                            # screen not drawn for a second -> starts over
+        mo.tick(self.now[0])
+        self.assertAlmostEqual(mo.since("x"), 0.0, places=3)
+        quiet = self.mo(settled=True)
+        self.assertGreater(quiet.since("x"), 100.0)
+        self.assertFalse(quiet.tick(self.now[0] + 1 / 60))
+
+    def test_the_entrance_asks_for_frames_only_while_it_runs(self):
+        mo = self.mo()
+        busy_until = None
+        for i in range(240):
+            self.step(mo)
+            mo.since("welcome")
+            if mo._flag:
+                busy_until = i
+        self.assertGreater(busy_until, 60 * 1.0)      # runs for the whole 1.0 s entrance...
+        self.assertLess(busy_until, 60 * (self.um.INTRO_S + 0.7))   # ...and stops shortly after
+
+    def test_changed_counts_from_the_first_call_and_restarts_on_a_new_value(self):
+        mo = self.mo()
+        self.step(mo)
+        self.assertAlmostEqual(mo.changed("s", 0), 0.0, places=3)
+        for _ in range(30):
+            self.step(mo)
+        self.assertGreater(mo.changed("s", 0), 0.4)
+        self.assertAlmostEqual(mo.changed("s", 1), 0.0, places=3)
+
+    def test_button_eases_to_selected_and_lifts_only_when_tall(self):
+        mo = self.mo()
+        self.step(mo)
+        hl0, lift0 = mo.button(mock.MagicMock(), (0, 0, 200, 200), (30, 30, 30), 18, 6, False, "t")
+        self.assertEqual((hl0, lift0), (0.0, 0))
+        seen = []
+        for _ in range(60):
+            self.step(mo)
+            seen.append(mo.button(mock.MagicMock(), (0, 0, 200, 200), (80, 70, 20), 18, 6, True, "t"))
+        his = [h for h, _ in seen]
+        self.assertEqual(his, sorted(his))            # only ever rises
+        self.assertEqual(seen[-1], (1.0, self.um.LIFT_PX))
+        self.assertTrue(0.0 < his[2] < 1.0)           # eased, not a jump
+        _, lift_row = mo.button(mock.MagicMock(), (0, 0, 500, 52), (80, 70, 20), 12, 3, True, "row")
+        self.assertEqual(lift_row, 0)                 # short rows do not lift (same rule as the launcher)
+
+    def test_pop_glides_up_and_fades_in_then_draws_plainly(self):
+        mo = self.mo()
+        canvas, calls = mock.MagicMock(), []
+        paint = lambda surf, x, y: calls.append((surf, x, y))
+        mo.pop(canvas, (100, 200, 150, 150), 0.0, paint)
+        self.assertEqual(calls, [])                   # not started: nothing drawn
+        mo.pop(canvas, (100, 200, 150, 150), 0.5, paint)
+        self.assertEqual(calls[-1][1:], (6, 14))      # drawn on its own surface, then blitted lower and translucent
+        dest = canvas.blit.call_args[0][1]
+        self.assertEqual(dest, (94, 186 + int(0.5 * 28)))
+        mo.pop(canvas, (100, 200, 150, 150), 1.0, paint)
+        self.assertEqual(calls[-1], (canvas, 100, 200))
+
+    def test_fade_runs_for_its_duration_then_stops_asking_for_frames(self):
+        mo = self.mo()
+        canvas = mock.MagicMock()
+        self.step(mo)
+        mo.transition(canvas, "a")
+        self.assertFalse(self.step(mo))
+        mo.transition(canvas, "a")
+        self.assertFalse(self.step(mo))               # same screen: no fade
+        mo.transition(canvas, "b")                    # screen changed
+        n = 0
+        while self.step(mo) and n < 100:              # frames that ask for full rate while the fade runs
+            mo.transition(canvas, "b")
+            n += 1
+        self.assertAlmostEqual(n / 60.0, self.um.FADE_S, delta=0.05)
+        mo.transition(canvas, "b", 0.35)              # a different duration only applies to the next change
+        self.assertFalse(self.step(mo))
+
+    def test_the_welcome_screen_animates_through_its_entrance_and_comes_to_rest(self):
+        ui = load_ui()
+        mo = self.mo()
+        fonts = (FakeFont(), FakeFont(), FakeFont())
+        canvas = mock.MagicMock()
+        moving_at_rest = []
+        for i in range(60 * 6):
+            self.step(mo)
+            ui.draw_welcome(self.pg, canvas, (720, 480), fonts, 0 if i < 200 else 1, "rg34xxsp", mo)
+            if i > 60 * 5.5:
+                moving_at_rest.append(mo.moving)
+        self.assertTrue(canvas.blit.called)
+        self.assertEqual(mo.ring["p"], [mo.ring["p"][0], mo.ring["p"][1]])
+        boxes = ui.button_boxes((720, 480), 184)
+        self.assertEqual(mo.ring["p"], [float(boxes[1][0]), float(boxes[1][1] - self.um.LIFT_PX)])   # the ring ended on tile 1
+        self.assertIn(False, moving_at_rest)          # idle between shines: the loop may drop its frame rate
+
+    def test_the_ring_starts_on_the_selected_tile_and_hops_to_the_next(self):
+        ui = load_ui()
+        mo = self.mo()
+        fonts = (FakeFont(), FakeFont(), FakeFont())
+        canvas = mock.MagicMock()
+        for _ in range(3):
+            self.step(mo)
+            ui.draw_welcome(self.pg, canvas, (720, 480), fonts, 0, "", mo)
+        start = list(mo.ring["p"])
+        self.step(mo)
+        ui.draw_welcome(self.pg, canvas, (720, 480), fonts, 1, "", mo)
+        mid = list(mo.ring["p"])
+        self.assertGreater(mid[0], start[0])          # already moving toward the right tile...
+        boxes = ui.button_boxes((720, 480), 184)
+        self.assertLess(mid[0], boxes[1][0])          # ...but not there yet: it glides, it does not jump
+
+    def test_the_format_popup_rises_in_and_every_row_has_its_own_highlight(self):
+        ui = load_ui()
+        mo = self.mo()
+        fonts = (FakeFont(), FakeFont(), FakeFont())
+        canvas = mock.MagicMock()
+        for i in range(90):
+            self.step(mo)
+            ui.draw_welcome(self.pg, canvas, (720, 480), fonts, 0, "", mo)
+        for sel in (1, 1, 1, 2):
+            for _ in range(10):
+                self.step(mo)
+                ui.draw_format_popup(self.pg, canvas, (720, 480), fonts, sel, "rg34xxsp", mo)
+        self.assertEqual({k for k in mo.btn if isinstance(k, tuple) and k[0] == "fmt"}, {("fmt", 0), ("fmt", 1), ("fmt", 2)})
+        self.assertGreater(mo.btn[("fmt", 2)][0], 0.0)
+        self.assertLess(mo.btn[("fmt", 1)][0], 1.0)   # the row that lost the selection is easing back
+
+    def test_console_progress_glides_to_the_real_value(self):
+        ui = load_ui()
+        import random
+        mo = self.mo()
+        feed = ui.ConsoleFeed(100.0, "RG34XX-SP", random.Random(1), 10.0)
+        canvas, font = mock.MagicMock(), FakeFont()
+        snap = {"error": "", "finished": False, "ok": False, "fraction": 0.2}
+        self.step(mo)
+        ui.draw_console(self.pg, canvas, (720, 480), font, feed, snap, 0.0, None, mo)
+        snap["fraction"] = 0.9
+        self.step(mo)
+        ui.draw_console(self.pg, canvas, (720, 480), font, feed, snap, 0.0, None, mo)
+        self.assertTrue(0.2 < mo.av["progress"][0] < 0.9)
+
+    def test_the_installer_loop_uses_the_motion_everywhere(self):
+        src = read("rgos", "rgos-installer")
+        self.assertIn("uimotion.Motion(pygame", src)
+        self.assertIn("draw_fn(pygame, canvas, (W, H), fonts, *args, mo=mo)", src)
+        self.assertIn("mo.transition(canvas, key, fade)", src)
+        self.assertIn("draw_console(pygame, canvas, (W, H), mono, feed, snap, t, countdown, mo=mo)", src)
+        self.assertNotIn("pads.wait(0.2)", src)       # the old fixed 5 fps menu loop
+        self.assertNotIn("pads.wait(0.1)", src)
+        self.assertEqual(src.count("pads.wait(pace"), 3)
+        self.assertIn("finally:\n        boost.restore()", src)
+
+    def test_frame_rates_are_the_launchers(self):
+        ui = load_ui()
+        self.assertEqual((ui.FRAME_FAST, ui.FRAME_NORMAL, ui.FRAME_IDLE), (1 / 60, 1 / 30, 1 / 15))
+        self.assertIn("clock.tick(60 if anim_moving or (time.monotonic() - last_act < 0.5) else (15 if idle else 30))",
+                      read("rgos", "menu.py"))
+
+
 if __name__ == "__main__":
     unittest.main()
