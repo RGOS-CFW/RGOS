@@ -572,7 +572,11 @@ def filter_systems():
 def core_installer_rows():
     """Rows for the Core Installer: every core that could serve a RetroArch system on this device, missing ones first."""
     systems = [(sy[0], sy[1], sy[4]) for sy in ALL_SYSTEMS if sy[2] == "retroarch" and (sy[0] != "gc" or _gc_allowed())]
-    return coreinstall.candidates(systems, SYSTEM_CORE_COMPATIBILITY, installed_cores(), CORE_NAMES)
+    rows = coreinstall.candidates(systems, SYSTEM_CORE_COMPATIBILITY, installed_cores(), CORE_NAMES)
+    dest = coreinstall.core_dir(ROMS_ROOT)
+    for r in rows:      # "copy": has its own file on the ROMS card, so X can fetch it again (image cores are read-only)
+        r["copy"] = r["installed"] and coreinstall.has_copy(dest, r["core"])
+    return rows
 
 
 filter_systems()
@@ -3276,6 +3280,14 @@ def main():
                 elif a == "a" and ci_rows and not ci_s["busy"]:
                     if not ci_rows[ci_idx]["installed"]:
                         ci.start([ci_rows[ci_idx]["core"]])
+                elif a == "x" and ci_rows and not ci_s["busy"]:
+                    r = ci_rows[ci_idx]
+                    if r["copy"]:
+                        ci.start([r["core"]], reinstall=True)     # download it again over the copy on the ROMS card
+                    elif r["installed"]:
+                        ci.say("%s is part of the system image" % r["name"])
+                    else:
+                        ci.say("%s is not installed yet (A installs it)" % r["name"])
             elif view == "files":
                 if fm.busy:
                     pass
@@ -4007,17 +4019,17 @@ def main():
                 y, sel = int(top_c + (i - ci_fl) * 44), abs(i - ci_hi) < 0.5
                 canvas.blit(f_small.render(fit(f_small, r["name"], 200), True, TEXT if sel else DIM), (px + 20, y + 10))
                 canvas.blit(f_small.render(fit(f_small, ", ".join(r["systems"]), pw - 20 - 220 - 130), True, DIM), (px + 232, y + 10))
-                if r["installed"]:
-                    tag, tcol = "Installed", BIOS_GOOD
-                elif ci_s["busy"] and ci_s["core"] == r["core"]:
+                if ci_s["busy"] and ci_s["core"] == r["core"]:
                     tag, tcol = "%d%%" % ci_s["pct"], ACCENT
+                elif r["installed"]:
+                    tag, tcol = ("X Reinstall" if sel and r["copy"] else "Installed"), (ACCENT if sel and r["copy"] else BIOS_GOOD)
                 else:
                     tag, tcol = "A Install" if sel else "Not installed", ACCENT if sel else DIM
                 canvas.blit(f_small.render(tag, True, tcol), (px + pw - 24 - f_small.size(tag)[0], y + 10))
             canvas.set_clip(None)
             if not ci_rows:
                 canvas.blit(f_row.render("No RetroArch systems on this device", True, TEXT), (px + 24, top_c + 10))
-            hint = "B Cancel download" if ci_s["busy"] else "Up/Down Select   A Install   B Back"
+            hint = "B Cancel download" if ci_s["busy"] else "Up/Down Select   A Install   X Reinstall   B Back"
         elif view == "emulators":
             emu_systems = [sy for sy in SYSTEMS if sy[2] == "retroarch" and compatible_cores(sy[0])]
             ui_rect(canvas, PANEL, (list_x, top_y, W - 2 * list_x, 336 + DY), 10)

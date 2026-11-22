@@ -13,7 +13,10 @@ The list shows every compatible core for the systems on this device, with the on
 | Up / Down | Select a core |
 | L / R | Page up / down |
 | A | Install the selected core |
+| X | Reinstall the selected core: download it again and replace your copy (see below) |
 | B | Back (while a download runs: cancel it) |
+
+**Reinstall (X)** works on cores you downloaded, the ones that have their own `<name>_libretro.so` in the `cores` folder on the ROMS card (the row shows *X Reinstall* when it is selected). Use it to get a fresh copy of a core that misbehaves, a damaged file, or a newer nightly build. The new file is downloaded and checked first and only then swapped in, so a failed or cancelled reinstall leaves the working core in place. Cores that ship in the system image are read-only and are not replaced; pressing X on one says so.
 
 When an install finishes, the menu rescans: a system that had no core appears straight away, and the new core is selectable in *Settings > Emulators*.
 

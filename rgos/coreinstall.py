@@ -23,6 +23,11 @@ DEFAULT_URL = "https://buildbot.libretro.com/nightly/linux/aarch64/latest"
 CONF_FILE = os.environ.get("RGOS_CORE_CONF", "/etc/rgos/coreinstall.json")
 # Cores that must not be offered: dolphin needs its Sys data folder, which only the RG Rotate image carries.
 EXCLUDE = frozenset(("dolphin",))
+# Cores whose libretro buildbot build asks for desktop OpenGL. RetroArch on this image is a GLES build, so these start and
+# die at once ("Requesting OpenGL context, but RetroArch is compiled against OpenGLES"). The image's build.sh builds a GLES
+# Flycast; downloading the buildbot one only puts a core on the card that cannot run (and hides the real problem).
+# A mirror set in coreinstall.json / RGOS_CORE_URL is trusted: it may carry GLES builds.
+DESKTOP_GL_ONLY = frozenset(("flycast",))
 MAX_ZIP = 300 << 20
 MAX_SO = 600 << 20
 CHUNK = 64 << 10
@@ -48,6 +53,12 @@ def base_url():
 
 def core_dir(roms_root):
     return os.path.join(roms_root, "cores")
+
+
+def has_copy(dest, core):
+    """True if `core` has its own file in the ROMS cores folder, i.e. one this installer can replace (a core that ships in
+    the read-only system image does not)."""
+    return bool(NAME_RE.match(core)) and os.path.isfile(os.path.join(dest, core + "_libretro.so"))
 
 
 def candidates(systems, compat, installed, names=None):
@@ -102,6 +113,8 @@ def download(core, dest, base=None, progress=None, cancelled=None, opener=None):
     """Download and install one core into dest. Returns the installed path; raises CoreInstallError."""
     if not NAME_RE.match(core):
         raise CoreInstallError("Bad core name")
+    if core in DESKTOP_GL_ONLY and not base and base_url() == DEFAULT_URL:
+        raise CoreInstallError("The buildbot %s is desktop OpenGL and cannot run on this device. Rebuild the image (build.sh builds a GLES one)" % core.capitalize())
     progress = progress or (lambda pct: None)
     cancelled = cancelled or (lambda: False)
     opener = opener or urllib.request.urlopen
@@ -197,6 +210,7 @@ class Installer:
         self._lock = threading.Lock()
         self._cancel = False
         self._changed = False
+        self._verb = "Installed"
         self._s = {"busy": False, "core": "", "pct": 0, "index": 0, "total": 0, "msg": "", "ok": [], "failed": []}
 
     def snapshot(self):
@@ -211,15 +225,27 @@ class Installer:
             c, self._changed = self._changed, False
             return c
 
-    def start(self, cores):
+    def start(self, cores, reinstall=False):
+        """Download cores on a worker thread. reinstall=True is for cores that are already there: they are fetched again and
+        replaced (a failed or cancelled download leaves the old file untouched, see download()); only the final message
+        differs ("Reinstalled ...")."""
         cores = [c for c in dict.fromkeys(cores) if NAME_RE.match(c) and c not in EXCLUDE]
         with self._lock:
             if self._s["busy"] or not cores:
                 return False
             self._cancel = False
+            self._verb = "Reinstalled" if reinstall else "Installed"
             self._s.update(busy=True, core=cores[0], pct=0, index=1, total=len(cores), msg="", ok=[], failed=[])
         threading.Thread(target=self._run, args=(cores,), daemon=True).start()
         return True
+
+    def say(self, msg):
+        """Show a one line note in the menu header (not while a download runs). Returns False if it was busy."""
+        with self._lock:
+            if self._s["busy"]:
+                return False
+            self._s.update(msg=msg, ok=[], failed=[])
+            return True
 
     def cancel(self):
         with self._lock:
@@ -259,8 +285,8 @@ class Installer:
             elif failed:
                 msg = "%d installed, %d failed (%s)" % (len(ok), len(failed), failed[0][1])
             elif len(ok) == 1:
-                msg = "Installed %s" % label(ok[0])
+                msg = "%s %s" % (self._verb, label(ok[0]))
             else:
-                msg = "Installed %d cores" % len(ok)
+                msg = "%s %d cores" % (self._verb, len(ok))
             self._changed = bool(ok)
             self._s.update(busy=False, core="", pct=0, msg=msg)
