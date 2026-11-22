@@ -64,6 +64,7 @@ own Debian copyright file.
 | ProSystem (`prosystem`, Atari 7800) | built from `libretro/prosystem-libretro` | GPL-2.0-only |
 | PCSX ReARMed (PlayStation) | built from `libretro/pcsx_rearmed` | GPL-2.0-or-later |
 | Genesis Plus GX (Mega Drive, Master System, Game Gear, SG-1000, Sega CD) | Debian `libretro-genesisplusgx` or built from `libretro/Genesis-Plus-GX` | **Genesis Plus GX license: non-commercial only.** Not an open-source license. Contains code under other terms (see the upstream `LICENSE.txt`). |
+| Flycast (`flycast`, Dreamcast; not bundled, downloaded on request by the Core Installer) | `libretro/flycast` from the libretro buildbot | GPL-2.0-only |
 | Dolphin libretro (GameCube, RG Rotate only) | built from `libretro/dolphin` | GPL-2.0-or-later |
 
 Non-commercial cores (Snes9x, Genesis Plus GX) mean that **an RG OS image
