@@ -119,6 +119,7 @@ GC_REPO="${GC_REPO:-https://github.com/libretro/dolphin.git}"
 # OpenGL context, but RetroArch is compiled against OpenGLES"), so Flycast is built here as a GLES core. DC_REPO=none skips it.
 DC_REPO="${DC_REPO:-https://github.com/flyinghead/flycast.git}"
 DC_MAKE_ARGS="${DC_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
+# DC_BUILD=make|cmake forces one Flycast build system (default: Makefile if the tree has one, then CMake).
 # DC_REQUIRED=1 makes a failed Flycast build stop the whole build instead of producing an image without Dreamcast.
 STELLA_REPO="${STELLA_REPO:-https://github.com/libretro/stella2014-libretro.git}"
 ATARI800_REPO="${ATARI800_REPO:-https://github.com/libretro/libretro-atari800.git}"
@@ -467,11 +468,28 @@ if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC )); t
         # Flycast is a very large C++ project: with every core in parallel the compiler is often killed for lack of RAM (WSL and
         # small VMs), which shows up as a failed build. Retry with fewer jobs before giving up.
         built=0
-        for jobs in "$(nproc)" 2 1; do
-          echo "   make -j$jobs $DC_MAKE_ARGS (log: $DC_LOG)"
-          if chroot "$ROOTFS" sh -c "cd /tmp/core-src/dc && make -f Makefile $DC_MAKE_ARGS -j$jobs" >>"$DC_LOG" 2>&1; then built=1; break; fi
-          echo "   make -j$jobs failed, retrying with fewer jobs"
-        done
+        # Current Flycast builds libretro with CMake; older trees only have the libretro Makefile. Try the Makefile when there is
+        # one, then CMake (DC_BUILD=make|cmake forces one of them).
+        if [[ "${DC_BUILD:-auto}" != cmake && -f "$ROOTFS/tmp/core-src/dc/Makefile" ]]; then
+          for jobs in "$(nproc)" 2 1; do
+            echo "   make -j$jobs $DC_MAKE_ARGS (log: $DC_LOG)"
+            if chroot "$ROOTFS" sh -c "cd /tmp/core-src/dc && make -f Makefile $DC_MAKE_ARGS -j$jobs" >>"$DC_LOG" 2>&1; then built=1; break; fi
+            echo "   make -j$jobs failed, retrying with fewer jobs"
+          done
+        else
+          echo "   (no libretro Makefile in the Flycast tree or DC_BUILD=cmake: using CMake)"
+        fi
+        if (( ! built )) && [[ "${DC_BUILD:-auto}" != make ]]; then
+          for pkg in cmake ninja-build; do
+            chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg" >>"$DC_LOG" 2>&1 \
+              || echo "   (could not install $pkg, continuing)"
+          done
+          for jobs in "$(nproc)" 2 1; do
+            echo "   cmake -DLIBRETRO=ON -DUSE_GLES=ON, -j$jobs (log: $DC_LOG)"
+            if chroot "$ROOTFS" sh -c "cd /tmp/core-src/dc && rm -rf build-gles && cmake -S . -B build-gles -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRETRO=ON -DUSE_GLES=ON -DUSE_VULKAN=OFF -DUSE_OPENMP=OFF && cmake --build build-gles -j$jobs" >>"$DC_LOG" 2>&1; then built=1; break; fi
+            echo "   cmake build with -j$jobs failed, retrying with fewer jobs"
+          done
+        fi
         (( built )) || { echo "flycast: make failed, last lines of $DC_LOG:"; tail -n 40 "$DC_LOG"; exit 1; }
         so="$(find "$ROOTFS/tmp/core-src/dc" -name flycast_libretro.so -type f | head -n1)"
         [[ -n "$so" ]] || { echo "flycast: make finished but flycast_libretro.so was not produced (check DC_MAKE_ARGS=$DC_MAKE_ARGS, log: $DC_LOG)"; exit 1; }
