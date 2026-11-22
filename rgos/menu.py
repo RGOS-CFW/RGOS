@@ -900,6 +900,26 @@ def anim_tick():
 # drifting embers, and per-item pulses. Everything is time based; _anim_clock[2] is raised while something moves so the
 # main loop runs at full frame rate and relaxes to the idle rate once it settles.
 _out_cubic, _out_back, _c01 = rgclassic._out_cubic, rgclassic._out_back, rgclassic._c01
+_AV = {}
+
+
+def anim_val(key, target, omega=20.0):
+    """Critically damped glide toward target (no overshoot). Snaps on first use or when not drawn for a while."""
+    now = time.monotonic()
+    st = _AV.get(key)
+    if st is None or now - st[2] > 0.4:
+        st = _AV[key] = [float(target), 0.0, now]
+    st[2] = now
+    st[0], st[1] = _smooth_damp(st[0], st[1], target, _anim_clock[1], omega)
+    if st[0] != target:
+        _anim_clock[2] = True
+    return st[0]
+
+
+# screen transitions: moving between menus slides + crossfades; popups / dropdowns crossfade
+_VT = {"last": None, "t0": 0.0, "dur": 0.0, "dir": 0, "kind": ""}
+TR_SLIDE = 56
+VT_DEPTH = {"home": 0, "systems": 1, "tools": 1, "settings": 1, "recents": 1, "favorites": 1, "kbd": 3}
 SPRING_K, SPRING_C = rgclassic.SPRING_K, rgclassic.SPRING_C
 HOME_INTRO_S = 1.0
 _HOME_FX = {"key": None, "t0": 0.0, "last": 0.0, "idx": None, "sel_t": 0.0}
@@ -924,28 +944,16 @@ def home_intro(key, now=None):
 
 
 def _ring_step(tx, ty, dt, now):
-    """Damped spring (slight overshoot) pulling the focus ring to (tx, ty); returns (speed, distance left)."""
+    """Critically damped glide of the focus ring to (tx, ty); returns (speed, distance left)."""
     st = _RING
     if st["p"] is None:
         st["p"], st["v"], st["tgt"], st["trail"] = [float(tx), float(ty)], [0.0, 0.0], (tx, ty), []
-    if st["tgt"] != (tx, ty):
-        st["dist"], st["tgt"] = max(1.0, math.hypot(tx - st["p"][0], ty - st["p"][1])), (tx, ty)
     p, v = st["p"], st["v"]
-    n = int(dt / 0.008) + 1
-    h = dt / n
-    for _ in range(n):
-        for a, g in ((0, tx), (1, ty)):
-            v[a] += (SPRING_K * (g - p[a]) - SPRING_C * v[a]) * h
-            p[a] += v[a] * h
+    for a, g in ((0, tx), (1, ty)):
+        p[a], v[a] = _smooth_damp(p[a], v[a], g, dt, 19.0)
     rem, speed = math.hypot(tx - p[0], ty - p[1]), math.hypot(v[0], v[1])
-    if rem < 0.35 and speed < 6.0:
-        p[0], p[1], v[0], v[1], rem, speed = float(tx), float(ty), 0.0, 0.0, 0.0, 0.0
-    else:
+    if rem > 0.0 or speed > 0.0:
         _anim_clock[2] = True
-    tr = st["trail"]
-    tr.append((now, p[0], p[1]))
-    while tr and now - tr[0][0] > 0.2:
-        tr.pop(0)
     return speed, rem
 
 
@@ -977,42 +985,12 @@ def _shine_surf(h):
 
 
 def _draw_ring(c, now, bw, bh, cur_in, speed, rem, radius=18):
-    """The focus ring: hops and stretches along the travel axis while it moves, leaves a ghost trail when fast, and when
-    resting pulses, sweeps a diagonal shine and twinkles."""
+    """The focus ring: glides between tiles and breathes softly when resting."""
     if cur_in <= 0.05 or _RING["p"] is None:
         return
     x, y = _RING["p"]
-    vx, vy = _RING["v"]
-    svx, svy = min(8, int(abs(vx) / 90)), min(6, int(abs(vy) / 90))
-    k = min(cur_in, 1.15)
-    w2, h2 = max(8, int((bw + svx) * k + 0.5)), max(8, int((bh + svy) * k + 0.5))
-    arc = int(math.sin(math.pi * _c01(1.0 - rem / _RING["dist"])) * 4 + 0.5) if rem > 0.5 else 0
-    rx, ry = int(x + bw / 2.0 - w2 / 2.0 + 0.5), int(y + bh / 2.0 - h2 / 2.0 + 0.5) - arc
-    moving = speed > 60 or rem > 1.5
-    if speed > 140:
-        for lag, a in ((0.05, 110), (0.10, 55)):
-            old = [q for q in _RING["trail"] if q[0] <= now - lag]
-            if old and math.hypot(old[-1][1] - x, old[-1][2] - y) > 5:
-                c.blit(_ring_surf(bw, bh, radius, a), (int(old[-1][1]) - 6, int(old[-1][2]) - 6))
-    c.blit(_ring_surf(w2, h2, radius, 255 if moving else 205 + 50 * math.sin(now * 5.0)), (rx - 6, ry - 6))
-    if moving or cur_in < 1.0:
-        return
-    ph = (now % 3.2) / 0.65
-    if ph < 1.0:
-        band = _shine_surf(h2)
-        old_clip = c.get_clip()
-        c.set_clip(pygame.Rect(rx + 4, ry + 4, w2 - 8, h2 - 8))
-        c.blit(band, (rx - h2 + int(ph * (w2 + h2 + 20)), ry))
-        c.set_clip(old_clip)
-    bk = int(now / 0.85)
-    rr = random.Random(bk * 7 + 3)
-    sx, sy = rx + rr.randrange(8, max(9, w2 - 8)), ry + rr.randrange(6, max(7, h2 - 6))
-    sp = (now % 0.85) / 0.85
-    if sp < 0.15 or 0.35 <= sp < 0.55:
-        pygame.draw.rect(c, TEXT, (sx, sy, 2, 2))
-    elif sp < 0.35:
-        pygame.draw.rect(c, TEXT, (sx - 2, sy, 6, 2))
-        pygame.draw.rect(c, TEXT, (sx, sy - 2, 2, 6))
+    a = 255 if (speed > 60 or rem > 1.5) else 215 + 40 * math.sin(now * 3.0)
+    c.blit(_ring_surf(bw, bh, radius, a * min(1.0, cur_in)), (int(x + 0.5) - 6, int(y + 0.5) - 6))
 
 
 def home_embers(c, now, dt):
@@ -1736,9 +1714,6 @@ def xmb_bg(c, t, moving=False):
                 fr[0], fr[3] = fr[3], fr[0]
                 fr[1], fr[2] = fr[4], None
     c.blit(fr[0], (0, 0))
-    for x0, y0, spd, ph, sz in _XMB_SPARKS:
-        x, y = (x0 + t * spd) % W, y0 + 4 * math.sin(t * 0.4 + ph)
-        pygame.draw.rect(c, xmb_tint(x, y, 0.22 + 0.55 * (0.5 + 0.5 * math.sin(t * 1.6 + ph))), (int(x), int(y), sz, sz))
 
 
 def _xmb_silk_steps(g, f, t):
@@ -1785,28 +1760,15 @@ def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade, fx=None):
         size = int(round((small + (big - small) * t) / 4.0)) * 4
         ip, ai, yo = 1.0, 1.0, 0
         if el < 1.2:   # entrance: the categories drop in one after another with a little overshoot
-            ip = _out_back((el - 0.045 * i) / 0.40)
+            ip = _out_cubic((el - 0.045 * i) / 0.40)
             if ip <= 0.02:
                 continue
             ai, yo = min(1.0, ip * 1.6), -int((1.0 - ip) * 40)
-            size = max(8, int(size * min(ip, 1.12)) // 4 * 4)
-        yc = bar_y + yo + int(round(2.0 * math.sin(now * 2.2) * t * t))
+        yc = bar_y + yo
         if t > 0.05:
             glow = int(size * 0.62 + 2.0 * t * math.sin(now * 2.4))
             pygame.draw.circle(c, xmb_tint(x, yc, (0.09 + 0.035 * math.sin(now * 2.4 + 1.0)) * t * ai), (x, yc), glow)
-        if i == cat_i and cat_t < 0.55:   # ring pulse when a category is picked
-            pp = _out_cubic(cat_t / 0.55)
-            pygame.draw.circle(c, xmb_tint(x, yc, 0.40 * (1.0 - pp)), (x, yc), int(size * (0.50 + 0.60 * pp)), 2)
         c.blit(xmb_icon(cid, size, _mix(DIM, TEXT, t), (0.5 + 0.5 * t) * ai), (x - size // 2, yc - size // 2))
-        if i == cat_i and fx and t > 0.9 and el > 0.7:   # twinkle beside the focused category
-            rr = random.Random(int(now / 0.9) * 7 + 3)
-            ang, rad = rr.uniform(0.0, 6.283), size * rr.uniform(0.28, 0.5)
-            sx, sy, ph = x + int(math.cos(ang) * rad), yc + int(math.sin(ang) * rad), (now % 0.9) / 0.9
-            if ph < 0.15 or 0.35 <= ph < 0.55:
-                pygame.draw.rect(c, TEXT, (sx, sy, 2, 2))
-            elif ph < 0.35:
-                pygame.draw.rect(c, TEXT, (sx - 2, sy, 6, 2))
-                pygame.draw.rect(c, TEXT, (sx, sy - 2, 2, 6))
         if t > 0.3:
             lab = f_row.render(cname, True, _xq(_mix(BG, TEXT, t * ai)))
             c.blit(lab, (x - lab.get_width() // 2, bar_y + yo + big // 2 + 8))
@@ -1835,17 +1797,12 @@ def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade, fx=None):
         al *= 0.80 + 0.20 * sel_t
         cxi = colx + int((1.0 - fi) * 36)
         isz = int(round((34 + 14 * sel_t) / 2.0)) * 2
-        if i == sel_i and fsel_t < 0.35:   # pop when the cursor lands on an item
-            isz = int(isz * (1.0 + 0.16 * math.sin(math.pi * _c01(fsel_t / 0.35)))) // 2 * 2
         yi = int(round(y))
         if sel_t > 0.05:
             pygame.draw.circle(c, xmb_tint(cxi, y, 0.08 * sel_t * al), (cxi, yi), int(isz * 0.62))
-        if i == sel_i and fsel_t < 0.45:
-            pp = _out_cubic(fsel_t / 0.45)
-            pygame.draw.circle(c, xmb_tint(cxi, y, 0.35 * (1.0 - pp) * al), (cxi, yi), int(isz * (0.50 + 0.50 * pp)), 2)
         c.blit(xmb_icon(it["icon"], isz, _mix(DIM, TEXT, sel_t), al), (cxi - isz // 2, yi - isz // 2))
         if sel_t > 0.5 and fx:   # a chevron nudging toward the selected item
-            mx = cxi - isz // 2 - 16 + int(3 * math.sin(now * 5.0))
+            mx = cxi - isz // 2 - 16
             pygame.draw.polygon(c, xmb_tint(mx, y, 0.55 * sel_t * al), [(mx, yi - 6), (mx, yi + 6), (mx + 8, yi)])
         tx = cxi + 40
         lab = f_row.render(fit(f_row, it["label"], W - tx - 20), True, _xq(_mix(BG, _mix(DIM, TEXT, 0.40 + 0.60 * sel_t), al)))
@@ -2742,6 +2699,7 @@ def main():
     if not windowed:
         fbout.set_graphics(True)
     canvas = pygame.Surface((W, H))
+    vt_buf, vt_old, vt_new = (pygame.Surface((W, H)) for _ in range(3))
     fpath = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
     FONT_PATH[0] = fpath if os.path.exists(fpath) else None
     if os.path.exists(fpath):
@@ -3785,12 +3743,11 @@ def main():
             ring_rest = ring_speed <= 60 and ring_rem <= 1.5
             if sub_p < 1.0:
                 _anim_clock[2] = True
-            home_embers(canvas, now_, _anim_clock[1])
 
             def paint_tile(surf, bx, by, hid, hname, sel, key=None):
                 hl, lift = draw_button(surf, (bx, by, bw, bh), SEL_BG if sel else PANEL, 18, 6, sel, key, False)
                 by -= lift
-                bob = int(round(2.0 * math.sin(now_ * 2.6))) if sel and hl >= 0.99 and ring_rest else 0
+                bob = 0
                 a_ = sub_p if sel else 1.0
                 sub_dy = int((1.0 - a_) * 6)
                 if bh < 130:
@@ -3818,17 +3775,15 @@ def main():
 
             for i, (hid, hname) in enumerate(HOME_ITEMS):
                 bx, by, sel = x0 + (i % HOME_COLS) * (bw + gap), top_y + (i // HOME_COLS) * (bh + gap), i == home_idx
-                pp_ = _out_back((el - 0.06 - 0.07 * i) / 0.32)   # entrance: tiles pop in one after another
-                if el >= 1.0 or abs(pp_ - 1.0) < 0.004:
+                pp_ = _out_cubic((el - 0.05 - 0.06 * i) / 0.42)   # entrance: tiles glide up and fade in, one after another
+                if el >= 1.0 or pp_ >= 0.999:
                     paint_tile(canvas, bx, by, hid, hname, sel)
-                elif pp_ > 0.04:
+                elif pp_ > 0.02:
                     tmp = pygame.Surface((bw + 12, bh + 30), pygame.SRCALPHA)
                     paint_tile(tmp, 6, 14, hid, hname, sel, (bx, by, bw, bh))
-                    w2, h2 = max(4, int((bw + 12) * pp_)), max(4, int((bh + 30) * pp_))
-                    sc = pygame.transform.smoothscale(tmp, (w2, h2))
-                    sc.set_alpha(min(255, int(pp_ * 420)))
-                    canvas.blit(sc, (bx - 6 + (bw + 12 - w2) // 2, by - 14 + (bh + 30 - h2) // 2))
-            _draw_ring(canvas, now_, bw, bh, _out_back((el - 0.42) / 0.30) if el < 0.8 else 1.0, ring_speed, ring_rem)
+                    tmp.set_alpha(int(255 * pp_))
+                    canvas.blit(tmp, (bx - 6, by - 14 + int((1.0 - pp_) * 28)))
+            _draw_ring(canvas, now_, bw, bh, _out_cubic((el - 0.30) / 0.30) if el < 0.7 else 1.0, ring_speed, ring_rem)
             hint = "A Open   X Rescan   START+SELECT Power off"
             if dd is not None:
                 draw_xmb_dropdown(canvas, f_small, dd, dd_options(dd["kind"]))
@@ -3847,10 +3802,13 @@ def main():
             if not n_fm:
                 canvas.blit(f_row.render("Empty folder   (X for options)", True, DIM), (list_x + 10, 110))
             fw_ = W - 2 * list_x - 14
-            for slot, e in enumerate(fm.entries[first_fm:first_fm + FM_ROWS]):
-                i = first_fm + slot
-                by, sel = 92 + slot * 44, i == fm.idx
-                draw_button(canvas, (list_x, by, fw_, 40), SEL_BG if sel else PANEL, 10, 3, sel)
+            fm_fl = anim_val("fm_first", first_fm, 24.0)
+            canvas.set_clip(pygame.Rect(0, 88, W, FM_ROWS * 44 + 4))
+            lo_fm = max(0, int(fm_fl))
+            for slot, e in enumerate(fm.entries[lo_fm:lo_fm + FM_ROWS + 2]):
+                i = lo_fm + slot
+                by, sel = int(92 + (i - fm_fl) * 44), i == fm.idx
+                draw_button(canvas, (list_x, by, fw_, 40), SEL_BG if sel else PANEL, 10, 3, sel, ("fm", i))
                 ck = (list_x + 12, by + 12, 16, 16)
                 pygame.draw.rect(canvas, ACCENT if sel else DIM, ck, 2, border_radius=3)
                 if e["path"] in fm.marked:
@@ -3866,6 +3824,7 @@ def main():
                 canvas.blit(sz, (list_x + fw_ - 16 - sz.get_width(), by + 12))
                 canvas.blit(f_row.render(fit(f_row, e["name"], fw_ - 80 - 16 - sz.get_width() - 16), True, TEXT if sel else DIM),
                             (list_x + 72, by + 7))
+            canvas.set_clip(None)
             if n_fm > FM_ROWS:
                 bar_h = FM_ROWS * 44 - 4
                 th = max(24, int(bar_h * FM_ROWS / n_fm))
@@ -3920,11 +3879,13 @@ def main():
             srows = settings_text()
             set_vis = max(1, PH // 86)
             set_first = min(max(0, set_idx - set_vis // 2), max(0, len(SETTINGS_ROWS) - set_vis))
+            set_fl = anim_val("set_first", set_first, 24.0)
+            canvas.set_clip(pygame.Rect(0, top_y - 6, W, set_vis * 86 + 6))
             for i, (nm, sub) in enumerate(srows[r] for r in SETTINGS_ROWS):
-                if not set_first <= i < set_first + set_vis:
+                if not set_fl - 1 < i < set_fl + set_vis + 1:
                     continue
-                by, sel = top_y + (i - set_first) * 86, i == set_idx
-                draw_button(canvas, (list_x, by, W - 2 * list_x, 78), SEL_BG if sel else PANEL, 12, 3, sel)
+                by, sel = int(top_y + (i - set_fl) * 86), i == set_idx
+                draw_button(canvas, (list_x, by, W - 2 * list_x, 78), SEL_BG if sel else PANEL, 12, 3, sel, ("set", i))
                 canvas.blit(f_row.render(nm, True, TEXT if sel else DIM), (list_x + 24, by + 14))
                 sub_w = W - 2 * list_x - 48
                 if SETTINGS_ROWS[i] == "theme":
@@ -3935,6 +3896,7 @@ def main():
                         pygame.draw.rect(canvas, DIM, (sx + j * 24, by + 29, 20, 20), 1, border_radius=5)
                     sub_w = sx - (list_x + 24) - 12
                 canvas.blit(f_small.render(fit(f_small, sub, sub_w), True, DIM), (list_x + 24, by + 46))
+            canvas.set_clip(None)
             if len(SETTINGS_ROWS) > set_vis:
                 tr_h = set_vis * 86 - 8
                 th_h = max(24, tr_h * set_vis // len(SETTINGS_ROWS))
@@ -4026,12 +3988,16 @@ def main():
             top_c = py + 58
             ci_vis = 7 + DY // 44 - 1
             first_ci = min(max(0, ci_idx - ci_vis // 2), max(0, len(ci_rows) - ci_vis))
-            for slot, r in enumerate(ci_rows[first_ci:first_ci + ci_vis]):
-                i = first_ci + slot
-                y, sel = top_c + slot * 44, i == ci_idx
-                if sel:
-                    ui_rect(canvas, SEL_BG, (px + 8, y, pw - 16, 40), 8)
-                    pygame.draw.rect(canvas, ACCENT, (px + 8, y, pw - 16, 40), 2, border_radius=8)
+            ci_fl, ci_hi = anim_val("ci_first", first_ci, 24.0), anim_val("ci_hi", ci_idx, 24.0)
+            canvas.set_clip(pygame.Rect(px, top_c - 2, pw, ci_vis * 44 + 2))
+            if ci_rows:
+                _hy = int(top_c + (ci_hi - ci_fl) * 44)
+                ui_rect(canvas, SEL_BG, (px + 8, _hy, pw - 16, 40), 8)
+                pygame.draw.rect(canvas, ACCENT, (px + 8, _hy, pw - 16, 40), 2, border_radius=8)
+            lo_ci = max(0, int(ci_fl))
+            for slot, r in enumerate(ci_rows[lo_ci:lo_ci + ci_vis + 2]):
+                i = lo_ci + slot
+                y, sel = int(top_c + (i - ci_fl) * 44), abs(i - ci_hi) < 0.5
                 canvas.blit(f_small.render(fit(f_small, r["name"], 200), True, TEXT if sel else DIM), (px + 20, y + 10))
                 canvas.blit(f_small.render(fit(f_small, ", ".join(r["systems"]), pw - 20 - 220 - 130), True, DIM), (px + 232, y + 10))
                 if r["installed"]:
@@ -4041,6 +4007,7 @@ def main():
                 else:
                     tag, tcol = "A Install" if sel else "Not installed", ACCENT if sel else DIM
                 canvas.blit(f_small.render(tag, True, tcol), (px + pw - 24 - f_small.size(tag)[0], y + 10))
+            canvas.set_clip(None)
             if not ci_rows:
                 canvas.blit(f_row.render("No RetroArch systems on this device", True, TEXT), (px + 24, top_c + 10))
             hint = "B Cancel download" if ci_s["busy"] else "Up/Down Select   A Install   B Back"
@@ -4049,21 +4016,26 @@ def main():
             ui_rect(canvas, PANEL, (list_x, top_y, W - 2 * list_x, 336 + DY), 10)
             emu_vis = 7 + DY // 44
             first_emu = min(max(0, emu_idx - emu_vis // 2), max(0, len(emu_systems) - emu_vis))
-            for slot, sy in enumerate(emu_systems[first_emu:first_emu + emu_vis]):
-                i = first_emu + slot
+            emu_fl, emu_hi = anim_val("emu_first", first_emu, 24.0), anim_val("emu_hi", emu_idx, 24.0)
+            canvas.set_clip(pygame.Rect(list_x, top_y + 4, W - 2 * list_x, emu_vis * 44 + 4))
+            if emu_systems:
+                _hy = int(top_y + 8 + (emu_hi - emu_fl) * 44)
+                ui_rect(canvas, SEL_BG, (list_x + 8, _hy, W - 2 * list_x - 16, 40), 8)
+                pygame.draw.rect(canvas, ACCENT, (list_x + 8, _hy, W - 2 * list_x - 16, 40), 2, border_radius=8)
+            lo_emu = max(0, int(emu_fl))
+            for slot, sy in enumerate(emu_systems[lo_emu:lo_emu + emu_vis + 2]):
+                i = lo_emu + slot
                 sid, _tag, _runner, _ext, fullname = sy
                 cores = compatible_cores(sid)
                 chosen = state.get("emulators", {}).get(sid, default_core(sid))
                 if chosen not in cores:
                     chosen = default_core(sid) if default_core(sid) in cores else (cores[0] if cores else "No compatible core")
-                y = top_y + 8 + slot * 44
-                sel = i == emu_idx
-                if sel:
-                    ui_rect(canvas, SEL_BG, (list_x + 8, y, W - 2 * list_x - 16, 40), 8)
-                    pygame.draw.rect(canvas, ACCENT, (list_x + 8, y, W - 2 * list_x - 16, 40), 2, border_radius=8)
+                y = int(top_y + 8 + (i - emu_fl) * 44)
+                sel = abs(i - emu_hi) < 0.5
                 canvas.blit(f_small.render(fit(f_small, fullname, 300), True, TEXT if sel else DIM), (list_x + 20, y + 3))
                 core_txt = chosen.replace("_", " ")
                 canvas.blit(f_small.render(fit(f_small, "< " + core_txt + " >", 190), True, ACCENT if sel else TEXT), (W - list_x - 205, y + 14))
+            canvas.set_clip(None)
             if not any(compatible_cores(sy[0]) for sy in emu_systems):
                 canvas.blit(f_row.render("No installed compatible RetroArch cores found", True, TEXT), (list_x + 24, top_y + 20))
             hint = "Up/Down System   Left/Right Change compatible core   B Back"
@@ -4157,12 +4129,15 @@ def main():
                 canvas.blit(f_small.render("%d dBm" % wst["rssi"], True, DIM), (W - list_x - 90, top_y + 12))
             vis = 7 + DY // 40
             first = min(max(0, wf_idx - vis // 2), max(0, wn - vis))
-            for slot in range(min(vis, wn)):
-                i = first + slot
-                y, sel = top_y + 44 + slot * 40, i == wf_idx
-                if sel:
-                    ui_rect(canvas, SEL_BG, (list_x + 6, y, W - 2 * list_x - 12, 38), 8)
-                    pygame.draw.rect(canvas, ACCENT, (list_x + 6, y, 5, 38), border_radius=3)
+            wf_fl, wf_hi = anim_val("wf_first", first, 24.0), anim_val("wf_hi", wf_idx, 24.0)
+            canvas.set_clip(pygame.Rect(list_x, top_y + 40, W - 2 * list_x, vis * 40 + 2))
+            _hy = int(top_y + 44 + (wf_hi - wf_fl) * 40)
+            ui_rect(canvas, SEL_BG, (list_x + 6, _hy, W - 2 * list_x - 12, 38), 8)
+            pygame.draw.rect(canvas, ACCENT, (list_x + 6, _hy, 5, 38), border_radius=3)
+            lo_wf = max(0, int(wf_fl))
+            for slot in range(min(vis + 2, wn - lo_wf)):
+                i = lo_wf + slot
+                y, sel = int(top_y + 44 + (i - wf_fl) * 40), abs(i - wf_hi) < 0.5
                 col = TEXT if sel else DIM
                 if i == 0:
                     on = wconf["enabled"]
@@ -4181,6 +4156,7 @@ def main():
                     for b in range(4):
                         pygame.draw.rect(canvas, ACCENT if b < wifictl.bars(net["rssi"]) else PANEL if sel else BG,
                                          (W - list_x - 70 + b * 12, y + 26 - b * 5 - 4, 8, 6 + b * 5))
+            canvas.set_clip(None)
             if time.time() < wf_msg_until:
                 note = wf_msg
             elif wscan.busy:
@@ -4206,12 +4182,15 @@ def main():
             canvas.blit(f_row.render(fit(f_row, head, W - 2 * list_x - 56), True, ACCENT), (list_x + 28, top_y + 8))
             vis = 7 + DY // 40
             first = min(max(0, bt_idx - vis // 2), max(0, bn - vis))
-            for slot in range(min(vis, bn)):
-                i = first + slot
-                y, sel = top_y + 44 + slot * 40, i == bt_idx
-                if sel:
-                    ui_rect(canvas, SEL_BG, (list_x + 6, y, W - 2 * list_x - 12, 38), 8)
-                    pygame.draw.rect(canvas, ACCENT, (list_x + 6, y, 5, 38), border_radius=3)
+            bt_fl, bt_hi = anim_val("bt_first", first, 24.0), anim_val("bt_hi", bt_idx, 24.0)
+            canvas.set_clip(pygame.Rect(list_x, top_y + 40, W - 2 * list_x, vis * 40 + 2))
+            _hy = int(top_y + 44 + (bt_hi - bt_fl) * 40)
+            ui_rect(canvas, SEL_BG, (list_x + 6, _hy, W - 2 * list_x - 12, 38), 8)
+            pygame.draw.rect(canvas, ACCENT, (list_x + 6, _hy, 5, 38), border_radius=3)
+            lo_bt = max(0, int(bt_fl))
+            for slot in range(min(vis + 2, bn - lo_bt)):
+                i = lo_bt + slot
+                y, sel = int(top_y + 44 + (i - bt_fl) * 40), abs(i - bt_hi) < 0.5
                 col = TEXT if sel else DIM
                 if i == 0:
                     on = bool(btm.on)
@@ -4225,6 +4204,7 @@ def main():
                     tag = "connected" if d["connected"] else "paired" if d["paired"] else ""
                     t = f_small.render(tag, True, ACCENT if d["connected"] else DIM)
                     canvas.blit(t, (W - list_x - 28 - t.get_width(), y + 12))
+            canvas.set_clip(None)
             if time.time() < btm.msg_until:
                 note = btm.msg
             elif btm.scanning:
@@ -4314,13 +4294,15 @@ def main():
                                 (40, 150 + i * 34))
             sys_rows = 6 + DY // 56
             sys_first = max(0, min(sys_idx - sys_rows // 2, len(vsys) - sys_rows))
-            for r, (xid, xtag, xcore, _e, xname) in enumerate(vsys):
-                if not sys_first <= r < sys_first + sys_rows:
-                    continue
-                y, sel, cnt = top_y + (r - sys_first) * 56, r == sys_idx, len(games_of(xid))
-                if sel:
-                    ui_rect(canvas, SEL_BG, (list_x, y, list_w, 52), 8)
-                    pygame.draw.rect(canvas, ACCENT, (list_x, y, 5, 52), border_radius=3)
+            sys_fl, sys_hi = anim_val("sys_first", sys_first, 24.0), anim_val("sys_hi", sys_idx, 24.0)
+            canvas.set_clip(pygame.Rect(list_x, top_y - 2, list_w, sys_rows * 56 + 2))
+            if vsys:
+                _hy = int(top_y + (sys_hi - sys_fl) * 56)
+                ui_rect(canvas, SEL_BG, (list_x, _hy, list_w, 52), 8)
+                pygame.draw.rect(canvas, ACCENT, (list_x, _hy, 5, 52), border_radius=3)
+            for r in range(max(0, int(sys_fl)), min(len(vsys), int(sys_fl) + sys_rows + 2)):
+                xid, xtag, xcore, _e, xname = vsys[r]
+                y, sel, cnt = int(top_y + (r - sys_fl) * 56), abs(r - sys_hi) < 0.5, len(games_of(xid))
                 ui_rect(canvas, PANEL if not sel else BG, (list_x + 18, y + 6, 64, 40), 6)
                 t = f_big.render(xtag, True, ACCENT if sel else DIM)
                 canvas.blit(t, (list_x + 50 - t.get_width() // 2, y + 13))
@@ -4329,6 +4311,7 @@ def main():
                 canvas.blit(f_small.render("%d %s%s" % (cnt, "port" if xid == "ports" else "game",
                                                          "" if cnt == 1 else "s"), True, DIM),
                             (list_x + 98, y + 28))
+            canvas.set_clip(None)
             px, cnt = 500 + DX, len(games)
             if vsys:
                 ui_rect(canvas, PANEL, (px, top_y, 200, PH), 10)
@@ -4363,14 +4346,14 @@ def main():
             hint = "B Back   X Rescan   START+SELECT Power off"
         else:
             first = max(0, min(idx - rows // 2, len(games) - rows))
-            for r in range(rows):
-                gi = first + r
-                if gi >= len(games):
-                    break
-                y = top_y + r * row_h
-                if gi == idx:
-                    ui_rect(canvas, SEL_BG, (list_x, y, list_w, row_h - 4), 8)
-                    pygame.draw.rect(canvas, ACCENT, (list_x, y, 5, row_h - 4), border_radius=3)
+            fl, hi = anim_val(("gl", view), first, 24.0), anim_val(("gh", view), idx, 24.0)
+            canvas.set_clip(pygame.Rect(list_x, top_y - 2, list_w + 14, rows * row_h))
+            _hy = int(top_y + (hi - fl) * row_h)
+            ui_rect(canvas, SEL_BG, (list_x, _hy, list_w, row_h - 4), 8)
+            pygame.draw.rect(canvas, ACCENT, (list_x, _hy, 5, row_h - 4), border_radius=3)
+            for gi in range(max(0, int(fl)), min(len(games), int(fl) + rows + 2)):
+                y = int(top_y + (gi - fl) * row_h)
+                sel_ = abs(gi - hi) < 0.5
                 badges = []
                 if games[gi]["path"] in favorite_paths:
                     badges.append("★")
@@ -4378,10 +4361,11 @@ def main():
                     badges.append("SD2")
                 suffix = "  ".join(badges)
                 canvas.blit(f_row.render(fit(f_row, games[gi]["title"], list_w - 40 - (len(suffix) * 10 if suffix else 0)),
-                                         True, TEXT if gi == idx else DIM), (list_x + 18, y + 9))
+                                         True, TEXT if sel_ else DIM), (list_x + 18, y + 9))
                 if suffix:
                     bt = f_tiny.render(suffix, True, ACCENT)
                     canvas.blit(bt, (list_x + list_w - 14 - bt.get_width(), y + 14))
+            canvas.set_clip(None)
             if len(games) > rows:
                 bar_h = H - 64 - top_y
                 th = max(24, int(bar_h * rows / len(games)))
@@ -4444,6 +4428,37 @@ def main():
             pygame.draw.rect(canvas, BG, (bx + 66, by + 17, 130, 10), border_radius=5)
             pygame.draw.rect(canvas, ACCENT, (bx + 66, by + 17, max(6, 130 * bri_pct // 100), 10), border_radius=5)
             canvas.blit(f_small.render("%d%%" % bri_pct, True, TEXT), (bx + 208, by + 14))
+
+        _vnow = time.monotonic()
+        if view != "home":
+            _HOME_FX["last"] = _vnow   # coming back from a sub menu slides in; the tile entrance is only for a fresh start
+        _vk = (view, dd is not None, fm_pop["kind"] if (fm_pop and view == "files") else None)
+        if _VT["last"] is None:
+            _VT["last"] = _vk
+        elif _vk != _VT["last"]:
+            if _vk[0] != _VT["last"][0]:
+                _VT.update(kind="slide", dur=0.26, dir=1 if VT_DEPTH.get(_vk[0], 2) >= VT_DEPTH.get(_VT["last"][0], 2) else -1)
+            else:
+                _VT.update(kind="fade", dur=0.18, dir=0)
+            vt_old.blit(vt_buf, (0, 0))
+            _VT["t0"], _VT["last"] = _vnow, _vk
+        _vp = (_vnow - _VT["t0"]) / _VT["dur"] if _VT["dur"] else 1.0
+        vt_buf.blit(canvas, (0, 0))
+        if 0.0 <= _vp < 1.0:
+            _anim_clock[2] = True
+            vt_new.blit(canvas, (0, 0))
+            _e = _out_cubic(_vp)
+            if _VT["kind"] == "slide":
+                canvas.fill(BG)
+                vt_old.set_alpha(int(255 * (1.0 - _e)))
+                canvas.blit(vt_old, (-_VT["dir"] * int(TR_SLIDE * _e), 0))
+                vt_new.set_alpha(min(255, int(255 * _e * 1.5)))
+                canvas.blit(vt_new, (_VT["dir"] * int(TR_SLIDE * (1.0 - _e)), 0))
+            else:
+                vt_old.set_alpha(255)
+                canvas.blit(vt_old, (0, 0))
+                vt_new.set_alpha(int(255 * _e))
+                canvas.blit(vt_new, (0, 0))
 
         _pt2 = time.perf_counter()
         present()
