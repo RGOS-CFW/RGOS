@@ -14,6 +14,10 @@ What happens:
     Up/Down move, A selects, B or Menu goes back / resumes.
   * Restart of a native port: the port is stopped and rgos-launch starts it again (it sees /run/rgos/restart).
 
+  * RetroArch gets the same panel as native ports, on a hardware overlay plane above the game (drmplane.py). If the display
+    has no plane to give, a Menu tap opens RetroArch's own menu (RGUI, MENU_TOGGLE) instead, since a framebuffer panel
+    would sit behind the game. RGOS_GAMEMENU_RGUI=1 always uses RGUI for RetroArch.
+
 Environment: RGOS_RUN (/run/rgos), RGOS_GAME_FLAG, RGOS_RA_PORT (55355), RGOS_SYS_INPUT, RGOS_DEV_INPUT, plus the
 framebuffer variables of rgos-overlay (RGOS_FB_DEV, RGOS_FB_ROTATE).
 """
@@ -474,11 +478,11 @@ class GameControl:
 # ---- one open/close cycle ------------------------------------------------------------------------------------------
 
 class RetroArchMenu:
-    """In-game menu for RetroArch: RetroArch's own menu (RGUI) is opened and closed with its MENU_TOGGLE command.
+    """Fallback in-game menu for RetroArch: its own menu (RGUI), opened and closed with the MENU_TOGGLE command.
 
-    RetroArch renders through DRM/KMS, so a panel painted into /dev/fb0 is never visible over the game. RGUI is drawn by
-    RetroArch itself (above the picture, game paused) and has Resume / Save State / Load State / Restart / Close Content
-    in its Quick Menu. The pad is not grabbed, so RetroArch reads it directly.
+    Used when the RG OS panel cannot go on an overlay plane (or RGOS_GAMEMENU_RGUI=1): a panel painted into /dev/fb0 is
+    never visible over a DRM/KMS game. RGUI is drawn by RetroArch itself (above the picture, game paused) and has Resume /
+    Save State / Load State / Restart / Close Content in its Quick Menu. The pad is not grabbed, so RetroArch reads it.
     """
 
     def __init__(self, udp=udp_cmd):
@@ -661,14 +665,26 @@ class DrmMenuScreen(FbMenuScreen):
             pass
 
 
+class NoPlane(Exception):
+    """RetroArch needs an overlay plane for the panel; there is none (the framebuffer would be behind the game)."""
+
+
 def make_screen(kind):
-    """Native ports render through DRM/KMS: use an overlay plane for them, the framebuffer if that is not possible."""
+    """Games render through DRM/KMS: put the panel on an overlay plane above them. A native port may fall back to the
+    framebuffer if that is not possible; RetroArch may not (it would not be seen), so NoPlane is raised for it."""
     if os.environ.get("RGOS_GAMEMENU_DRM", "1") != "0":
         try:
             return DrmMenuScreen()
         except Exception as e:
-            log("overlay plane not available (%r); using the framebuffer" % e)
+            log("overlay plane not available (%r)" % e)
+    if kind == "retroarch":
+        raise NoPlane("no overlay plane")
     return FbMenuScreen()
+
+
+def use_rgui(kind, plane_bad):
+    """True when a Menu tap should open RetroArch's own menu instead of the RG OS panel."""
+    return kind == "retroarch" and (plane_bad or bool(os.environ.get("RGOS_GAMEMENU_RGUI")))
 
 
 # ---- daemon --------------------------------------------------------------------------------------------------------
@@ -760,7 +776,7 @@ def open_menu(info, pads, screen):
 
 def daemon():
     log("in-game menu started")
-    pads, screen, tap, ra_menu = [], None, TapDetector(), RetroArchMenu()
+    pads, screen, tap, ra_menu, plane_bad = [], None, TapDetector(), RetroArchMenu(), False
     while True:
         info = read_game()
         if info is None:
@@ -771,6 +787,7 @@ def daemon():
                     pass
             pads = []
             ra_menu.reset()
+            plane_bad = False                     # try the plane again for the next game
             time.sleep(0.5)
             continue
         if not pads:
@@ -794,13 +811,17 @@ def daemon():
                 continue
             for etype, code, value in parse_events(data):
                 if tap.feed(etype, code, value, time.monotonic()) and not combo_recent():
-                    if info.get("kind") == "retroarch" and not os.environ.get("RGOS_GAMEMENU_FB"):
+                    if use_rgui(info.get("kind"), plane_bad):
                         log("retroarch menu %s" % ("opened" if ra_menu.toggle() else "closed"))
                         break
                     try:
                         screen = screen or make_screen(info.get("kind"))
                         open_menu(info, pads, screen)
                         screen = None             # the plane is released after every menu; open it fresh next time
+                    except NoPlane:
+                        plane_bad = True          # no plane for RetroArch: this tap (and the rest of the game) opens RGUI
+                        screen = None
+                        log("retroarch menu %s (no overlay plane)" % ("opened" if ra_menu.toggle() else "closed"))
                     except Exception as e:
                         log("menu error: %r" % e)
                         screen = None

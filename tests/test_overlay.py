@@ -162,3 +162,30 @@ class RetroArchOverlayTests(unittest.TestCase):
             self.assertEqual(srv.recvfrom(256)[0], b"SHOW_MSG Volume  50%")
         finally:
             srv.close()
+
+
+class VolumeTargetTests(unittest.TestCase):
+    """The volume bar is drawn on a hardware overlay plane (top layer) for every game, RetroArch included."""
+
+    def test_any_game_gets_the_overlay_plane_first(self):
+        ov = load_overlay()
+        self.assertEqual(ov.volume_target(True, True, False, True), "drm")     # RetroArch
+        self.assertEqual(ov.volume_target(True, False, False, True), "drm")    # native port
+
+    def test_without_a_plane_retroarch_uses_its_own_message_and_a_port_the_framebuffer(self):
+        ov = load_overlay()
+        self.assertEqual(ov.volume_target(True, True, True, True), "ra")
+        self.assertEqual(ov.volume_target(True, False, True, True), "fb")
+        self.assertEqual(ov.volume_target(True, True, False, False), "ra")     # RGOS_OVERLAY_DRM=0
+        self.assertEqual(ov.volume_target(True, False, False, False), "fb")
+
+    def test_no_game_means_the_framebuffer(self):
+        ov = load_overlay()
+        self.assertEqual(ov.volume_target(False, False, False, True), "fb")
+        self.assertEqual(ov.volume_target(False, False, True, True), "fb")
+
+    def test_the_daemon_uses_volume_target_and_falls_back_when_the_plane_fails(self):
+        src = open(os.path.join(helpers.RGOS, "rgos-overlay"), encoding="utf-8").read()
+        self.assertIn("volume_target(game_running(), retroarch_running(), drm_bad)", src)
+        self.assertIn("where = volume_target(True, retroarch_running(), drm_bad)", src)
+        self.assertLess(src.index('if where == "drm"'), src.index('if where == "ra"'))

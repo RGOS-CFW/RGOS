@@ -36,17 +36,21 @@ and the choice is kept across games and reboots. It only works while a game runs
   on. Hold Menu + Select to switch it off again.
 - If the device has no vibration motor the combo still works, silently.
 
-## Why RetroArch uses its own menu and volume message
+## RetroArch gets the same panel as native ports
 
-RetroArch renders through DRM/KMS, so pixels written into `/dev/fb0` never show over a running game. While RetroArch
-is the foreground program (`/run/rgos/ingame` has `"kind": "retroarch"`):
+RetroArch renders through DRM/KMS, so pixels written into `/dev/fb0` never show over a running game. Both the volume bar and the
+in-game menu panel therefore go on a hardware overlay plane (`drmplane.py`), which the display controller composites above the
+game, for RetroArch exactly as for native ports. While RetroArch is the foreground program (`/run/rgos/ingame` has
+`"kind": "retroarch"`):
 
-* **Volume** is shown with RetroArch's on-screen message (`SHOW_MSG` network command) by `rgos-overlay`.
-* **Menu tap** sends `MENU_TOGGLE`, which opens RetroArch's own RGUI menu above the game (paused); tap Menu again to
-  close it. Use its Quick Menu for Resume, Save State, Load State, Restart and Close Content.
+* **Menu tap** opens the RG OS panel above the game (paused): Resume, Restart, Save State, Load State, Exit Game.
+* **Volume** is the bar on the overlay plane (`rgos-overlay`).
 
-Set `RGOS_GAMEMENU_FB=1` for `gamemenu.py` to bring the old framebuffer panel back. The launcher and native ports still
-use the framebuffer panel and bar described below.
+If the display has no free overlay plane, the panel falls back to RetroArch's own: a Menu tap sends `MENU_TOGGLE`, which opens RGUI
+above the game (paused; tap Menu again to close it; its Quick Menu has Resume, Save State, Load State, Restart and Close Content),
+and the volume uses RetroArch's on-screen message (`SHOW_MSG`). The fallback is chosen per game, and the log
+(`/var/log/rgos-gamemenu.log`) says `no overlay plane` when it happens. Set `RGOS_GAMEMENU_RGUI=1` to always use RGUI for RetroArch,
+and `RGOS_GAMEMENU_DRM=0` to never use a plane for the menu.
 
 ## How it works
 
