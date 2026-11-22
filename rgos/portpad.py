@@ -8,8 +8,9 @@ ports ignore the pad or see a raw, unlabelled joystick. This module builds that 
 Button numbers follow SDL's evdev ordering of the hub's key codes:
   0 BTN_SOUTH  1 BTN_EAST  2 BTN_NORTH  3 BTN_WEST  4/5 L1/R1  6/7 L2/R2
   8 select  9 start  10 mode  11/12 L3/R3  13-16 dpad up/down/left/right
-which matches config/autoconfig/RG_OS_Gamepad.cfg. Axes 0..3 are the sticks, present
-only when analog sticks are enabled in /etc/rgos/input.json.
+which matches config/autoconfig/RG_OS_Gamepad.cfg. Axes 0 and 1 are the left stick: always present,
+because "DPAD to joystick" drives them. Axes 2 and 3 (right stick) exist only when analog sticks are
+enabled in /etc/rgos/input.json.
 """
 import json, os, struct
 
@@ -30,7 +31,8 @@ BUTTONS = (
     ("dpup", 13), ("dpdown", 14), ("dpleft", 15), ("dpright", 16),
     ("lefttrigger", 6), ("righttrigger", 7),
 )
-STICKS = (("leftx", 0), ("lefty", 1), ("rightx", 2), ("righty", 3))
+LEFT_STICK = (("leftx", 0), ("lefty", 1))
+STICKS = LEFT_STICK + (("rightx", 2), ("righty", 3))
 
 
 def sdl_guid():
@@ -68,8 +70,7 @@ def analog_enabled(conf=None, devfile=None):
 
 def mapping_line(analog=False):
     parts = [sdl_guid(), HUB_NAME] + ["%s:b%d" % kv for kv in BUTTONS]
-    if analog:
-        parts += ["%s:a%d" % kv for kv in STICKS]
+    parts += ["%s:a%d" % kv for kv in (STICKS if analog else LEFT_STICK)]
     parts.append("platform:Linux")
     return ",".join(parts)
 

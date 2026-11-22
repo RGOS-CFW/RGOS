@@ -57,17 +57,21 @@ class Rg35xxspRetroArchConfigTests(unittest.TestCase):
     def test_it_has_its_own_file(self):
         self.assertTrue(os.path.isfile(os.path.join(helpers.ROOT, "config", "retroarch-rg35xxsp.cfg")))
 
-    def test_no_stick_axis_or_stick_click_is_bound(self):
-        for k, v in self.cfg.items():
-            if k.endswith("_axis") or k in ("input_player1_l3_btn", "input_player1_r3_btn"):
-                self.assertEqual(v, "nul", k)
-        for axis in ("l_x_plus", "l_x_minus", "l_y_plus", "l_y_minus", "r_x_plus", "r_x_minus", "r_y_plus", "r_y_minus"):
+    def test_no_right_stick_or_stick_click_is_bound(self):
+        for k in ("input_player1_l3_btn", "input_player1_r3_btn"):
+            self.assertEqual(self.cfg.get(k), "nul", k)
+        for axis in ("r_x_plus", "r_x_minus", "r_y_plus", "r_y_minus", "l2", "r2", "r3"):
             self.assertEqual(self.cfg.get("input_player1_%s_axis" % axis), "nul", axis)
         self.assertEqual(self.cfg.get("input_analog_dpad_mode"), "0")
 
-    def test_the_stick_config_of_the_other_h700_consoles_is_not_inherited(self):
-        self.assertIn("+0", parse_cfg("retroarch-rg34xxsp.cfg").values())
-        self.assertNotIn("+0", self.cfg.values())
+    def test_only_the_left_stick_axes_are_bound_for_dpad_to_joystick(self):
+        # no physical stick, but the virtual pad has axes 0/1 and "DPAD to joystick" moves them
+        self.assertEqual([self.cfg.get("input_player1_l_%s_axis" % a) for a in ("x_plus", "x_minus", "y_plus", "y_minus")],
+                         ["+0", "-0", "+1", "-1"])
+
+    def test_the_right_stick_config_of_the_other_h700_consoles_is_not_inherited(self):
+        self.assertIn("+2", parse_cfg("retroarch-rg34xxsp.cfg").values())
+        self.assertNotIn("+2", self.cfg.values())
 
     def test_hotkeys_only_use_buttons_the_sp_has(self):
         missing = {"6", "7", "11", "12"}

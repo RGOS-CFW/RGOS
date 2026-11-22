@@ -16,6 +16,26 @@ Tap the **Menu** button (the hub's Mode button) while a game is running and a pa
   hotkey combos (Menu is its hotkey-enable button).
 - Select+Start held for 2 s still force-stops a native port.
 
+## DPAD to joystick (Menu + Select)
+
+While a game runs, press **Menu + Select** together:
+
+| Press | Result |
+| --- | --- |
+| quick press | the device vibrates once and **DPAD to joystick** turns on: D-pad presses move the left stick |
+| hold for 1 s | the device vibrates twice and **DPAD to joystick** turns off |
+
+The combo flips the same switch as **Settings > DPAD to joystick**, so the Settings row always shows the current state
+and the choice is kept across games and reboots. It only works while a game runs; the launcher keeps its normal D-pad.
+
+- The combo is swallowed: the game never sees Select while Menu is down, and the in-game menu does not open. This
+  replaces RetroArch's old Menu + Select hotkey (its menu is still one tap of Menu away).
+- Diagonals are scaled like a real stick (both directions held gives about 70 % on each axis); opposite directions cancel.
+  A real analog stick, on devices that have one, keeps working and the D-pad wins on an axis while it is pushed.
+- Games and cores that read only the digital D-pad (NES, SNES, Game Boy, ...) will not respond to the D-pad while it is
+  on. Hold Menu + Select to switch it off again.
+- If the device has no vibration motor the combo still works, silently.
+
 ## Why RetroArch uses its own menu and volume message
 
 RetroArch renders through DRM/KMS, so pixels written into `/dev/fb0` never show over a running game. While RetroArch

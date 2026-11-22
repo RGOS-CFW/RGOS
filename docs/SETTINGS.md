@@ -12,6 +12,7 @@ Open **Settings** from the home screen. Rows, in order:
 | **Game artwork** | SteamGridDB key, download missing artwork, show or hide covers ([ARTWORK.md](ARTWORK.md)) |
 | **Map buttons** | Teach RG OS which physical button is which, for when buttons are wrong |
 | **Swap A / B buttons** | Toggle with A. Applies to the launcher, RetroArch and native ports |
+| **DPAD to joystick** | Toggle with A. While a game runs, D-pad presses move the left stick instead (for N64, PSP, PlayStation and other games that read the stick). Menu + Select in a game turns it on, holding Menu + Select turns it off ([IN-GAME-MENU.md](IN-GAME-MENU.md)) |
 | **Wi-Fi** | Scan, connect, hidden networks ([NETWORKING.md](NETWORKING.md)) |
 | **Bluetooth** | Pair controllers, keyboards and headsets |
 | **SSH / file transfer** | Turn the SSH/SFTP server on or off |

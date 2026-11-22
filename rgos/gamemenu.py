@@ -22,6 +22,7 @@ import fcntl, glob, importlib.machinery, importlib.util, json, os, select, signa
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUN_DIR = os.environ.get("RGOS_RUN", "/run/rgos")
 GAME_FLAG = os.environ.get("RGOS_GAME_FLAG", os.path.join(RUN_DIR, "ingame"))
+COMBO_FLAG = os.environ.get("RGOS_COMBO_FLAG", os.path.join(RUN_DIR, "combo-swallow"))
 SYS_INPUT = os.environ.get("RGOS_SYS_INPUT", "/sys/class/input")
 DEV_INPUT = os.environ.get("RGOS_DEV_INPUT", "/dev/input")
 HUB_NAME = "RG OS Gamepad"
@@ -33,12 +34,14 @@ EVFMT = struct.Struct("llHHi")
 EV_KEY, EV_ABS = 1, 3
 BTN_A, BTN_B, BTN_START, BTN_MODE = 0x130, 0x131, 0x13B, 0x13C
 DPAD_UP, DPAD_DOWN, ABS_HAT0Y = 0x220, 0x221, 0x11
+ABS_Y, STICK_ON = 0x01, 16384        # "DPAD to joystick" turns D-pad presses into left-stick Y: past half = up / down
 EVIOCGRAB = 0x40044590
 
 BASE_W = 720                 # canvas width the sizes below were designed for (same as rgos-overlay)
 PANEL_W, SHADOW = 300, 18    # panel and soft edge shadow, in BASE_W pixels
 SLIDE_S, FPS = 0.28, 30.0    # slide duration and frame rate
 TAP_MAX_S = 0.8              # a Menu press longer than this is a hold, not a tap
+COMBO_QUIET_S = TAP_MAX_S + 1.0   # a Menu tap this soon after the hub swallowed Menu+Select belongs to that combo
 GRACE_S = 3.0                # SIGTERM -> SIGKILL grace when stopping a game
 DEFAULT_THEME = {"BG": (13, 15, 26), "PANEL": (24, 28, 46), "ACCENT": (255, 99, 71), "TEXT": (232, 235, 245)}
 
@@ -124,6 +127,19 @@ class TapDetector:
         elif self.down is not None and ((etype == EV_KEY and value == 1) or (etype == EV_ABS and value != 0)):
             self.other = True
         return False
+
+
+def combo_recent(path=None, now=None):
+    """True when the input hub swallowed a Menu+Select press a moment ago (DPAD to joystick combo).
+
+    The hub hides Select from the game while Menu is down, so TapDetector never sees "another button" and would
+    take the Menu release for a tap.
+    """
+    try:
+        age = (time.time() if now is None else now) - os.path.getmtime(path or COMBO_FLAG)
+    except OSError:
+        return False
+    return age < COMBO_QUIET_S
 
 
 # ---- the menu model -----------------------------------------------------------------------------------------------
@@ -681,6 +697,7 @@ def read_pad(fd):
 class PadEvents:
     def __init__(self, fds):
         self.fds = fds
+        self.ydir = 0
 
     def grab(self, on):
         for fd in self.fds:
@@ -706,6 +723,14 @@ class PadEvents:
                 self.fds.remove(fd)               # in place: the daemon shares this list and will reopen the hub
                 continue
             for etype, code, value in parse_events(data):
+                if etype == EV_ABS and code == ABS_Y:
+                    # D-pad presses arrive as left-stick Y while DPAD to joystick is on: one step per push
+                    d = -1 if value < -STICK_ON else (1 if value > STICK_ON else 0)
+                    if d != self.ydir:
+                        self.ydir = d
+                        if d:
+                            names.append("up" if d < 0 else "down")
+                    continue
                 n = translate(etype, code, value)
                 if n:
                     names.append(n)
@@ -768,7 +793,7 @@ def daemon():
                 pads = [f for f in pads if f != fd]
                 continue
             for etype, code, value in parse_events(data):
-                if tap.feed(etype, code, value, time.monotonic()):
+                if tap.feed(etype, code, value, time.monotonic()) and not combo_recent():
                     if info.get("kind") == "retroarch" and not os.environ.get("RGOS_GAMEMENU_FB"):
                         log("retroarch menu %s" % ("opened" if ra_menu.toggle() else "closed"))
                         break
