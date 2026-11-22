@@ -6,6 +6,7 @@ import struct
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from tests import helpers
 
@@ -391,3 +392,46 @@ class RetroArchMenuTests(unittest.TestCase):
         m.toggle(); m.reset()
         self.assertFalse(m.open)
         self.assertEqual(sent, ["MENU_TOGGLE"] * 3)
+
+
+class RetroArchPanelTests(unittest.TestCase):
+    """RetroArch gets the RG OS panel on an overlay plane, like native ports; RGUI is only the fallback."""
+
+    def test_retroarch_uses_the_panel_by_default_and_rgui_only_as_fallback(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("RGOS_GAMEMENU_RGUI", None)
+            self.assertFalse(gm.use_rgui("retroarch", False))
+            self.assertTrue(gm.use_rgui("retroarch", True))        # no plane was available
+            self.assertFalse(gm.use_rgui("native", True))          # ports never use RGUI
+        with mock.patch.dict(os.environ, {"RGOS_GAMEMENU_RGUI": "1"}):
+            self.assertTrue(gm.use_rgui("retroarch", False))
+            self.assertFalse(gm.use_rgui("native", False))
+
+    def test_the_plane_is_used_for_retroarch(self):
+        plane = object()
+        with mock.patch.object(gm, "DrmMenuScreen", return_value=plane):
+            self.assertIs(gm.make_screen("retroarch"), plane)
+            self.assertIs(gm.make_screen("native"), plane)
+
+    def test_without_a_plane_retroarch_raises_and_a_port_gets_the_framebuffer(self):
+        fb = object()
+        with mock.patch.object(gm, "DrmMenuScreen", side_effect=RuntimeError("none")), \
+                mock.patch.object(gm, "FbMenuScreen", return_value=fb):
+            with self.assertRaises(gm.NoPlane):
+                gm.make_screen("retroarch")                         # a framebuffer panel would be behind the game
+            self.assertIs(gm.make_screen("native"), fb)
+        with mock.patch.dict(os.environ, {"RGOS_GAMEMENU_DRM": "0"}), \
+                mock.patch.object(gm, "DrmMenuScreen") as drm:
+            with self.assertRaises(gm.NoPlane):
+                gm.make_screen("retroarch")
+            drm.assert_not_called()
+
+    def test_the_daemon_opens_the_panel_first_and_falls_back_to_rgui_on_noplane(self):
+        src = open(os.path.join(helpers.RGOS, "gamemenu.py"), encoding="utf-8").read()
+        d = src[src.index("def daemon():"):]
+        self.assertLess(d.index("use_rgui(info.get(\"kind\"), plane_bad)"), d.index("make_screen(info.get(\"kind\"))"))
+        self.assertIn("except NoPlane:", d)
+        self.assertIn("plane_bad = True", d)
+        self.assertIn("plane_bad = False", d)                       # reset when the game ends
+        self.assertNotIn("RGOS_GAMEMENU_FB", src)
+
