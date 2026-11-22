@@ -93,18 +93,18 @@ class FrameProfilerTests(unittest.TestCase):
     def test_reports_average_slow_count_and_worst_split(self):
         p = self.make()
         for _ in range(9):
-            p.frame(0.001, 0.004, 0.002, 0.003, "flow/games")  # 10 ms
-        p.frame(0.002, 0.080, 0.010, 0.008, "flow/games")  # 100 ms
+            p.frame(0.001, 0.004, 0.002, 0.003, "xmb/games")  # 10 ms
+        p.frame(0.002, 0.080, 0.010, 0.008, "xmb/games")  # 100 ms
         self.assertEqual(self.out, [])  # nothing until the interval has passed
         self.t[0] = 5.1
-        p.frame(0.001, 0.004, 0.002, 0.003, "flow/games")
+        p.frame(0.001, 0.004, 0.002, 0.003, "xmb/games")
         self.assertEqual(len(self.out), 1)
         line = self.out[0]
         self.assertIn("11 frames", line)
         self.assertIn("1 over 40 ms", line)
         self.assertIn("worst 100 ms", line)
         self.assertIn("draw 80", line)
-        self.assertIn("[flow/games]", line)
+        self.assertIn("[xmb/games]", line)
 
     def test_window_resets_after_a_report(self):
         p = self.make()
