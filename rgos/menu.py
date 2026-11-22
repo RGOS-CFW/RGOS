@@ -1623,42 +1623,50 @@ def _xmb_silk_steps(g, f, t):
         yield
 
 
-def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade):
-    ax, bar_y, big, small, sp_x = 170, int(H * 0.26), 76, 50, 118
-    sp, gap = 56 + max(0, H - 480) // 10, 16
-    for i, (cid, cname) in enumerate(XMB_CATS):
-        d = i - cx_f
-        x = int(round(ax + d * sp_x + max(-1.0, min(1.0, d)) * 24))
-        if x < -60 or x > W + 60:
-            continue
-        t = max(0.0, 1.0 - abs(d))
-        t = t * t * (3.0 - 2.0 * t)
-        size = int(round((small + (big - small) * t) / 4.0)) * 4
-        if t > 0.05:
-            pygame.draw.circle(c, xmb_tint(x, bar_y, 0.09 * t), (x, bar_y), int(size * 0.62))
-        c.blit(xmb_icon(cid, size, _mix(DIM, TEXT, t), 0.5 + 0.5 * t), (x - size // 2, bar_y - size // 2))
-        if t > 0.3:
-            lab = f_row.render(cname, True, _xq(_mix(BG, TEXT, t)))
-            c.blit(lab, (x - lab.get_width() // 2, bar_y + big // 2 + 8))
-    colx = int(round(ax + (cat_i - cx_f) * sp_x))
-    y0 = bar_y + big // 2 + 8 + 26 + sp // 2 + 6
+_XMB_FOCUS = [170, 240]   # screen position of the focused list item (the launch zoom grows from here)
+_XHALO = {}
+
+
+def _xmb_halo(r, level):
+    """Soft round glow behind the focused category icon: concentric discs, cached per radius and intensity step (1..8)."""
+    key = (r, level, tuple(TEXT[:3]))
+    h = _XHALO.get(key)
+    if h is None:
+        if len(_XHALO) > 40:
+            _XHALO.clear()
+        h = pygame.Surface((2 * r, 2 * r), pygame.SRCALPHA)
+        peak = 70.0 * level / 8.0
+        for d in range(r, 0, -2):
+            a = int(peak * (1.0 - d / float(r)) ** 1.5)
+            if a > 0:
+                pygame.draw.circle(h, tuple(TEXT[:3]) + (a,), (r, r), d)
+        _XHALO[key] = h
+    return h
+
+
+def _xmb_column(c, f_row, f_small, colx, y0, sp, gap, items, vy, enter, amul, bump, focus):
+    """One item column. `enter` is seconds since it appeared: items rise and fade in as a cascade that spreads outward
+    from the focused row. amul scales the alpha (used to fade the outgoing column)."""
     for i, it in enumerate(items):
         d = i - vy
         if d < -1.0 or d > 7.0:
             continue
-        y = y0 + d * sp + max(-1.0, min(1.0, d)) * gap
+        p = ease_out_cubic((enter - 0.05 * min(abs(d), 5.0)) / 0.30)
+        y = y0 + d * sp + max(-1.0, min(1.0, d)) * gap + (1.0 - p) * 18.0
         if y > H - 40:
             continue
         sel_t = max(0.0, 1.0 - abs(d))
         sel_t = sel_t * sel_t * (3.0 - 2.0 * sel_t)
-        al = (1.0 + min(0.0, d)) * fade * fade * (3.0 - 2.0 * fade)
+        al = (1.0 + min(0.0, d)) * p * amul
         if d > 0:
             al *= max(0.0, min(1.0, (H - 44 - y) / 30.0))
         if al <= 0.02:
             continue
         al *= 0.80 + 0.20 * sel_t
-        isz = int(round((34 + 14 * sel_t) / 2.0)) * 2
+        isz = int(round((34 + 14 * sel_t + 8 * bump * sel_t) / 2.0)) * 2
         yi = int(round(y))
+        if focus and sel_t > 0.5:
+            _XMB_FOCUS[0], _XMB_FOCUS[1] = colx, yi
         if sel_t > 0.05:
             pygame.draw.circle(c, xmb_tint(colx, y, 0.08 * sel_t * al), (colx, yi), int(isz * 0.62))
         c.blit(xmb_icon(it["icon"], isz, _mix(DIM, TEXT, sel_t), al), (colx - isz // 2, yi - isz // 2))
@@ -1667,10 +1675,52 @@ def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade):
         c.blit(lab, (tx, yi - lab.get_height() // 2 - int(round(10 * sel_t))))
         if sel_t > 0.2 and it.get("sub"):
             sub = f_small.render(fit(f_small, it["sub"], W - tx - 20), True, _xq(_mix(BG, DIM, al * sel_t)))
-            c.blit(sub, (tx, yi + 3))
+            c.blit(sub, (tx + int((1.0 - sel_t) * 12), yi + 3))
+
+
+def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, enter, now=0.0, out=None, bump=0.0, intro=9.0):
+    ax, bar_y, big, small, sp_x = 170, int(H * 0.26), 76, 50, 118
+    sp, gap = 56 + max(0, H - 480) // 10, 16
+    for i, (cid, cname) in enumerate(XMB_CATS):
+        d = i - cx_f
+        x = int(round(ax + d * sp_x + max(-1.0, min(1.0, d)) * 24))
+        if x < -60 or x > W + 60:
+            continue
+        pi = ease_out_cubic((intro - 0.06 * i) / 0.35)      # startup: the bar drops in icon by icon
+        if pi <= 0.01:
+            continue
+        t = max(0.0, 1.0 - abs(d))
+        t = t * t * (3.0 - 2.0 * t)
+        size = int(round((small + (big - small) * t) / 2.0)) * 2
+        by_ = bar_y - int((1.0 - pi) * 18)
+        if t > 0.05:
+            lvl = int(round(8 * t * pi * (0.72 + 0.28 * math.sin(now * 2.4))))
+            if lvl >= 1:
+                c.blit(_xmb_halo(int(big * 0.9), lvl), (x - int(big * 0.9), by_ - int(big * 0.9)))
+            pygame.draw.circle(c, xmb_tint(x, by_, 0.09 * t * pi), (x, by_), int(size * 0.62))
+        c.blit(xmb_icon(cid, size, _mix(DIM, TEXT, t), (0.5 + 0.5 * t) * pi), (x - size // 2, by_ - size // 2))
+        if t > 0.3:
+            lab = f_row.render(cname, True, _xq(_mix(BG, TEXT, t * pi)))
+            c.blit(lab, (x - lab.get_width() // 2, by_ + big // 2 + 8 + int((1.0 - t) * 10)))
+    y0 = bar_y + big // 2 + 8 + 26 + sp // 2 + 6
+    if out is not None:       # the column we just left slides away with the camera and fades out
+        o_cat, o_items, o_vy, o_k = out
+        _xmb_column(c, f_row, f_small, int(round(ax + (o_cat - cx_f) * sp_x)), y0, sp, gap, o_items, o_vy, 9.0, o_k, 0.0, False)
+    _xmb_column(c, f_row, f_small, int(round(ax + (cat_i - cx_f) * sp_x)), y0, sp, gap, items, vy, enter, 1.0, bump, True)
 
 
 _XDD = [None, None]
+_XDD_T = [None, 0.0]
+
+
+def _xdd_blit(c, panel, x, y, dd):
+    if _XDD_T[0] is not dd:
+        _XDD_T[0], _XDD_T[1] = dd, time.monotonic()
+    p = ease_out_cubic((time.monotonic() - _XDD_T[1]) / 0.18)
+    if p < 1.0:
+        _anim_clock[2] = True
+    panel.set_alpha(int(255 * p))
+    c.blit(panel, (x, y + int((1.0 - p) * 12)))
 
 
 def draw_xmb_dropdown(c, f_small, dd, opts):
@@ -1682,7 +1732,7 @@ def draw_xmb_dropdown(c, f_small, dd, opts):
     acc = tuple(ACCENT)[:3]
     key = (dd["sel"], dd["orig"], dd.get("kind"), first, vis, w, h, acc, tuple(TEXT), tuple(DIM), len(opts), f_small)
     if _XDD[0] == key:
-        c.blit(_XDD[1], (x, y))
+        _xdd_blit(c, _XDD[1], x, y, dd)
         return
     panel = pygame.Surface((w, h), pygame.SRCALPHA)
     pygame.draw.rect(panel, (0, 0, 0, 222), (0, 0, w, h), border_radius=12)
@@ -1707,7 +1757,7 @@ def draw_xmb_dropdown(c, f_small, dd, opts):
         if first + vis < len(opts):
             pygame.draw.polygon(panel, acc, [(w - 8, h - 12), (w - 14, h - 18), (w - 2, h - 18)])
     _XDD[0], _XDD[1] = key, panel
-    c.blit(panel, (x, y))
+    _xdd_blit(c, panel, x, y, dd)
 
 
 FONT_PATH = [None]
@@ -2722,7 +2772,8 @@ def main():
             return "Download covers from SteamGridDB   A opens it (free API key needed)"
         return "SteamGridDB covers are %s   A opens it" % ("shown" if art_on() else "hidden")
     dd = None
-    xmb_cat, xmb_sel, xmb_cx, xmb_vy, xmb_fade = XMB_START, {}, float(XMB_START), 0.0, 1.0
+    xmb_cat, xmb_sel, xmb_cx, xmb_vy, xmb_fade = XMB_START, {}, float(XMB_START), 0.0, 0.0   # xmb_fade: seconds since the column appeared
+    xmb_out, xmb_press, xmb_intro = None, -9.0, None
     xmb_cv, xmb_vv = 0.0, 0.0
     xmb_ret = [False]
     pending_acts = []
@@ -2898,6 +2949,8 @@ def main():
     fx_view, fx_snap, fx_trans = [None], [None], [0.0, 1]
     fx_home_t0, fx_tiles = [None], {}
     fx_lpos, fx_lscroll, fx_lkey, fx_dkey = Spring(), Spring(), [None], [None, 0.0]
+    fx_cur = [Spring(), Spring(), False]                       # gliding focus glow of the RG OS home grid
+    fx_tkey, fx_tsnap, fx_tt0 = [(theme_id, launcher_id)], [None], [0.0]   # theme / launcher cross-fade
     prof = FrameProfiler(os.environ.get("RGOS_PROFILE") == "1", log)
     while code is None:
         if os.path.exists(SCREENOFF_FILE):
@@ -2991,15 +3044,21 @@ def main():
                 cur = min(xmb_sel.get(cat, 0), len(items) - 1)
                 if a in ("left", "right", "l", "r"):
                     new = max(0, min(len(XMB_CATS) - 1, xmb_cat + (1 if a in ("right", "r") else -1)))
+                    if new == xmb_cat:
+                        xmb_cv += 7.0 * (1 if a in ("right", "r") else -1)   # rubber-band nudge at the end of the bar
                     if new != xmb_cat:
+                        xmb_out = (xmb_cat, items, xmb_vy)
                         xmb_cat, xmb_fade = new, 0.0
                         xmb_vy, xmb_vv = float(xmb_sel.get(XMB_CATS[new][0], 0)), 0.0
                 elif a in ("up", "down"):
                     xmb_sel[cat] = max(0, min(len(items) - 1, cur + (1 if a == "down" else -1)))
+                    if xmb_sel[cat] == cur:
+                        xmb_vv += 7.0 * (1 if a == "down" else -1)
                 elif a == "y" and items and items[cur]["act"] and items[cur]["act"][0] == "setting" and SETTINGS_ROWS[items[cur]["act"][1]] == "splash":
                     play_splash("silent" if splash.mode_of(state) == "silent" else "on")
                 elif a == "a" and items and items[cur]["act"]:
                     act = items[cur]["act"]
+                    xmb_press = time.monotonic()
                     if act[0] == "system":
                         sys_idx, view = act[1], "games"
                     elif act[0] == "launch":
@@ -3448,9 +3507,13 @@ def main():
             _BOOST.poke()
         _BOOST.tick()
         XMB_UI[0] = launcher_id == "xmb"
+        if (theme_id, launcher_id) != fx_tkey[0]:
+            if fx_tkey[0][1] != launcher_id:      # new launcher style: replay its entrance
+                fx_home_t0[0], xmb_fade, xmb_intro = None, 0.0, None
+            fx_tsnap[0], fx_tt0[0], fx_tkey[0] = canvas.copy(), time.monotonic(), (theme_id, launcher_id)
         CLASSIC_UI[0], CLASSIC_UI[1] = launcher_id == "rgclassic", classic_unit()
 
-        if launcher_id == "rgos":
+        if launcher_id in ("rgos", "xmb"):
             if fx_view[0] is not None and view != fx_view[0]:
                 fx_snap[0] = canvas.copy()
                 fx_trans[0] = time.monotonic()
@@ -3553,10 +3616,18 @@ def main():
             xdt = _anim_clock[1]
             xmb_cx, xmb_cv = _smooth_damp(xmb_cx, xmb_cv, xmb_cat, xdt)
             xmb_vy, xmb_vv = _smooth_damp(xmb_vy, xmb_vv, xmb_sel[xcat], xdt)
-            xmb_fade = min(1.0, xmb_fade + xdt * 6.0)
-            if xmb_cx != xmb_cat or xmb_vy != xmb_sel[xcat] or xmb_fade < 1.0:
+            xmb_fade = min(5.0, xmb_fade + xdt)
+            xnow = time.monotonic()
+            if xmb_intro is None:
+                xmb_intro = xnow
+            xk = 1.0 - xmb_fade / 0.16
+            if xk <= 0.0:
+                xmb_out = None
+            xbump = math.sin(math.pi * max(0.0, min(1.0, (xnow - xmb_press) / 0.28)))
+            if xmb_cx != xmb_cat or xmb_vy != xmb_sel[xcat] or xmb_fade < 0.7 or xnow - xmb_intro < 0.8 or xnow - xmb_press < 0.28:
                 _anim_clock[2] = True
-            draw_xmb_home(canvas, f_row, f_small, xmb_cx, xmb_cat, xitems, xmb_vy, xmb_fade)
+            draw_xmb_home(canvas, f_row, f_small, xmb_cx, xmb_cat, xitems, xmb_vy, xmb_fade, xnow,
+                          (xmb_out + (xk,)) if xmb_out else None, xbump, xnow - xmb_intro)
             hint = "Left/Right Category   Up/Down Item   A Open   X Rescan"
             if dd is not None:
                 draw_xmb_dropdown(canvas, f_small, dd, dd_options(dd["kind"]))
@@ -3591,6 +3662,19 @@ def main():
             fx_on, now_ = launcher_id == "rgos", time.monotonic()
             if fx_home_t0[0] is None:
                 fx_home_t0[0] = now_
+            if fx_on and bh >= 80:
+                gx_, gy_ = x0 + (home_idx % HOME_COLS) * (bw + gap), top_y + (home_idx // HOME_COLS) * (bh + gap)
+                if not fx_cur[2]:
+                    fx_cur[0].snap(gx_)
+                    fx_cur[1].snap(gy_)
+                    fx_cur[2] = True
+                if fx_cur[0].step(gx_, _anim_clock[1], 26.0, 0.75) | fx_cur[1].step(gy_, _anim_clock[1], 26.0, 0.75):
+                    _anim_clock[2] = True
+                gip_ = ease_out_cubic((now_ - fx_home_t0[0] - 0.07 * home_idx) / 0.4)
+                glow_ = int(round(8 * gip_ * (0.8 + 0.2 * (0.5 + 0.5 * math.sin(now_ * 2.6)))))
+                if glow_ > 0:
+                    canvas.blit(_glow_face(bw, bh, 18, ACCENT, glow_),
+                                (int(fx_cur[0].x) - GLOW_PAD, int(fx_cur[1].x) - int(LIFT_PX * 1.5) - GLOW_PAD + int((1.0 - gip_) * 30)))
             for i, (hid, hname) in enumerate(HOME_ITEMS):
                 bx, by, sel = x0 + (i % HOME_COLS) * (bw + gap), top_y + (i // HOME_COLS) * (bh + gap), i == home_idx
                 pop, ip_ = (1.0 if sel else 0.0), 1.0
@@ -3605,10 +3689,6 @@ def main():
                     if ip_ < 1.0:
                         _anim_clock[2] = True
                         by += int((1.0 - ip_) * 30)
-                    glow_ = int(round(8 * min(1.0, pop) * (0.8 + 0.2 * (0.5 + 0.5 * math.sin(now_ * 2.6)))))
-                    if glow_ > 0 and bh >= 80:
-                        canvas.blit(_glow_face(bw, bh, 18, ACCENT, glow_),
-                                    (bx - GLOW_PAD, by - int(round(LIFT_PX * (1.5 * pop))) - GLOW_PAD))
                 hl, lift = draw_button(canvas, (bx, by, bw, bh), SEL_BG if sel else PANEL, 18, 6, sel, 1.5 * pop if fx_on else None)
                 by -= lift
                 isc_ = 1.0 + 0.14 * pop if fx_on else 1.0
@@ -4119,7 +4199,7 @@ def main():
 
             sys_rows = 6 + DY // 56
             sys_first = max(0, min(sys_idx - sys_rows // 2, len(vsys) - sys_rows))
-            if launcher_id == "rgos":
+            if launcher_id in ("rgos", "xmb"):
                 if fx_lkey[0] != "systems":
                     fx_lkey[0] = "systems"
                     fx_lpos.snap(sys_idx)
@@ -4159,7 +4239,7 @@ def main():
                             (px + 15, top_y + 300 + DY))
                 canvas.blit(f_small.render("Native Linux games" if score == "native" else "RetroArch + " + core_label(sid, state), True, DIM), (px + 15, top_y + 322 + DY))
 
-            if launcher_id == "rgos" and vsys:
+            if launcher_id in ("rgos", "xmb") and vsys:
                 dk_ = ("systems", sys_idx)
                 if fx_dkey[0] != dk_:
                     fx_dkey[0], fx_dkey[1] = dk_, time.monotonic()
@@ -4193,7 +4273,7 @@ def main():
         else:
 
             first = max(0, min(idx - rows // 2, len(games) - rows))
-            if launcher_id == "rgos":
+            if launcher_id in ("rgos", "xmb"):
                 lk_ = (view, sid if view == "games" else "")
                 if fx_lkey[0] != lk_:
                     fx_lkey[0] = lk_
@@ -4262,7 +4342,7 @@ def main():
                     canvas.blit(f_small.render(_line, True, DIM), (px + 15, ty_ + 2))
                     ty_ += _lh
 
-            if launcher_id == "rgos":
+            if launcher_id in ("rgos", "xmb"):
                 dk_ = (view, sid if view == "games" else "", idx)
                 if fx_dkey[0] != dk_:
                     fx_dkey[0], fx_dkey[1] = dk_, time.monotonic()
@@ -4286,8 +4366,16 @@ def main():
 
         if fx_snap[0] is not None:
             p_ = (time.monotonic() - fx_trans[0]) / FX_TRANS_S
-            if p_ >= 1.0 or launcher_id != "rgos":
+            if p_ >= 1.0 or launcher_id not in ("rgos", "xmb"):
                 fx_snap[0] = None
+            elif launcher_id == "xmb":
+                # the old screen lifts away (deeper) or sinks (back) while dissolving over the new one
+                _anim_clock[2] = True
+                e_, d_ = ease_out_cubic(p_), fx_trans[1]
+                fx_snap[0].set_alpha(int(255 * (1.0 - ease_out_cubic(min(1.0, p_ / 0.85)))))
+                canvas.set_clip(pygame.Rect(0, FX_TOP, W, H - FX_TOP))
+                canvas.blit(fx_snap[0], (0, int(-d_ * 26 * e_)))
+                canvas.set_clip(None)
             else:
                 _anim_clock[2] = True
                 e_, d_ = ease_out_cubic(p_), fx_trans[1]
@@ -4300,6 +4388,14 @@ def main():
                     canvas.blit(fx_snap[0], (int(-d_ * 56 * e_), FX_TOP), area_)
                 new_.set_alpha(an_)
                 canvas.blit(new_, (int(d_ * 90 * (1.0 - e_)), FX_TOP), area_)
+        if fx_tsnap[0] is not None:
+            q_ = (time.monotonic() - fx_tt0[0]) / 0.45
+            if q_ >= 1.0:
+                fx_tsnap[0] = None
+            else:
+                _anim_clock[2] = True
+                fx_tsnap[0].set_alpha(int(255 * (1.0 - ease_out_cubic(q_))))
+                canvas.blit(fx_tsnap[0], (0, 0))
         bri = rd_bri()
         if bri and bri[1] != bri_seen:
             if bri_seen is not None:
@@ -4324,15 +4420,19 @@ def main():
         clock.tick(60 if anim_moving or (time.monotonic() - last_act < 0.5) else (15 if idle else 30))
 
 
-    if code == EXIT_LAUNCH and launcher_id == "rgos":
-        # a short zoom-and-fade so starting a game feels like the screen is being pulled into it
+    if code == EXIT_LAUNCH and launcher_id in ("rgos", "xmb"):
+        # a short zoom-and-fade so starting a game feels like the screen is being pulled into it;
+        # on the XMB it grows out of the focused row instead of the screen centre
         last_f, shade = canvas.copy(), pygame.Surface((W, H))
-        for i_ in range(1, 13):
-            k_ = i_ / 12.0
-            z_ = 1.0 + 0.09 * k_ * k_
+        xz_ = launcher_id == "xmb"
+        ox_, oy_ = _XMB_FOCUS if (xz_ and view == "home") else (W // 2, H // 2)
+        n_z = 16 if xz_ else 12
+        for i_ in range(1, n_z + 1):
+            k_ = i_ / float(n_z)
+            z_ = 1.0 + (0.22 if xz_ else 0.09) * k_ * k_
             zs_ = pygame.transform.smoothscale(last_f, (int(W * z_), int(H * z_)))
             canvas.fill((0, 0, 0))
-            canvas.blit(zs_, ((W - zs_.get_width()) // 2, (H - zs_.get_height()) // 2))
+            canvas.blit(zs_, (int(ox_ * (1.0 - z_)), int(oy_ * (1.0 - z_))))
             shade.set_alpha(int(255 * k_ * k_))
             canvas.blit(shade, (0, 0))
             present()
