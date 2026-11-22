@@ -5,6 +5,20 @@ Font and icon data come from GallaCFW's galla-pixel.h. Only the six icons the
 stock launcher needs are included (no Information / Restart). The screen is
 drawn on a 240-wide logical surface and scaled up with nearest-neighbour so
 pixels stay crisp on every RG OS canvas.
+
+Animation (all pixel-snapped, no sub-pixel blending of the art itself):
+  * entrance   tiles pop in with a staggered overshoot, header/footer slide in,
+               label bar wipes open, description fades up. Replays (faster)
+               whenever the launcher comes back after not being drawn.
+  * cursor     one focus box on a damped spring that glides between tiles with
+               a hop arc, squash/stretch along the travel axis and a ghost
+               trail; wrapping at a row edge flies the cursor in from the side.
+  * focus      pulsing border, periodic diagonal shine, twinkle sparkles,
+               bobbing icon.
+  * label      old name slides out / new name slides in in the move direction,
+               arrows kick on a press, description fades in after.
+  * ambience   3-layer parallax embers with flicker, slow scanline sweep,
+               blinking clock colon, low-battery blink, charging pulse.
 """
 import math, random, time
 import pygame
@@ -169,18 +183,55 @@ def _glyph(ch):
     return o if 0 <= o < 95 else 31          # unknown -> '?'
 
 
+def _mix(a, b, t):
+    return tuple(int(a[i] + (b[i] - a[i]) * t + 0.5) for i in range(3))
+
+
+def _c01(v):
+    return 0.0 if v < 0.0 else 1.0 if v > 1.0 else v
+
+
+def _out_cubic(p):
+    p = _c01(p)
+    return 1.0 - (1.0 - p) ** 3
+
+
+def _out_back(p, c1=1.9):
+    p = _c01(p)
+    q = p - 1.0
+    return 1.0 + (c1 + 1.0) * q * q * q + c1 * q * q
+
+
+SPRING_K, SPRING_C = 784.0, 39.0       # ~28 rad/s, damping ratio 0.7 -> ~5% overshoot
+
+
 class Classic:
     def __init__(self, w, h):
         self.W, self.H = w, h
         self.LH = max(120, h * LW // w)
         self.s = pygame.Surface((LW, self.LH))
         self._gc, self._ic = {}, {}
-        self.zoom = {}
+        self._rc, self._tmps = {}, {}
+        self.zoom = {}                            # kept for subclasses that touch it
         self.t0 = self.last = time.monotonic()
+        self.intro, self.intro_speed = None, 1.0
+        self._sel = None
+        self.cur = None                           # [x, y, vx, vy] focus box, logical px
+        self.move_dist, self.trail, self.ghosts = 1.0, [], []
+        self.lbl_old, self.lbl_t0, self.lbl_dir = None, -9.0, (0, 0)
+        self.kick_t0 = -9.0
+        self._spark = (None, 0, 0)
         rnd = random.Random(7)
-        self.embers = [[rnd.uniform(0, LW), rnd.uniform(0, self.LH), rnd.uniform(4, 13),
-                        rnd.uniform(0, 6.28), 1 + (rnd.random() < 0.2)] for _ in range(22)]
+        # x, y, speed, phase, layer (0 far .. 2 near)
+        self.embers = [[rnd.uniform(0, LW), rnd.uniform(0, self.LH), 0, rnd.uniform(0, 6.28), i % 3]
+                       for i in range(30)]
+        for e in self.embers:
+            e[2] = (4.0, 8.0, 14.0)[e[4]] * rnd.uniform(0.8, 1.25)
         self._bake_bg()
+
+    def replay_intro(self, fast=True):
+        self.intro, self.intro_speed = time.monotonic(), 1.6 if fast else 1.0
+        self._sel = None
 
     # ---- assets
     def _bake_bg(self):
@@ -224,28 +275,68 @@ class Classic:
             self._ic[k] = sf
         return sf
 
+    def _icon_s(self, hid, dim, sz):
+        """Scaled icon, cached in _ic so a subclass clearing _ic on a theme change drops these too."""
+        k = ("s", hid, dim, sz)
+        sf = self._ic.get(k)
+        if sf is None:
+            sf = self._icon(hid, dim)
+            if sz != 16:
+                sf = pygame.transform.scale(sf, (sz, sz))
+            self._ic[k] = sf
+        return sf
+
+    def _tmp(self, w, h):
+        sf = self._tmps.get((w, h))
+        if sf is None:
+            sf = self._tmps[(w, h)] = pygame.Surface((w, h), pygame.SRCALPHA)
+        sf.fill((0, 0, 0, 0))
+        sf.set_alpha(255)
+        return sf
+
+    def _text_on(self, sf, *a, **kw):
+        real, self.s = self.s, sf
+        try:
+            self.text(*a, **kw)
+        finally:
+            self.s = real
+
     # ---- primitives (all in logical pixels)
     def rect(self, x, y, w, h, col, a=255):
-        if w <= 0 or h <= 0:
+        if w <= 0 or h <= 0 or a <= 0:
             return
         if a >= 255:
             self.s.fill(col, (x, y, w, h))
-        else:
+            return
+        k = (w, h, col, a)
+        r = self._rc.get(k)
+        if r is None:
+            if len(self._rc) > 400:
+                self._rc.clear()
             r = pygame.Surface((w, h))
             r.fill(col)
             r.set_alpha(a)
-            self.s.blit(r, (x, y))
+            self._rc[k] = r
+        self.s.blit(r, (x, y))
 
     def pbox(self, x, y, w, h, fill, border):
         self.rect(x + 1, y, w - 2, h, border)
         self.rect(x, y + 1, w, h - 2, border)
         self.rect(x + 1, y + 1, w - 2, h - 2, fill)
 
+    def outline(self, x, y, w, h, col, a):
+        self.rect(x + 1, y, w - 2, 1, col, a)
+        self.rect(x + 1, y + h - 1, w - 2, 1, col, a)
+        self.rect(x, y + 1, 1, h - 2, col, a)
+        self.rect(x + w - 1, y + 1, 1, h - 2, col, a)
+
     @staticmethod
     def text_w(t, sc=1):
         return len(t) * ADV * sc
 
-    def text(self, t, x, y, col=WHITE, sc=1, align=0, bold=False):
+    def text(self, t, x, y, col=None, sc=1, align=0, bold=False):
+        if col is None:
+            col = WHITE
         w = self.text_w(t, sc)
         x -= (w // 2 if align == 1 else w if align == 2 else 0)
         for i, ch in enumerate(t):
@@ -265,41 +356,83 @@ class Classic:
         self.rect(x + 1, y + 9, 9, 2, DIM)
         self.text(ch, x + 3, y + 2, REDM)
 
-    # ---- screen
-    def draw(self, canvas, items, descs, sel, clk, bat, hints, cols=3):
-        """items: [(id, label)]; descs: {id: text}; bat: (pct, status) or None."""
-        now = time.monotonic()
-        dt = min(0.1, now - self.last)
-        self.last = now
-        t = now - self.t0
-        s, LH = self.s, self.LH
-        s.blit(self.bg, (0, 0))
+    # ---- pieces
+    def _embers(self, dt, t):
+        LH = self.LH
         for e in self.embers:
             e[1] -= e[2] * dt
             if e[1] < -3:
                 e[1], e[0] = LH + 2, random.uniform(0, LW)
-            x = int(e[0] + 3 * math.sin(t * 0.7 + e[3]))
-            self.rect(x, int(e[1]), e[4], e[4], REDL if int(e[3] * 10) & 1 else RED, 110 if e[4] > 1 else 80)
+            lay = e[4]
+            x = int(e[0] + (2 + 1.5 * lay) * math.sin(t * (0.6 + 0.25 * lay) + e[3]))
+            y = int(e[1])
+            fl = 0.5 + 0.5 * math.sin(t * 5.0 + e[3] * 7.0)
+            a = 40 + 28 * lay + int(46 * fl)
+            if y < 30:                                    # fade out near the top
+                a = a * max(0, y) // 30
+            col = REDL if lay == 2 and fl > 0.5 else RED
+            self.rect(x, y, 2 if lay == 2 else 1, 2 if lay == 2 else 1, col, a // 16 * 16)
 
-        # header: clock left, battery right
-        self.text(clk, 8, 6)
+    def _header(self, clk, bat, now, oy):
+        if int(now) & 1:
+            clk = clk.replace(":", " ")                   # blinking colon, width stays fixed
+        self.text(clk, 8, 6 + oy)
         if bat:
             pct, status = bat
             chg = status.lower() == "charging"
-            fill = REDL if pct <= 15 and not chg else WHITE
-            bx, by = LW - 8 - 16, 6
+            low = pct <= 15 and not chg
+            fill = REDL if low else WHITE
+            bx, by = LW - 8 - 16, 6 + oy
             self.rect(bx, by, 15, 1, WHITE); self.rect(bx, by + 6, 15, 1, WHITE)
             self.rect(bx, by, 1, 7, WHITE); self.rect(bx + 14, by, 1, 7, WHITE)
             self.rect(bx + 15, by + 2, 1, 3, WHITE)
-            self.rect(bx + 2, by + 2, max(1, min(11, 11 * pct // 100)), 3, fill)
+            n = max(1, min(11, 11 * pct // 100))
+            if not low or int(now * 3) & 1:               # low battery blinks
+                self.rect(bx + 2, by + 2, n, 3, fill)
+            if chg and n < 11 and int(now * 2.5) & 1:     # charging: leading cell pulses
+                self.rect(bx + 2 + n, by + 2, 1, 3, REDL)
             if chg:
-                self.rect(bx + 6, by + 1, 1, 2, RED); self.rect(bx + 5, by + 3, 3, 1, RED)
-                self.rect(bx + 7, by + 4, 1, 2, RED)
+                bc = RED if int(now * 2) & 1 else REDL
+                self.rect(bx + 6, by + 1, 1, 2, bc); self.rect(bx + 5, by + 3, 3, 1, bc)
+                self.rect(bx + 7, by + 4, 1, 2, bc)
             self.text("%d%%" % pct, bx - 4, by, WHITE, 1, 2)
-        self.rect(0, 19, LW, 1, REDM)
-        self.rect(0, 20, LW, 1, BLACK)
+        self.rect(0, 19 + oy, LW, 1, REDM)
+        self.rect(0, 20 + oy, LW, 1, BLACK)
 
-        # tile grid
+    def _on_move(self, old, new, cols, nrows, pos, tw, th, gap, rgap, now):
+        oc, orow, nc, nr = old % cols, old // cols, new % cols, new // cols
+        dc, dr = nc - oc, nr - orow
+        wrap_x = cols > 2 and abs(dc) == cols - 1
+        wrap_y = nrows > 2 and abs(dr) == nrows - 1
+        dx = (-1 if dc > 0 else 1) if wrap_x else (dc > 0) - (dc < 0)
+        dy = (-1 if dr > 0 else 1) if wrap_y else (dr > 0) - (dr < 0)
+        if dx and dy:
+            dy = 0
+        self.lbl_dir, self.lbl_t0, self.kick_t0 = (dx, dy), now, now
+        tx, ty = pos(new)
+        if wrap_x or wrap_y:
+            ox, oy = pos(old)                              # old box pops out, new one flies in from behind
+            self.ghosts.append((ox, oy, tw, th, now))
+            self.cur[0], self.cur[1] = tx - dx * (tw + gap), ty - dy * (th + rgap)
+            self.cur[2], self.cur[3] = dx * 160.0, dy * 160.0
+        self.move_dist = max(1.0, math.hypot(tx - self.cur[0], ty - self.cur[1]))
+
+    # ---- screen
+    def draw(self, canvas, items, descs, sel, clk, bat, hints, cols=3):
+        """items: [(id, label)]; descs: {id: text}; bat: (pct, status) or None."""
+        now = time.monotonic()
+        gap_t = now - self.last
+        dt = min(0.1, gap_t)
+        self.last = now
+        if self.intro is None:
+            self.intro, self.intro_speed = now, 1.0
+        elif gap_t > 0.4:                                  # came back to the home screen
+            self.intro, self.intro_speed, self._sel = now, 1.6, None
+        ti = (now - self.intro) * self.intro_speed
+        t = now - self.t0
+        s, LH = self.s, self.LH
+
+        # ---- layout
         n = len(items)
         rows = (n + cols - 1) // cols
         gap, rgap, tw = 8, 8, 64
@@ -308,47 +441,182 @@ class Classic:
         gx = (LW - (cols * tw + (cols - 1) * gap)) // 2
         content = rows * th + (rows - 1) * rgap + 6 + 22 + 12
         gy = max(26, 21 + (LH - 25 - 21 - content) // 2)
-        bob = int(now * 1000 / 380) & 1
-        for sp in range(2):                       # unfocused first, focused on top
-            for i, (hid, _lbl) in enumerate(items):
-                if (i == sel) != bool(sp):
-                    continue
-                z = self.zoom.get(i, 0.0)
-                z += ((1.0 if i == sel else 0.0) - z) * (1 - math.exp(-dt * 16))
-                self.zoom[i] = z
-                x = gx + (i % cols) * (tw + gap)
-                y = gy + (i // cols) * (th + rgap) - int(z * 3 + 0.5)
-                ix, iy = x + (tw - isz) // 2, y + (th - isz) // 2
-                self.rect(x + 2, y + 2, tw, th, BLACK, 150 if i == sel else 90)
-                if i == sel:
-                    self.pbox(x, y, tw, th, RED, WHITE)
-                    self.rect(x + 3, y + 2, tw - 6, 1, REDL)
-                    s.blit(pygame.transform.scale(self._icon(hid, False), (isz, isz)), (ix, iy - bob))
-                else:
-                    self.pbox(x, y, tw, th, PANEL, REDM)
-                    s.blit(pygame.transform.scale(self._icon(hid, True), (isz, isz)), (ix, iy))
-
-        # label bar
         bw = cols * tw + (cols - 1) * gap
         by = gy + rows * th + (rows - 1) * rgap + 6
-        self.rect(gx + 2, by + 2, bw, 22, BLACK, 120)
-        self.pbox(gx, by, bw, 22, REDM, REDL)
-        hid, lbl = items[sel]
-        self.text(lbl, gx + bw // 2, by + 2, WHITE, 2, 1, True)
-        self.glyph(GLYPH_LEFT, gx + 6 - bob, by + 7, REDL)
-        self.glyph(GLYPH_RIGHT, gx + bw - 11 + bob, by + 7, REDL)
-        d = descs.get(hid, "")[:bw // ADV]
-        self.text(d, LW // 2, by + 24, DIM, 1, 1)
 
-        # footer hints
-        fy = LH - 8 - 11
+        def pos(i):
+            return gx + (i % cols) * (tw + gap), gy + (i // cols) * (th + rgap)
+
+        # ---- selection change / cursor spring
+        tx, ty = pos(sel)
+        if self.cur is None or self._sel is None:
+            self.cur = [float(tx), float(ty), 0.0, 0.0]
+            self.lbl_old, self.trail, self.ghosts = None, [], []
+        elif sel != self._sel:
+            self.lbl_old = items[self._sel][1] if self._sel < n else None
+            self._on_move(self._sel, sel, cols, rows, pos, tw, th, gap, rgap, now)
+        self._sel = sel
+        x, y, vx, vy = self.cur
+        steps = max(1, int(dt / 0.008) + 1)
+        h = dt / steps
+        for _ in range(steps):
+            vx += ((tx - x) * SPRING_K - vx * SPRING_C) * h
+            vy += ((ty - y) * SPRING_K - vy * SPRING_C) * h
+            x += vx * h
+            y += vy * h
+        self.cur = [x, y, vx, vy]
+        speed = math.hypot(vx, vy)
+        self.trail.append((now, x, y))
+        while self.trail and now - self.trail[0][0] > 0.2:
+            self.trail.pop(0)
+
+        # ---- background + ambience
+        s.blit(self.bg, (0, 0))
+        self._embers(dt, t)
+        sy = int((t % 6.0) / 6.0 * (LH + 24)) - 12          # slow CRT-ish scanline sweep
+        self.rect(0, sy, LW, 2, WHITE, 16)
+        self.rect(0, sy + 2, LW, 1, WHITE, 16)
+
+        # ---- header (slides down)
+        self._header(clk, bat, now, -int(22 * (1.0 - _out_cubic(ti / 0.30))))
+
+        # ---- tiles
+        bob = int(now * 1000 / 380) & 1
+        cur_in = _out_back((ti - 0.55) / 0.22, 2.6)
+        box_x, box_y = int(x + 0.5), int(y + 0.5)
+        rem0 = math.hypot(tx - x, ty - y)
+        settled = speed < 60 and rem0 < 1.5
+        focus = -1
+        if cur_in > 0.0:
+            for i in range(n):
+                px, py = pos(i)
+                ox = max(0.0, min(box_x + tw, px + tw) - max(box_x, px)) / tw
+                oy = max(0.0, min(box_y + th, py + th) - max(box_y, py)) / th
+                if ox * oy > 0.5:
+                    focus = i
+                    break
+        for i, (hid, _lbl) in enumerate(items):
+            if i == focus and settled:
+                continue
+            p = _out_back((ti - (0.12 + 0.07 * i)) / 0.30)
+            if p <= 0.05:
+                continue
+            px, py = pos(i)
+            w2, h2 = max(3, int(tw * p + 0.5)), max(3, int(th * p + 0.5))
+            x2, y2 = px + (tw - w2) // 2, py + (th - h2) // 2
+            self.rect(x2 + 2, y2 + 2, w2, h2, BLACK, 90)
+            self.pbox(x2, y2, w2, h2, PANEL, REDM)
+            if p > 0.55:
+                sz = isz if p >= 0.999 else max(4, int(isz * min(p, 1.0)) // 2 * 2)
+                if i != focus:
+                    s.blit(self._icon_s(hid, True, sz), (px + (tw - sz) // 2, py + (th - sz) // 2))
+
+        # ---- focus cursor: shadow, spring box, shine, sparkles, riding icon
+        if cur_in > 0.0:
+            rem = math.hypot(tx - x, ty - y)
+            arc = int(math.sin(math.pi * _c01(1.0 - rem / self.move_dist)) * 3 + 0.5) if rem > 0.5 else 0
+            svx, svy = min(4, int(abs(vx) / 110)), min(3, int(abs(vy) / 110))
+            w2, h2 = int((tw + svx) * cur_in + 0.5), int((th + svy) * cur_in + 0.5)
+            cx = box_x + tw // 2 - w2 // 2
+            cy = box_y + th // 2 - h2 // 2 - 2 - arc
+            self.rect(cx + 2, box_y + th // 2 - h2 // 2 + 2, w2, h2, BLACK, 150 if arc == 0 else 105)
+            # ghost trail while it moves quickly
+            if speed > 140:
+                for lag, a in ((0.045, 120), (0.09, 60)):
+                    older = [q for q in self.trail if q[0] <= now - lag]
+                    if older:
+                        q = older[-1]
+                        if math.hypot(q[1] - x, q[2] - y) > 5:
+                            self.outline(int(q[1] + 0.5), int(q[2] + 0.5) - 2, tw, th, REDL, a)
+            for gh in self.ghosts[:]:                      # popped-out box from a wrap-around
+                gp = (now - gh[4]) / 0.20
+                if gp >= 1.0:
+                    self.ghosts.remove(gh)
+                    continue
+                gw, ghh = max(4, int(gh[2] * (1 - gp))), max(4, int(gh[3] * (1 - gp)))
+                self.outline(gh[0] + (gh[2] - gw) // 2, gh[1] + (gh[3] - ghh) // 2 - 2, gw, ghh, WHITE, int(200 * (1 - gp)) // 16 * 16)
+            moving = speed > 60 or rem > 1.5
+            border = WHITE if moving else _mix(WHITE, REDL, 0.55 * (0.5 + 0.5 * math.sin(t * 5.0)))
+            self.pbox(cx, cy, w2, h2, RED, border)
+            self.rect(cx + 3, cy + 2, w2 - 6, 1, REDL)
+            if not moving and cur_in >= 1.0:
+                ph = (t % 2.8) / 0.55                      # diagonal shine sweep
+                if ph < 1.0:
+                    sx0 = cx - 6 + int(ph * (w2 + 12))
+                    for r in range(2, h2 - 2):
+                        a0, b0 = max(sx0 - r // 2, cx + 2), min(sx0 - r // 2 + 3, cx + w2 - 2)
+                        if b0 > a0:
+                            self.rect(a0, cy + r, b0 - a0, 1, WHITE, 64)
+                bk = int(t / 0.85)                         # twinkle sparkle
+                if self._spark[0] != bk:
+                    rr = random.Random(bk * 7 + 3)
+                    self._spark = (bk, rr.randrange(8, max(9, w2 - 8)), rr.randrange(6, max(7, h2 - 6)))
+                sp = (t % 0.85) / 0.85
+                spx, spy = cx + self._spark[1], cy + self._spark[2]
+                if sp < 0.15 or 0.35 <= sp < 0.55:
+                    self.rect(spx, spy, 1, 1, WHITE)
+                elif sp < 0.35:
+                    self.rect(spx - 1, spy, 3, 1, WHITE); self.rect(spx, spy - 1, 1, 3, WHITE)
+            if focus >= 0 and cur_in > 0.6:
+                sz = isz
+                s.blit(self._icon_s(items[focus][0], False, sz),
+                       (cx + (w2 - sz) // 2, cy + (h2 - sz) // 2 - (0 if moving else bob)))
+
+        # ---- label bar (wipes open, names slide, arrows kick)
+        bar_e = _out_cubic((ti - 0.45) / 0.30)
+        wl = int(bw * bar_e)
+        if wl >= 4:
+            bx0 = gx + (bw - wl) // 2
+            self.rect(bx0 + 2, by + 2, wl, 22, BLACK, 120)
+            self.pbox(bx0, by, wl, 22, REDM, REDL)
+        hid, lbl = items[sel]
+        if bar_e >= 1.0:
+            dx, dy = self.lbl_dir
+            p = _c01((now - self.lbl_t0) / 0.30)
+            lw_ = bw - 28
+            sf = self._tmp(lw_, 20)
+            mid = lw_ // 2
+            nx = ny = 0
+            if p < 1.0 and self.lbl_old is not None:
+                # old name leaves first (ease-in), then the new one arrives (ease-out): never overlap
+                q1 = _c01(p / 0.45)
+                q2 = _out_cubic((p - 0.40) / 0.60)
+                dist_x, dist_y = mid + 62, 20
+                if p < 0.45:
+                    self._text_on(sf, self.lbl_old, mid + int(-dx * dist_x * q1 * q1), 1 + int(-dy * dist_y * q1 * q1), WHITE, 2, 1, True)
+                if p > 0.40:
+                    nx, ny = int(dx * dist_x * (1 - q2)), int(dy * dist_y * (1 - q2))
+                    self._text_on(sf, lbl, mid + nx, 1 + ny, WHITE, 2, 1, True)
+            else:
+                self._text_on(sf, lbl, mid, 1, WHITE, 2, 1, True)
+            s.blit(sf, (gx + 14, by + 1))
+            kp = max(0.0, 1.0 - (now - self.kick_t0) / 0.20)
+            kk = int(3 * kp + 0.5)
+            lcol = WHITE if kp > 0 else REDL
+            self.glyph(GLYPH_LEFT, gx + 6 - bob - (kk if dx < 0 else 0), by + 7, lcol if dx <= 0 else REDL)
+            self.glyph(GLYPH_RIGHT, gx + bw - 11 + bob + (kk if dx > 0 else 0), by + 7, lcol if dx >= 0 else REDL)
+            ed = _out_cubic((now - self.lbl_t0 - 0.18) / 0.22) if self.lbl_old is not None else _out_cubic((ti - 0.75) / 0.25)
+            d = descs.get(hid, "")[:bw // ADV]
+            if ed > 0.0:
+                sf2 = self._tmp(bw, 10)
+                self._text_on(sf2, d, bw // 2, 0, DIM, 1, 1)
+                sf2.set_alpha(int(255 * ed) // 16 * 16 if ed < 1 else 255)
+                s.blit(sf2, (gx, by + 24 + int(3 * (1 - ed))))
+
+        # ---- footer hints (slide up)
+        fo = int(22 * (1.0 - _out_cubic((ti - 0.30) / 0.30)))
+        fy = LH - 8 - 11 + fo
         self.rect(0, fy - 6, LW, LH - fy + 6, BLACK, 90)
         self.rect(0, fy - 6, LW, 1, REDM)
-        x = 8
+        hx = 8
         for g, lab in hints:
-            self.cap(x, fy, g)
-            self.text(lab, x + 15, fy + 2)
-            x += 15 + self.text_w(lab) + 10
+            self.cap(hx, fy, g)
+            self.text(lab, hx + 15, fy + 2)
+            hx += 15 + self.text_w(lab) + 10
+
+        # ---- fade in from black
+        if ti < 0.4:
+            self.rect(0, 0, LW, LH, (0, 0, 0), int(255 * (1.0 - ti / 0.4)) // 17 * 17)
 
         if (self.W, self.H) == (LW, LH):
             canvas.blit(s, (0, 0))
