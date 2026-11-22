@@ -268,6 +268,33 @@ class GameCubeLaunchTests(unittest.TestCase):
         self.assertIn("SIGSEGV", report)
 
 
+    def _launch_with_log_error(self, run_seconds):
+        """Launch a GameCube game whose log ends in an [ERROR] line and which exits 0 after run_seconds; returns launches."""
+        L = self.launch
+        d = tempfile.mkdtemp(prefix="rgos-run-")
+        with open(os.path.join(d, "ra.log"), "w") as f:
+            f.write("[INFO] running\n[ERROR] failed to save SRAM\n")
+        clock, seen = [0.0], []
+
+        def fake_call(cmd, **kw):
+            seen.append(cmd)
+            clock[0] += run_seconds
+            return 0
+
+        with mock.patch.dict(os.environ, {"RGOS_NO_HW": "1"}), \
+             mock.patch.object(L, "RUN_DIR", d), mock.patch.object(L, "ROMS_ROOT", d), mock.patch.object(L, "BOOT_DIR", d), \
+             mock.patch.object(L, "LOG", os.path.join(d, "ra.log")), mock.patch.object(L, "TTY", os.path.join(d, "tty")), \
+             mock.patch.object(L, "SYS_INPUT", d), mock.patch.object(L.time, "monotonic", lambda: clock[0]), \
+             mock.patch.object(L.subprocess, "call", side_effect=fake_call):
+            L.launch_retroarch("gc", "dolphin", "/cores/dolphin_libretro.so", "/roms/gc/g.iso")
+        return len(seen)
+
+    def test_quitting_normally_after_a_stray_log_error_is_not_relaunched(self):
+        self.assertEqual(self._launch_with_log_error(10.0), 1)
+
+    def test_an_instant_exit_with_a_log_error_still_retries(self):
+        self.assertEqual(self._launch_with_log_error(1.0), 2)
+
     def test_run_config_adds_the_gc_pacing_settings_only_for_gamecube(self):
         gc = self.launch.run_config("gc", "/r", "default", core_options="/run/o.cfg")
         self.assertIn('video_adaptive_vsync = "true"', gc)

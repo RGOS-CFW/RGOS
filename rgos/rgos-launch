@@ -855,7 +855,9 @@ def launch_retroarch(sid, core, core_path, content):
             restore_governor(saved)
         dt = time.monotonic() - t0
         log("retroarch exited rc=%s (%s) after %.1fs" % (rc, rc_text(rc), dt))
-        failed = rc != 0 or "[ERROR]" in tail(LOG, 40)
+        # A clean exit (rc 0) that ran past the early-failure window is the player quitting: a stray "[ERROR]" line in the
+        # log (a missing optional file, a failed save at shutdown) must not relaunch the game under them.
+        failed = rc != 0 or (dt < EARLY_FAIL_S and "[ERROR]" in tail(LOG, 40))
         if sid in HW_VIDEO and failed and gl_mismatch(tail(LOG, 60)):
             log("%s core needs desktop OpenGL but RetroArch is a GLES build; retrying cannot help" % sid)
             break
