@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import gc, glob, shutil, json, os, re, signal, subprocess, sys, time
+import gc, glob, platform, shutil, json, os, re, signal, subprocess, sys, time
 
 RA_BIN = os.environ.get("RGOS_RA_BIN", "retroarch")
 RA_CFG = os.environ.get("RGOS_RA_CFG", "/etc/rgos/retroarch.cfg")
@@ -33,11 +33,11 @@ GC_OPTIONS_NAME = "dolphin-options.cfg"
 GC_CORE_OPTIONS = (
     ("dolphin_renderer", "Hardware"),
     ("dolphin_efb_scale", "x1 (640 x 528)"),
-    ("dolphin_cpu_core", "JIT64"),
+    ("dolphin_cpu_core", "JITARM64"),
     ("dolphin_cpu_clock_rate", "100%"),
     ("dolphin_fastmem", "enabled"),
     ("dolphin_dsp_hle", "enabled"),
-    ("dolphin_dsp_jit", "enabled"),
+    ("dolphin_dsp_jit", "disabled"),
     ("dolphin_shader_compilation_mode", "a-sync UberShaders"),
     ("dolphin_wait_for_shaders", "disabled"),
     ("dolphin_efb_to_texture", "enabled"),
@@ -47,7 +47,9 @@ GC_CORE_OPTIONS = (
     ("dolphin_skip_dupe_frames", "enabled"),
 )
 # Used on the retry after a game died right after starting: the one option that can crash a kernel it does not suit.
-GC_SAFE_OPTIONS = (("dolphin_fastmem", "disabled"),)
+# JIT64 and the DSP JIT only exist in x86-64 builds of Dolphin: asking an aarch64 core for them is what made games die at start.
+GC_SAFE_OPTIONS = (("dolphin_fastmem", "disabled"), ("dolphin_cpu_core", "Cached Interpreter"))
+GC_X86_OPTIONS = (("dolphin_cpu_core", "JIT64"), ("dolphin_dsp_jit", "enabled"))
 # RetroArch settings that only matter for GameCube: it often runs just under 60 fps, where plain double-buffered
 # vsync snaps down to 30. Adaptive vsync / a third swapchain image keep the in-between rates, and a bigger audio
 # buffer stops crackling on the frames that run long.
@@ -225,6 +227,8 @@ def gc_core_options(roms_root, run_dir, safe=False):
     <ROMS>/config/dolphin-options.cfg. The file lives in the run directory, so it is rebuilt on every launch.
     """
     opts = dict(GC_CORE_OPTIONS)
+    if platform.machine().lower() in ("x86_64", "amd64"):
+        opts.update(GC_X86_OPTIONS)
     if safe:
         opts.update(GC_SAFE_OPTIONS)
     opts.update(read_option_overrides(os.path.join(roms_root, "config", GC_OPTIONS_NAME)))
@@ -806,11 +810,13 @@ def launch_retroarch(sid, core, core_path, content):
         os.makedirs("/tmp/retroarch", exist_ok=True)
     hw = not os.environ.get("RGOS_NO_HW") or os.environ.get("RGOS_SYSFS")
     attempts = video_attempts(sid)
+    if sid == "gc" and len(attempts) == 1:
+        attempts = attempts + attempts  # a pinned driver still gets the safe-options retry
     history, rc, cmd = [], 0, []
     for n, video in enumerate(attempts):
         gc_opts = gc_core_options(ROMS_ROOT, RUN_DIR, safe=n > 0) if sid == "gc" else None
         if gc_opts and n > 0:
-            log("GameCube retry: Dolphin fastmem off")
+            log("GameCube retry: Dolphin fastmem off, cached interpreter")
         with open(cfg_run, "w") as f:
             f.write(run_config(sid, ROMS_ROOT, audio, idx, drv, font, video, gc_opts))
         cmd = build_command(core_path, content, ROMS_ROOT, cfg_run, verbose=True if sid == "gc" else None)
