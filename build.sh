@@ -119,6 +119,7 @@ GC_REPO="${GC_REPO:-https://github.com/libretro/dolphin.git}"
 # OpenGL context, but RetroArch is compiled against OpenGLES"), so Flycast is built here as a GLES core. DC_REPO=none skips it.
 DC_REPO="${DC_REPO:-https://github.com/flyinghead/flycast.git}"
 DC_MAKE_ARGS="${DC_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
+# DC_REQUIRED=1 makes a failed Flycast build stop the whole build instead of producing an image without Dreamcast.
 STELLA_REPO="${STELLA_REPO:-https://github.com/libretro/stella2014-libretro.git}"
 ATARI800_REPO="${ATARI800_REPO:-https://github.com/libretro/libretro-atari800.git}"
 PROSYSTEM_REPO="${PROSYSTEM_REPO:-https://github.com/libretro/prosystem-libretro.git}"
@@ -451,21 +452,44 @@ if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC )); t
     fi
     if (( WANT_DC )); then
       echo "==> Building the Dreamcast core (flycast, OpenGL ES to match RetroArch)"
+      DC_LOG="$WORK/flycast-build.log"; : > "$DC_LOG"
       if (
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/flycast"
         git clone -q --depth 1 --recurse-submodules --shallow-submodules "$DC_REPO" "$WORK/flycast"
-        cp -r "$WORK/flycast" "$ROOTFS/tmp/core-src/dc"
-        chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libgles-dev libegl-dev zlib1g-dev libcurl4-openssl-dev pkg-config
-        chroot "$ROOTFS" sh -c "cd /tmp/core-src/dc && make -f Makefile $DC_MAKE_ARGS -j\"\$(nproc)\""
+        rm -rf "$ROOTFS/tmp/core-src/dc"; cp -r "$WORK/flycast" "$ROOTFS/tmp/core-src/dc"
+        # one package at a time: a package that is missing in this Debian suite must not stop the others from installing
+        for pkg in libgles-dev libegl-dev zlib1g-dev libcurl4-openssl-dev pkg-config libzip-dev libasound2-dev; do
+          chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg" >>"$DC_LOG" 2>&1 \
+            || echo "   (could not install $pkg, continuing)"
+        done
+        # Flycast is a very large C++ project: with every core in parallel the compiler is often killed for lack of RAM (WSL and
+        # small VMs), which shows up as a failed build. Retry with fewer jobs before giving up.
+        built=0
+        for jobs in "$(nproc)" 2 1; do
+          echo "   make -j$jobs $DC_MAKE_ARGS (log: $DC_LOG)"
+          if chroot "$ROOTFS" sh -c "cd /tmp/core-src/dc && make -f Makefile $DC_MAKE_ARGS -j$jobs" >>"$DC_LOG" 2>&1; then built=1; break; fi
+          echo "   make -j$jobs failed, retrying with fewer jobs"
+        done
+        (( built )) || { echo "flycast: make failed, last lines of $DC_LOG:"; tail -n 40 "$DC_LOG"; exit 1; }
         so="$(find "$ROOTFS/tmp/core-src/dc" -name flycast_libretro.so -type f | head -n1)"
-        [[ -n "$so" ]]
-        # a desktop-GL build would crash at start exactly like the buildbot core, so refuse it here
+        [[ -n "$so" ]] || { echo "flycast: make finished but flycast_libretro.so was not produced (check DC_MAKE_ARGS=$DC_MAKE_ARGS, log: $DC_LOG)"; exit 1; }
+        # A desktop-GL build dies at start exactly like the buildbot core ("Requesting OpenGL context, but RetroArch is compiled
+        # against OpenGLES"), so refuse it here. It links libGL / libOpenGL; a GLES build must not, and must mention GLES.
+        if command -v readelf >/dev/null 2>&1 && readelf -d "$so" 2>/dev/null | grep -Eq 'NEEDED.*\[(libGL|libOpenGL)\.so'; then
+          echo "flycast_libretro.so links desktop OpenGL (libGL), not OpenGL ES: check DC_MAKE_ARGS=$DC_MAKE_ARGS (FORCE_GLES=1)"; exit 1
+        fi
         strings "$so" | grep -qi 'GLES' || { echo "flycast_libretro.so has no GLES code (check DC_MAKE_ARGS)"; exit 1; }
         install -m 755 "$so" "$LRDIR/flycast_libretro.so"
       ); then echo "   flycast_libretro.so built (GLES)"
-      else echo "!! could not build Flycast: Dreamcast will have no core (the buildbot Flycast is desktop-GL and cannot run on this RetroArch; put a GLES-built flycast_libretro.so in cores/ and rebuild)"; rm -f "$LRDIR/flycast_libretro.so"; fi
+      else
+        echo "!! could not build Flycast: Dreamcast will have NO core in this image (log: $DC_LOG)."
+        echo "!! Do not use Tools > Core Installer for it: the libretro buildbot Flycast is desktop-GL and cannot run on this RetroArch."
+        echo "!! Fix the build error above, or put a GLES-built flycast_libretro.so in cores/ and rebuild."
+        rm -f "$LRDIR/flycast_libretro.so"
+        [[ "${DC_REQUIRED:-0}" != 1 ]] || { echo "!! DC_REQUIRED=1: stopping" >&2; exit 1; }
+      fi
     fi
     if (( WANT_GC )); then
       echo "==> Building the GameCube core (Dolphin libretro, GameCube only in the menu; RG Rotate)"

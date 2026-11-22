@@ -58,3 +58,5 @@ Use an `.m3u` playlist for PlayStation, Sega CD and GameCube multi-disc games, a
 - `.iso` is shared by Sega CD, PlayStation and GameCube. Keep Wii dumps out of `roms/gc`; Wii is not supported.
 - Many systems need BIOS files ([BIOS.md](BIOS.md)).
 - System-specific notes: [NES.md](NES.md), [GAMECUBE.md](GAMECUBE.md), [PORTS.md](PORTS.md).
+
+**Dreamcast says `Requesting OpenGL context, but RetroArch is compiled against OpenGLES`?** The `flycast_libretro.so` on the ROMS card is a desktop-GL build. The image build had no GLES Flycast to ship (see `flycast-build.log` in the build work folder; `DC_REQUIRED=1` stops the build when that happens), and the Core Installer no longer downloads the buildbot Flycast. Delete `cores/flycast_libretro.so` from the card, fix the build error and rebuild, or put a `FORCE_GLES=1` build in `cores/`.

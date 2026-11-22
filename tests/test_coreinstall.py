@@ -147,6 +147,19 @@ class DownloadTests(unittest.TestCase):
                 coreinstall.download(bad, self.dest, "https://e.test", None, None, op)
         self.assertEqual(op.seen, [])
 
+    def test_buildbot_flycast_is_refused_but_a_custom_mirror_is_allowed(self):
+        op = serving({"flycast_libretro.so.zip": make_zip("flycast_libretro.so", elf())})
+        old = os.environ.pop("RGOS_CORE_URL", None)
+        try:
+            with self.assertRaisesRegex(coreinstall.CoreInstallError, "desktop OpenGL"):
+                coreinstall.download("flycast", self.dest, None, None, None, op)
+            self.assertEqual(op.seen, [])
+            coreinstall.download("flycast", self.dest, "https://mirror.test/gles", None, None, op)
+            self.assertTrue(os.path.isfile(os.path.join(self.dest, "flycast_libretro.so")))
+        finally:
+            if old is not None:
+                os.environ["RGOS_CORE_URL"] = old
+
     def test_cancel_cleans_up(self):
         op = serving({"gpsp_libretro.so.zip": make_zip("gpsp_libretro.so", elf())})
         with self.assertRaisesRegex(coreinstall.CoreInstallError, "Cancelled"):

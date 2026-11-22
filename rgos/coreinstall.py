@@ -23,6 +23,11 @@ DEFAULT_URL = "https://buildbot.libretro.com/nightly/linux/aarch64/latest"
 CONF_FILE = os.environ.get("RGOS_CORE_CONF", "/etc/rgos/coreinstall.json")
 # Cores that must not be offered: dolphin needs its Sys data folder, which only the RG Rotate image carries.
 EXCLUDE = frozenset(("dolphin",))
+# Cores whose libretro buildbot build asks for desktop OpenGL. RetroArch on this image is a GLES build, so these start and
+# die at once ("Requesting OpenGL context, but RetroArch is compiled against OpenGLES"). The image's build.sh builds a GLES
+# Flycast; downloading the buildbot one only puts a core on the card that cannot run (and hides the real problem).
+# A mirror set in coreinstall.json / RGOS_CORE_URL is trusted: it may carry GLES builds.
+DESKTOP_GL_ONLY = frozenset(("flycast",))
 MAX_ZIP = 300 << 20
 MAX_SO = 600 << 20
 CHUNK = 64 << 10
@@ -108,6 +113,8 @@ def download(core, dest, base=None, progress=None, cancelled=None, opener=None):
     """Download and install one core into dest. Returns the installed path; raises CoreInstallError."""
     if not NAME_RE.match(core):
         raise CoreInstallError("Bad core name")
+    if core in DESKTOP_GL_ONLY and not base and base_url() == DEFAULT_URL:
+        raise CoreInstallError("The buildbot %s is desktop OpenGL and cannot run on this device. Rebuild the image (build.sh builds a GLES one)" % core.capitalize())
     progress = progress or (lambda pct: None)
     cancelled = cancelled or (lambda: False)
     opener = opener or urllib.request.urlopen
