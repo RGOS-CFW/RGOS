@@ -210,6 +210,14 @@ class GameCubeLaunchTests(unittest.TestCase):
         self.assertEqual(self.launch.video_attempts("gc", "/nonexistent"), ["glcore", "gl"])
         self.assertEqual(self.launch.video_attempts("gba", "/nonexistent"), [None])
 
+    def test_dreamcast_gets_a_gl_driver_then_retries_and_logs_verbosely(self):
+        self.assertEqual(self.launch.video_attempts("dreamcast", "/nonexistent"), ["gl", "glcore"])
+        d = tempfile.mkdtemp(prefix="rgos-boot-")
+        with open(os.path.join(d, "retroarch-dc-video.txt"), "w") as f:
+            f.write("glcore\n")
+        self.assertEqual(self.launch.video_attempts("dreamcast", d), ["glcore"])
+        self.assertIn("--verbose", self.launch.build_command("/c.so", "/g.chd", "/r", "/run.cfg", verbose=True))
+
     def test_boot_file_forces_one_video_driver(self):
         d = tempfile.mkdtemp(prefix="rgos-boot-")
         with open(os.path.join(d, "retroarch-gc-video.txt"), "w") as f:
