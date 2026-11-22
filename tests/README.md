@@ -8,6 +8,8 @@ Plain `unittest`, standard library only: no pygame, device or root needed (`menu
 | File | Covers |
 | --- | --- |
 | `test_buttonmap.py` | Map buttons wizard: button steps, L3/R3, stick calibration, skipping, retrying a failed step. Runs against a fake hub and a fake clock, so it is instant. |
+| `test_dpadjoy.py` | DPAD to joystick: D-pad becomes left-stick axes only in a game and only when the setting is on, diagonals on the unit circle, a held direction handed over cleanly when the setting or the game changes, a real stick still works; the Menu+Select combo (either press order) is swallowed, a short press turns it on with one buzz, holding turns it off with two, a failed save stays silent, the flag file the in-game menu uses to ignore that Menu tap, the non-blocking `Buzzer`, and the in-game menu reading stick Y as up / down. |
+| `test_dpadjoy_setting.py` | Settings > DPAD to joystick row, icon, and the on/off file shared with the hub. |
 | `test_hub.py` | `rgos-input`: stick scaling and deadzone, loading the calibration, the live stick feed the wizard reads, button translation. |
 | `test_info.py` | Settings > Information text helpers and row list. |
 | `test_stick_nav.py` | Menu navigation with the left stick: directions, threshold and hysteresis, auto-repeat, screen-off reset. |

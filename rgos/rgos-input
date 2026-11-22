@@ -16,6 +16,15 @@ BTNMAP = "/var/lib/rgos/button-map.json"
 SWAPAB = "/var/lib/rgos/swap-ab"
 KEYS_PROBE, KEYS_RAW = "/run/rgos/keys.probe", "/run/rgos/keys.raw"
 STICKS_RAW = "/run/rgos/sticks.raw"
+DPADJOY = "/var/lib/rgos/dpad-joystick"      # exists = "DPAD to joystick" is ON (Settings, or the Menu+Select combo)
+INGAME = "/run/rgos/ingame"                  # written by rgos-launch while a game runs
+COMBO_FLAG = "/run/rgos/combo-swallow"       # touched when Menu+Select is swallowed; gamemenu.py then ignores that Menu tap
+BTN_SELECT, BTN_MODE = 0x13a, 0x13c
+COMBO_HOLD_S = 1.0                           # Menu+Select held this long turns DPAD to joystick off; a shorter press turns it on
+DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT = 0x220, 0x221, 0x222, 0x223
+DIAGONAL = 0.7071                            # both directions held: stay on the unit circle like a real stick
+BUZZ_ON = [0.15]                             # one pulse: DPAD to joystick on
+BUZZ_OFF = [0.12, 0.10, 0.12]                # two pulses: DPAD to joystick off
 STICK_DEADZONE = 0.04
 CANON_KEYS = [0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x138, 0x139, 0x13a, 0x13b, 0x13c, 0x13d, 0x13e,
               0x220, 0x221, 0x222, 0x223]
@@ -78,6 +87,8 @@ EV_FF, FF_RUMBLE = 0x15, 0x50
 UI_SET_ABSBIT = _IOW("U", 103, 4)
 UI_ABS_SETUP = _IOW("U", 4, 28)
 ANALOG_AXES = (0x00, 0x01, 0x03, 0x04)
+LEFT_STICK_AXES = (0x00, 0x01)               # always present, so DPAD to joystick can drive them on any device
+ABS_X, ABS_Y = 0x00, 0x01
 ASTICK = 32767
 
 
@@ -503,6 +514,202 @@ def write_rules(names):
         pass
 
 
+class Buzzer:
+    """Non-blocking vibration patterns for the feedback buzz (the hub loop must never sleep)."""
+
+    def __init__(self, motor, clock=time.monotonic):
+        self.motor, self.clock = motor, clock
+        self.steps, self.deadline, self.on = [], 0.0, False
+
+    def play(self, pattern):
+        """pattern: seconds, alternating motor on / off, starting with on."""
+        if self.motor is None or not pattern:
+            return
+        self.steps = [(i % 2 == 0, float(s)) for i, s in enumerate(pattern)]
+        self._next(self.clock())
+
+    def _next(self, now):
+        if not self.steps:
+            self._set(False)
+            return
+        on, dur = self.steps.pop(0)
+        self._set(on)
+        self.deadline = now + dur
+
+    def _set(self, on):
+        if on != self.on:
+            self.on = on
+            try:
+                self.motor.set(on)
+            except Exception as e:
+                log("vibration failed:", e)
+
+    def tick(self):
+        now = self.clock()
+        while (self.on or self.steps) and now >= self.deadline:
+            self._next(now)
+            now = self.clock()
+
+    def next_deadline(self, default=0.25):
+        if not (self.on or self.steps):
+            return default
+        return max(0.0, min(default, self.deadline - self.clock()))
+
+    def close(self):
+        self.steps = []
+        self._set(False)
+
+
+class DpadJoy:
+    """"DPAD to joystick": while a game runs and the setting is ON, D-pad presses become left-stick movement.
+
+    Works on the translated stream (canonical button codes), so every source, the A/B swap and the button map are
+    already applied. The setting is the file DPADJOY (Settings > DPAD to joystick); it is only acted on while a game
+    runs (INGAME exists), so the launcher keeps its D-pad.
+
+    Menu+Select, while a game runs, is swallowed (RetroArch would otherwise treat it as its menu hotkey):
+      * a short press turns the setting ON and buzzes once;
+      * holding it for COMBO_HOLD_S turns it OFF and buzzes twice.
+    A real analog stick (when the device has one) still works; the D-pad wins on an axis while it is pushed.
+    """
+
+    def __init__(self, feedback=None, clock=time.monotonic):
+        self.feedback, self.clock = feedback or (lambda pattern: None), clock
+        self.on, self.ingame, self.next_check = False, False, 0.0
+        self.pad = {c: False for c in (DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT)}
+        self.sent = set()                    # D-pad keys currently held down in the virtual pad
+        self.phys = {ABS_X: 0, ABS_Y: 0}     # last value of a real stick
+        self.axis = {ABS_X: 0, ABS_Y: 0}     # what the virtual pad currently reports
+        self.mod = {BTN_SELECT: False, BTN_MODE: False}
+        self.held = set()                    # Menu / Select presses that were swallowed (their release is too)
+        self.combo = None                    # [pressed at, already fired]
+        self.was_active = False
+
+    @property
+    def active(self):
+        return self.on and self.ingame
+
+    def refresh(self, now):
+        if now < self.next_check:
+            return
+        self.next_check = now + 0.15
+        self.on, self.ingame = os.path.exists(DPADJOY), os.path.exists(INGAME)
+
+    def _dpad_value(self, axis):
+        d = {ABS_X: int(self.pad[DPAD_RIGHT]) - int(self.pad[DPAD_LEFT]),
+             ABS_Y: int(self.pad[DPAD_DOWN]) - int(self.pad[DPAD_UP])}
+        if not d[axis]:
+            return 0
+        return int(round(d[axis] * (DIAGONAL if d[ABS_X] and d[ABS_Y] else 1.0) * ASTICK))
+
+    def _want(self, axis):
+        v = self._dpad_value(axis) if self.active else 0
+        return v if v else self.phys[axis]
+
+    def _axis_events(self):
+        out = []
+        for axis in (ABS_X, ABS_Y):
+            v = self._want(axis)
+            if v != self.axis[axis]:
+                self.axis[axis] = v
+                out.append((EV_ABS, axis, v))
+        return out
+
+    def _set_setting(self, on):
+        try:
+            if on:
+                os.makedirs(os.path.dirname(DPADJOY), exist_ok=True)
+                open(DPADJOY, "w").close()
+            elif os.path.exists(DPADJOY):
+                os.unlink(DPADJOY)
+        except OSError as e:
+            log("cannot change DPAD to joystick:", e)
+            return False
+        self.on = on
+        self.next_check = 0.0
+        log("DPAD to joystick %s (Menu+Select)" % ("ON" if on else "OFF"))
+        self.feedback(BUZZ_ON if on else BUZZ_OFF)
+        return True
+
+    def _combo_start(self, now):
+        self.combo = [now, False]
+        try:
+            os.makedirs(os.path.dirname(COMBO_FLAG), exist_ok=True)
+            open(COMBO_FLAG, "w").close()
+        except OSError:
+            pass
+
+    def _combo_end(self):
+        if self.combo is not None and not self.combo[1]:
+            self._set_setting(True)
+        self.combo = None
+
+    def _modifier(self, code, value, now):
+        """Menu / Select. True when the event is swallowed."""
+        if value == 1:
+            self.mod[code] = True
+            if self.ingame and all(self.mod.values()):
+                self.held.add(code)
+                self._combo_start(now)
+                return True
+            return False
+        if value == 0:
+            self.mod[code] = False
+            swallowed = code in self.held
+            self.held.discard(code)
+            if self.combo is not None:
+                self._combo_end()
+            return swallowed
+        return code in self.held
+
+    def filter(self, events, now):
+        """Translated events [(type, code, value)] -> events for the virtual pad."""
+        self.refresh(now)
+        out = []
+        for t, c, v in events:
+            if t == EV_KEY and c in self.mod:
+                if not self._modifier(c, v, now):
+                    out.append((t, c, v))
+            elif t == EV_KEY and c in self.pad:
+                self.pad[c] = v != 0
+                if self.active:
+                    out += self._axis_events()
+                else:
+                    (self.sent.add if v else self.sent.discard)(c)
+                    out.append((t, c, v))
+            elif t == EV_ABS and c in self.phys:
+                self.phys[c] = v
+                want = self._want(c)
+                self.axis[c] = want
+                out.append((t, c, want))
+            else:
+                out.append((t, c, v))
+        return out
+
+    def poll(self, now):
+        """Events caused by time or by the setting changing, not by a button."""
+        self.refresh(now)
+        if self.combo is not None and not self.combo[1] and now - self.combo[0] >= COMBO_HOLD_S:
+            self.combo[1] = True
+            self._set_setting(False)
+        out = []
+        if self.active != self.was_active:
+            self.was_active = self.active
+            if self.active:
+                out += [(EV_KEY, c, 0) for c in sorted(self.sent)]
+                self.sent.clear()
+            else:
+                out += [(EV_KEY, c, 1) for c, down in sorted(self.pad.items()) if down]
+                self.sent = {c for c, down in self.pad.items() if down}
+            out += self._axis_events()
+        return out
+
+    def next_deadline(self, now, default=0.25):
+        if self.combo is not None and not self.combo[1]:
+            return max(0.0, min(default, self.combo[0] + COMBO_HOLD_S - now))
+        return default
+
+
 class KeyProbe:
     def __init__(self):
         self.n, self.next_check, self.on = 0, 0.0, False
@@ -607,7 +814,8 @@ def run():
              else sorted(set(CANON_KEYS + EXTRA_KEYS) | set(translator.keymap.values())))
     log("sources: %s; %d key codes" % (", ".join("%s (%s)" % (x.path, x.name) for x in srcs.values()), len(codes)))
 
-    ff = motor = None
+    ff = motor = buzz_motor = None
+    hwc = None
     try:
         import hwctl, ffpad
         hwc = hwctl.load_conf()
@@ -617,10 +825,20 @@ def run():
         log("rumble:", motor.describe() if motor else "off")
     except Exception as e:
         log("rumble support unavailable:", e)
+    buzz_motor = motor
+    if buzz_motor is None:
+        try:
+            import hwctl
+            m = hwctl.Motor(hwc)
+            buzz_motor = m if m.available else None
+        except Exception as e:
+            log("vibration feedback unavailable:", e)
+    buzz = Buzzer(buzz_motor)
+    djoy = DpadJoy(feedback=buzz.play)
     ufd, tries = None, 0
     while not STOP and ufd is None:
         try:
-            ufd = make_uinput(codes, ff=motor is not None, axes=ANALOG_AXES if translator.analog else ())
+            ufd = make_uinput(codes, ff=motor is not None, axes=ANALOG_AXES if translator.analog else LEFT_STICK_AXES)
         except OSError as e:
             tries += 1
             if tries == 1:
@@ -676,6 +894,7 @@ def run():
                     wait = 0.05
             if ff is not None:
                 wait = min(wait, ff.next_deadline())
+            wait = min(wait, buzz.next_deadline(), djoy.next_deadline(time.monotonic()))
             r, _, _ = select.select([x.fd for x in srcs.values()] + ([ufd] if ff is not None else []), [], [], wait)
             if ff is not None:
                 if ufd in r:
@@ -713,10 +932,17 @@ def run():
                         batch += translator.stick(c, v, x.absrange(c))
                     elif t == EV_SYN:
                         batch.append((EV_SYN, 0, 0))
+                batch = djoy.filter(batch, time.monotonic())
                 for t, c, v in batch:
                     out += EVFMT.pack(0, 0, t, c, v)
                 if batch and batch[-1][0] != EV_SYN:
                     out += EVFMT.pack(0, 0, EV_SYN, 0, 0)
+            extra = djoy.poll(time.monotonic())
+            buzz.tick()
+            if extra:
+                for t, c, v in extra:
+                    out += EVFMT.pack(0, 0, t, c, v)
+                out += EVFMT.pack(0, 0, EV_SYN, 0, 0)
             if out:
                 try:
                     os.write(ufd, bytes(out))
@@ -730,6 +956,7 @@ def run():
         return 0
     finally:
         try:
+            buzz.close()
             if ff is not None:
                 ff.close()
             for x in srcs.values():
@@ -738,7 +965,7 @@ def run():
         except OSError:
             pass
         restore_hidden()
-        for p in (FLAG, STATUS, KEYS_RAW, STICKS_RAW, RULES, MAP_REPORT):
+        for p in (FLAG, STATUS, KEYS_RAW, STICKS_RAW, RULES, MAP_REPORT, COMBO_FLAG):
             try:
                 os.unlink(p)
             except OSError:

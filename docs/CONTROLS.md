@@ -21,7 +21,7 @@ The hint line at the bottom of each screen shows the buttons that work there. If
 | Combo | Action |
 |---|---|
 | Menu + Start | exit the game |
-| Menu + Select | RetroArch menu |
+| Menu + Select | **DPAD to joystick**: quick press turns it on (one buzz), hold 1 s turns it off (two buzzes); see [IN-GAME-MENU.md](IN-GAME-MENU.md) |
 | Menu + R | save state |
 | Menu + L | load state |
 | Menu + Right / Left | next / previous state slot |

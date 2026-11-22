@@ -31,8 +31,12 @@ class MappingTests(unittest.TestCase):
         self.assertEqual((m["dpup"], m["dpdown"], m["dpleft"], m["dpright"]), ("b13", "b14", "b15", "b16"))
         self.assertEqual(m["platform"], "Linux")
 
-    def test_sticks_only_when_analog_is_enabled(self):
-        self.assertNotIn("leftx", parse(portpad.mapping_line(False))[2])
+    def test_right_stick_only_when_analog_is_enabled(self):
+        # the left stick is always mapped: "DPAD to joystick" drives it on every device
+        m = parse(portpad.mapping_line(False))[2]
+        self.assertEqual((m["leftx"], m["lefty"]), ("a0", "a1"))
+        self.assertNotIn("rightx", m)
+        self.assertNotIn("righty", m)
         m = parse(portpad.mapping_line(True))[2]
         self.assertEqual((m["leftx"], m["lefty"], m["rightx"], m["righty"]), ("a0", "a1", "a2", "a3"))
 
@@ -71,10 +75,10 @@ class EnvTests(unittest.TestCase):
             self.assertIn(portpad.sdl_guid(), f.read())
 
     def test_analog_flag_is_read_from_input_json(self):
-        self.assertNotIn("leftx", self.env()["SDL_GAMECONTROLLERCONFIG"])
+        self.assertNotIn("rightx", self.env()["SDL_GAMECONTROLLERCONFIG"])
         with open(self.conf, "w") as f:
             json.dump({"analog": True}, f)
-        self.assertIn("leftx:a0", self.env()["SDL_GAMECONTROLLERCONFIG"])
+        self.assertIn("rightx:a2", self.env()["SDL_GAMECONTROLLERCONFIG"])
 
     def test_per_device_file_enables_sticks_like_the_hub(self):
         devfile = os.path.join(self.dir, "rgos-device")

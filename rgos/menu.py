@@ -958,7 +958,7 @@ def make_file_manager():
 
 
 FM_ROWS = 7 + DY // 44
-SETTINGS_ROWS = ["theme", "launcher", "splash", "emulators", "bios", "artwork", "bmap", "swapab", "wifi", "bluetooth", "ssh", "info"]
+SETTINGS_ROWS = ["theme", "launcher", "splash", "emulators", "bios", "artwork", "bmap", "swapab", "dpadjoy", "wifi", "bluetooth", "ssh", "info"]
 RECENT_MAX = 20
 
 LAUNCHERS = [("rgos", "RG OS", "Classic tile launcher"), ("xmb", "RG XMB", "PlayStation-style cross media bar"),
@@ -1095,6 +1095,13 @@ def icon_swapab(c, cx, cy, col, bg):
     pygame.draw.polygon(c, col, [(cx - 16, cy), (cx - 34, cy + 12), (cx - 16, cy + 24)])
 
 
+def icon_dpadjoy(c, cx, cy, col, bg):
+    pygame.draw.rect(c, col, (cx - 8, cy - 28, 16, 56), border_radius=3)
+    pygame.draw.rect(c, col, (cx - 28, cy - 8, 56, 16), border_radius=3)
+    pygame.draw.circle(c, bg, (cx, cy), 9)
+    pygame.draw.circle(c, col, (cx, cy), 9, 3)
+
+
 def icon_wifi(c, cx, cy, col, bg):
     for r in (14, 26, 38):
         pygame.draw.arc(c, col, (cx - r, cy + 16 - r, 2 * r, 2 * r), math.radians(45), math.radians(135), 5)
@@ -1125,7 +1132,7 @@ def icon_files(c, cx, cy, col, bg):
 
 ICONS = {"games": icon_games, "recents": icon_recents, "favorites": icon_favorites, "tools": icon_tools, "settings": icon_settings, "power": icon_power,
          "theme": icon_theme, "launcher": icon_launcher, "splash": icon_splash, "emulators": icon_emulators, "bios": icon_bios, "artwork": icon_artwork, "bmap": icon_bmap,
-         "swapab": icon_swapab, "wifi": icon_wifi, "bluetooth": icon_bluetooth, "ssh": icon_ssh, "info": icon_info, "files": icon_files}
+         "swapab": icon_swapab, "dpadjoy": icon_dpadjoy, "wifi": icon_wifi, "bluetooth": icon_bluetooth, "ssh": icon_ssh, "info": icon_info, "files": icon_files}
 
 
 # ---- per-system icons (RG XMB list, RG Flow system cards) --------------------------------------------------------
@@ -2676,6 +2683,7 @@ def settings_info():
             ("Brightness", "%d%%" % bri[0] if bri else "n/a"),
             ("Buttons", "mapped" if os.path.exists(BTN_MAP) else "default codes"),
             ("A/B buttons", "swapped" if swap_ab_on() else "normal"),
+            ("DPAD to joystick", "on" if dpad_joy_on() else "off"),
             ("CPU", _cpu_text()), ("CPU temp", _temp_text()), ("Load average", _load_text()),
             ("Memory", _mem_text()), ("System storage", _rootfs_text()), ("Uptime", _uptime_text()),
             ("Resolution", "%dx%d" % (W, H))]
@@ -2683,6 +2691,7 @@ def settings_info():
 
 BTN_MAP = os.environ.get("RGOS_BTNMAP", "/var/lib/rgos/button-map.json")
 SWAP_AB = os.environ.get("RGOS_SWAPAB", "/var/lib/rgos/swap-ab")
+DPAD_JOY = os.environ.get("RGOS_DPADJOY", "/var/lib/rgos/dpad-joystick")
 
 
 def restart_hub():
@@ -2720,6 +2729,23 @@ def restart_hub():
         lg = subprocess.DEVNULL
     subprocess.Popen(["python3", "/opt/rgos/rgos-input"], stdin=subprocess.DEVNULL, stdout=lg, stderr=lg,
                      start_new_session=True)
+
+
+def dpad_joy_on():
+    return os.path.exists(DPAD_JOY)
+
+
+def set_dpad_joy(on):
+    """DPAD to joystick: the input hub watches this file, so no restart is needed."""
+    try:
+        if on:
+            os.makedirs(os.path.dirname(DPAD_JOY), exist_ok=True)
+            open(DPAD_JOY, "w").close()
+        elif os.path.exists(DPAD_JOY):
+            os.unlink(DPAD_JOY)
+    except OSError:
+        return False
+    return True
 
 
 def swap_ab_on():
@@ -3440,6 +3466,7 @@ def main():
                 "artwork": ("Game artwork", art_text()),
                 "bmap": ("Map buttons", "Teach RG OS which physical button is A, B, D-pad, ... (if buttons are wrong)"),
                 "swapab": ("Swap A / B buttons", ("ON" if swap_ab_on() else "off") + "   A toggles it (use if A and B act the wrong way round)"),
+                "dpadjoy": ("DPAD to joystick", ("ON" if dpad_joy_on() else "off") + "   A toggles it (D-pad moves the left stick in games; Menu+Select in a game turns it on, hold turns it off)"),
                 "wifi": ("Wi-Fi", wifictl.status_text(wst)),
                 "bluetooth": ("Bluetooth", {None: "Pair controllers, keyboards and headsets", True: "On   A opens the device list", False: "Off   A opens the device list"}[btm.on]),
                 "ssh": ("SSH / file transfer", ("On: ssh or sftp root@%s" % wst["ip"] if wst["ip"] else "On: connect Wi-Fi to use it") if ssh_info()["running"] else "Off   A opens it"),
@@ -3918,6 +3945,8 @@ def main():
                         elif row == "swapab":
                             set_swap_ab(not swap_ab_on())
                             restart_hub()
+                        elif row == "dpadjoy":
+                            set_dpad_joy(not dpad_joy_on())
                         else:
                             set_idx, view = act[1], "settings"
                             xmb_ret[0] = True
@@ -4125,6 +4154,8 @@ def main():
                     elif row == "swapab":
                         set_swap_ab(not swap_ab_on())
                         restart_hub()
+                    elif row == "dpadjoy":
+                        set_dpad_joy(not dpad_joy_on())
                     else:
                         bmap, view = ButtonMap(), "bmap"
             elif view == "artwork":
@@ -4676,7 +4707,7 @@ def main():
                     "A Pick theme   " if SETTINGS_ROWS[set_idx] == "theme" else
                     "A Pick launcher   " if SETTINGS_ROWS[set_idx] == "launcher" else
                     "A Change   X Preview   " if SETTINGS_ROWS[set_idx] == "splash" else
-                    "A Toggle   " if SETTINGS_ROWS[set_idx] == "swapab" else "A Open   ") + ("" if dd is not None else "B Back   START+SELECT Power off")
+                    "A Toggle   " if SETTINGS_ROWS[set_idx] in ("swapab", "dpadjoy") else "A Open   ") + ("" if dd is not None else "B Back   START+SELECT Power off")
         elif view == "artwork":
             _sc = art["sc"]
             _s = _sc.snapshot() if _sc is not None else {"state": "idle", "total": 0, "done": 0, "found": 0, "missed": 0, "failed": 0, "current": "", "msg": ""}
