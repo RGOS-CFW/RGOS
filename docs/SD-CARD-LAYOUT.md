@@ -38,6 +38,7 @@ Put the card in a PC; the boot partition is the small FAT one.
 | `bootlogo.bmp` | The picture shown at power on, before the installer or RG OS starts. Uncompressed 24-bit BMP at the panel's native size (720x480 RG34XXSP, 640x480 RG35XX H / SP, 720x720 RG Rotate). Builds put the matching file from `bootlogo/` there; `python3 tools/render-bootlogo.py` re-renders them from `bootlogo/rgos-logo.png` |
 | `rgos-governor.txt` | CPU/GPU governor while a native port runs (`default` keeps the stock one). See [PORTS.md](PORTS.md) |
 | `retroarch-gc-video.txt` | Force the GameCube video driver: `glcore`, `gl` or `vulkan`. See [GAMECUBE.md](GAMECUBE.md) |
+| `retroarch-dc-video.txt` | Force the Dreamcast (Flycast) video driver: `gl` or `glcore`. Default tries `gl`, then `glcore` |
 | `rgos-install.txt` | Options for the first-boot installer (`skip_install=1`, `keep_payload=1`, `skip=`). See [INSTALLER.md](INSTALLER.md) |
 | `ssh-password.txt` | Custom root password for SSH. See [NETWORKING.md](NETWORKING.md) |
 | `authorized_keys` or `authorized_keys.txt` | SSH public keys for key login |

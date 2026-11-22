@@ -25,6 +25,10 @@ RELEASE_FILE = os.environ.get("RGOS_RELEASE_FILE", "/etc/rgos-release")
 SYS_MARK = ".rgos-sys-stamp"
 GC_RETRY_S = 30.0
 GC_VIDEO_DRIVERS = ("glcore", "gl")
+# Hardware-rendered cores need a real GL context; RetroArch's default video driver does not give Flycast one, so the
+# Dreamcast died ~4 s after start with no log. Same approach as GameCube: pin a GL driver and retry with the other.
+DC_VIDEO_DRIVERS = ("gl", "glcore")
+HW_VIDEO = {"gc": (GC_VIDEO_DRIVERS, "retroarch-gc-video.txt"), "dreamcast": (DC_VIDEO_DRIVERS, "retroarch-dc-video.txt")}
 GC_OPTIONS_NAME = "dolphin-options.cfg"
 # Dolphin core options for the RG Rotate (Unisoc T618: 2x Cortex-A75 + 6x Cortex-A55, Mali-G52 MP2).
 # The GPU is the weak part, so everything stays at native resolution and the cheap-but-correct paths are used:
@@ -348,16 +352,17 @@ def rc_text(rc):
 
 
 def video_attempts(sid, boot_dir=None):
-    if sid != "gc":
+    if sid not in HW_VIDEO:
         return [None]
+    drivers, boot_file = HW_VIDEO[sid]
     try:
-        with open(os.path.join(boot_dir or BOOT_DIR, "retroarch-gc-video.txt")) as f:
+        with open(os.path.join(boot_dir or BOOT_DIR, boot_file)) as f:
             w = f.read().split()
         if w and re.fullmatch(r"[a-z0-9_]+", w[0]):
             return [w[0]]
     except OSError:
         pass
-    return list(GC_VIDEO_DRIVERS)
+    return list(drivers)
 
 
 TAIL_BYTES = 256 * 1024
@@ -819,7 +824,7 @@ def launch_retroarch(sid, core, core_path, content):
             log("GameCube retry: Dolphin fastmem off, cached interpreter")
         with open(cfg_run, "w") as f:
             f.write(run_config(sid, ROMS_ROOT, audio, idx, drv, font, video, gc_opts))
-        cmd = build_command(core_path, content, ROMS_ROOT, cfg_run, verbose=True if sid == "gc" else None)
+        cmd = build_command(core_path, content, ROMS_ROOT, cfg_run, verbose=True if sid in HW_VIDEO else None)
         log("starting%s: %s" % (" (video_driver %s)" % video if video else "", " ".join(cmd)))
         t0 = time.monotonic()
         saved = set_governor(perf_governor(sid)) if hw else {}
@@ -836,9 +841,9 @@ def launch_retroarch(sid, core, core_path, content):
         dt = time.monotonic() - t0
         log("retroarch exited rc=%s (%s) after %.1fs" % (rc, rc_text(rc), dt))
         failed = rc != 0 or "[ERROR]" in tail(LOG, 40)
-        if sid == "gc" and failed and dt < GC_RETRY_S and n + 1 < len(attempts):
+        if sid in HW_VIDEO and failed and dt < GC_RETRY_S and n + 1 < len(attempts):
             history.append((video, rc, dt, tail(LOG, 60)))
-            log("GameCube failed to start with video_driver %s; retrying with %s" % (video, attempts[n + 1]))
+            log("%s failed to start with video_driver %s; retrying with %s" % (sid, video, attempts[n + 1]))
             continue
         break
     save_report(pads, idx, drv, cmd, rc, history, core_path)
