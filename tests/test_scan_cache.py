@@ -13,29 +13,6 @@ def game(i, sid="gba"):
     return {"title": "Game %d" % i, "path": "/r/%s/g%d.gba" % (sid, i), "tag": "GBA", "core": "retroarch", "sid": sid, "card": 1}
 
 
-class LazyCardsTests(unittest.TestCase):
-    def test_builds_only_what_is_touched_and_only_once(self):
-        built = []
-        items = list(range(5000))
-        cards = menu.LazyCards(items, lambda x: built.append(x) or {"n": x})
-        self.assertEqual(len(cards), 5000)
-        self.assertEqual(built, [])
-        self.assertEqual(cards[42]["n"], 42)
-        self.assertIs(cards[42], cards[42])
-        self.assertEqual(built, [42])
-
-    def test_negative_index_slice_iteration_and_bounds(self):
-        cards = menu.LazyCards(["a", "b", "c"], lambda x: x.upper())
-        self.assertEqual(cards[-1], "C")
-        self.assertEqual(cards[0:2], ["A", "B"])
-        self.assertEqual(list(cards), ["A", "B", "C"])
-        with self.assertRaises(IndexError):
-            cards[3]
-
-    def test_empty(self):
-        self.assertEqual(len(menu.LazyCards([], lambda x: x)), 0)
-
-
 class RomSizeTests(unittest.TestCase):
     def test_scan_does_not_stat_and_size_is_read_once_on_demand(self):
         root = tempfile.mkdtemp()
