@@ -355,15 +355,98 @@ def scan_roms():
                     dirs[:] = []
                 for f in files:
                     if f.lower().endswith(exts) and not f.startswith("."):
-                        p = os.path.join(root, f)
-                        try:
-                            size = os.path.getsize(p)
-                        except OSError:
-                            size = 0
-                        games.append({"title": pretty(f), "path": p, "size": size, "tag": tag, "core": core, "sid": sid,
-                                      "card": card})
+                        # "size" is not read here: a stat() per ROM made scanning a big library slow on an SD card, and only
+                        # the selected game's detail panel shows it (see rom_size)
+                        games.append({"title": pretty(f), "path": os.path.join(root, f), "tag": tag, "core": core,
+                                      "sid": sid, "card": card})
     games.sort(key=lambda g: (g["title"].lower(), g["tag"], g.get("card", 1)))
     return games
+
+
+SCAN_CACHE = os.environ.get("RGOS_SCANCACHE", os.path.join(os.path.dirname(STATE_FILE), "scan-cache.json"))
+_SCAN_KEYS = ("title", "path", "tag", "core", "sid", "card")
+
+
+def save_scan_cache(games, path=None):
+    """Remember the last scan so the next start can show the library at once and refresh it in the background."""
+    path = path or SCAN_CACHE
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"v": 1, "root": ROMS_ROOT, "games": [{k: g[k] for k in _SCAN_KEYS if k in g} for g in games]}, f)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def load_scan_cache(path=None):
+    """The games of the last scan, or None when there is no usable cache (missing, other ROMS root, damaged)."""
+    try:
+        with open(path or SCAN_CACHE) as f:
+            d = json.load(f)
+        if d.get("v") != 1 or d.get("root") != ROMS_ROOT or not isinstance(d.get("games"), list):
+            return None
+        out = []
+        for g in d["games"]:
+            if not all(isinstance(g.get(k), str) for k in ("title", "path", "tag", "core", "sid")):
+                return None
+            g.setdefault("card", 1)
+            out.append(g)
+        return out
+    except Exception:
+        return None
+
+
+def same_games(a, b):
+    """True when two scans list the same games in the same order (so a refresh need not replace the list)."""
+    return len(a) == len(b) and all(x["path"] == y["path"] and x["title"] == y["title"] and x["sid"] == y["sid"]
+                                    for x, y in zip(a, b))
+
+
+def rom_size(g):
+    """Size of a game's file in bytes, read the first time it is asked for (scans no longer stat every ROM)."""
+    sz = g.get("size")
+    if sz is None:
+        try:
+            sz = os.path.getsize(g["path"])
+        except OSError:
+            sz = 0
+        g["size"] = sz
+    return sz
+
+
+class LazyCards:
+    """List-like view that builds each flow card the first time it is indexed.
+
+    A system can hold thousands of games and the launcher only ever touches the few cards around the cursor, so building
+    every card dict (title, hue, abbreviation, art lookup) up front stalled entering a big list and again whenever the
+    artwork version changed. Only len() and indexing are needed by the drawing and input code.
+    """
+    __slots__ = ("_items", "_make", "_built")
+
+    def __init__(self, items, make):
+        self._items, self._make, self._built = items, make, {}
+
+    def __len__(self):
+        return len(self._items)
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            return [self[j] for j in range(*i.indices(len(self._items)))]
+        n = len(self._items)
+        if i < 0:
+            i += n
+        if not 0 <= i < n:
+            raise IndexError(i)
+        c = self._built.get(i)
+        if c is None:
+            c = self._built[i] = self._make(self._items[i])
+        return c
+
+    def __iter__(self):
+        for i in range(len(self._items)):
+            yield self[i]
 
 
 class Rescan:
@@ -383,6 +466,7 @@ class Rescan:
     def _work(self):
         try:
             r = scan_roms()
+            save_scan_cache(r)
         except Exception:
             r = None
         with self._lock:
@@ -843,81 +927,6 @@ def anim_tick():
     return moving
 
 
-# ---- RG OS motion ------------------------------------------------------------------------------
-FX_TRANS_S, FX_TOP, GLOW_PAD = 0.30, 66, 16
-FX_DEPTH = {"home": 0, "systems": 1, "tools": 1, "settings": 1, "recents": 1, "favorites": 1, "games": 2}
-
-
-def ease_out_cubic(t):
-    t = 1.0 - max(0.0, min(1.0, t))
-    return 1.0 - t * t * t
-
-
-class Spring:
-    """Damped spring. zeta=1 is critically damped (no overshoot); below 1 it overshoots a little and settles."""
-    __slots__ = ("x", "v")
-
-    def __init__(self, x=0.0):
-        self.x, self.v = float(x), 0.0
-
-    def snap(self, x):
-        self.x, self.v = float(x), 0.0
-
-    def step(self, target, dt, omega=24.0, zeta=1.0):
-        """Advance by dt seconds. True while still moving, so the caller can keep the frame rate up."""
-        if self.x == target and self.v == 0.0:
-            return False
-        n = max(1, int(math.ceil(dt * 120.0)))
-        h = dt / n
-        for _ in range(n):
-            self.v += (omega * omega * (target - self.x) - 2.0 * zeta * omega * self.v) * h
-            self.x += self.v * h
-        if abs(self.x - target) < 0.002 and abs(self.v) < 0.02:
-            self.x, self.v = float(target), 0.0
-            return False
-        return True
-
-
-_GLOW = {}
-_ICON_SC = {}
-
-
-def _glow_face(w, h, radius, col, level):
-    """Soft halo for the focused home tile: stacked rounded rects, cached per intensity step (1..8)."""
-    key = (w, h, radius, col, level)
-    g = _GLOW.get(key)
-    if g is None:
-        if len(_GLOW) > 24:
-            _GLOW.clear()
-        pad = GLOW_PAD
-        g = pygame.Surface((w + 2 * pad, h + 2 * pad), pygame.SRCALPHA)
-        peak = 90.0 * level / 8.0
-        for d in range(pad, 0, -1):
-            a = int(peak * (1.0 - d / float(pad)) ** 2)
-            if a > 0:
-                pygame.draw.rect(g, tuple(col[:3]) + (a,), (pad - d, pad - d, w + 2 * d, h + 2 * d), border_radius=radius + d)
-        _GLOW[key] = g
-    return g
-
-
-def draw_icon(fn, c, cx, cy, col, bg, scale=1.0):
-    """Draw one of the ICONS, optionally scaled about its centre (icons live in a 96x96 box)."""
-    if scale < 1.015:
-        fn(c, cx, cy, col, bg)
-        return
-    sq = round(scale * 50) / 50.0
-    key = (fn, col, bg, sq)
-    s = _ICON_SC.get(key)
-    if s is None:
-        if len(_ICON_SC) > 48:
-            _ICON_SC.clear()
-        base = pygame.Surface((120, 120), pygame.SRCALPHA)
-        fn(base, 60, 60, col, bg)
-        n = int(120 * sq)
-        s = _ICON_SC[key] = pygame.transform.smoothscale(base, (n, n))
-    c.blit(s, (cx - s.get_width() // 2, cy - s.get_height() // 2))
-
-
 XMB_UI = [False]
 _GLASS = {}
 
@@ -961,7 +970,7 @@ def ui_rect(surf, col, rect, radius=0):
         surf.blit(_glass_face(w, h, radius, _glass_tint(), 105), (x, y))
 
 
-def draw_button(surf, rect, base, radius=12, depth=4, sel=False, pop=None):
+def draw_button(surf, rect, base, radius=12, depth=4, sel=False):
     x, y, w, h = rect
     st = _BTN_ANIM.get(rect)
     if st is None:
@@ -978,7 +987,7 @@ def draw_button(surf, rect, base, radius=12, depth=4, sel=False, pop=None):
     e = st[0] * st[0] * (3.0 - 2.0 * st[0])
     hl = round(e * ANIM_STEPS) / ANIM_STEPS
     base = _mix(st[2], st[1], hl)
-    lift = int(round(LIFT_PX * (hl if pop is None else pop))) if h >= 80 and not CLASSIC_UI[0] else 0
+    lift = int(round(LIFT_PX * hl)) if h >= 80 and not CLASSIC_UI[0] else 0
     y -= lift
     if CLASSIC_UI[0]:
         return _classic_button(surf, (x, y, w, h), hl), 0
@@ -1037,7 +1046,9 @@ SETTINGS_ROWS = ["theme", "launcher", "splash", "emulators", "bios", "artwork", 
 RECENT_MAX = 20
 
 LAUNCHERS = [("rgos", "RG OS", "Classic tile launcher"), ("xmb", "RG XMB", "PlayStation-style cross media bar"),
-             ("rgclassic", "RG Classic", "Pixel launcher: tiles, lists and menus")]
+             ("flow", "RG Flow", "Carousels: menu, systems, games"),
+             ("rgclassic", "RG Classic", "Pixel launcher: tiles, lists and menus"),
+             ("steamos", "SteamOS", "Steam Deck gaming mode: hero backdrop, capsule row, Play button, MENU side panel")]
 DEFAULT_LAUNCHER = LAUNCHERS[0][0]
 
 
@@ -1208,7 +1219,7 @@ ICONS = {"games": icon_games, "recents": icon_recents, "favorites": icon_favorit
          "swapab": icon_swapab, "dpadjoy": icon_dpadjoy, "wifi": icon_wifi, "bluetooth": icon_bluetooth, "ssh": icon_ssh, "info": icon_info, "files": icon_files}
 
 
-# ---- per-system icons (RG XMB list) --------------------------------------------------------
+# ---- per-system icons (RG XMB list, RG Flow system cards) --------------------------------------------------------
 # Same convention as the icons above: drawn white-on-transparent around (cx, cy) inside a 96x96 box, `bg` cuts details out
 # of the body. Generic shapes (handheld, pad, cartridge, ...), deliberately not console logos.
 
@@ -1623,50 +1634,42 @@ def _xmb_silk_steps(g, f, t):
         yield
 
 
-_XMB_FOCUS = [170, 240]   # screen position of the focused list item (the launch zoom grows from here)
-_XHALO = {}
-
-
-def _xmb_halo(r, level):
-    """Soft round glow behind the focused category icon: concentric discs, cached per radius and intensity step (1..8)."""
-    key = (r, level, tuple(TEXT[:3]))
-    h = _XHALO.get(key)
-    if h is None:
-        if len(_XHALO) > 40:
-            _XHALO.clear()
-        h = pygame.Surface((2 * r, 2 * r), pygame.SRCALPHA)
-        peak = 70.0 * level / 8.0
-        for d in range(r, 0, -2):
-            a = int(peak * (1.0 - d / float(r)) ** 1.5)
-            if a > 0:
-                pygame.draw.circle(h, tuple(TEXT[:3]) + (a,), (r, r), d)
-        _XHALO[key] = h
-    return h
-
-
-def _xmb_column(c, f_row, f_small, colx, y0, sp, gap, items, vy, enter, amul, bump, focus):
-    """One item column. `enter` is seconds since it appeared: items rise and fade in as a cascade that spreads outward
-    from the focused row. amul scales the alpha (used to fade the outgoing column)."""
+def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade):
+    ax, bar_y, big, small, sp_x = 170, int(H * 0.26), 76, 50, 118
+    sp, gap = 56 + max(0, H - 480) // 10, 16
+    for i, (cid, cname) in enumerate(XMB_CATS):
+        d = i - cx_f
+        x = int(round(ax + d * sp_x + max(-1.0, min(1.0, d)) * 24))
+        if x < -60 or x > W + 60:
+            continue
+        t = max(0.0, 1.0 - abs(d))
+        t = t * t * (3.0 - 2.0 * t)
+        size = int(round((small + (big - small) * t) / 4.0)) * 4
+        if t > 0.05:
+            pygame.draw.circle(c, xmb_tint(x, bar_y, 0.09 * t), (x, bar_y), int(size * 0.62))
+        c.blit(xmb_icon(cid, size, _mix(DIM, TEXT, t), 0.5 + 0.5 * t), (x - size // 2, bar_y - size // 2))
+        if t > 0.3:
+            lab = f_row.render(cname, True, _xq(_mix(BG, TEXT, t)))
+            c.blit(lab, (x - lab.get_width() // 2, bar_y + big // 2 + 8))
+    colx = int(round(ax + (cat_i - cx_f) * sp_x))
+    y0 = bar_y + big // 2 + 8 + 26 + sp // 2 + 6
     for i, it in enumerate(items):
         d = i - vy
         if d < -1.0 or d > 7.0:
             continue
-        p = ease_out_cubic((enter - 0.05 * min(abs(d), 5.0)) / 0.30)
-        y = y0 + d * sp + max(-1.0, min(1.0, d)) * gap + (1.0 - p) * 18.0
+        y = y0 + d * sp + max(-1.0, min(1.0, d)) * gap
         if y > H - 40:
             continue
         sel_t = max(0.0, 1.0 - abs(d))
         sel_t = sel_t * sel_t * (3.0 - 2.0 * sel_t)
-        al = (1.0 + min(0.0, d)) * p * amul
+        al = (1.0 + min(0.0, d)) * fade * fade * (3.0 - 2.0 * fade)
         if d > 0:
             al *= max(0.0, min(1.0, (H - 44 - y) / 30.0))
         if al <= 0.02:
             continue
         al *= 0.80 + 0.20 * sel_t
-        isz = int(round((34 + 14 * sel_t + 8 * bump * sel_t) / 2.0)) * 2
+        isz = int(round((34 + 14 * sel_t) / 2.0)) * 2
         yi = int(round(y))
-        if focus and sel_t > 0.5:
-            _XMB_FOCUS[0], _XMB_FOCUS[1] = colx, yi
         if sel_t > 0.05:
             pygame.draw.circle(c, xmb_tint(colx, y, 0.08 * sel_t * al), (colx, yi), int(isz * 0.62))
         c.blit(xmb_icon(it["icon"], isz, _mix(DIM, TEXT, sel_t), al), (colx - isz // 2, yi - isz // 2))
@@ -1675,52 +1678,10 @@ def _xmb_column(c, f_row, f_small, colx, y0, sp, gap, items, vy, enter, amul, bu
         c.blit(lab, (tx, yi - lab.get_height() // 2 - int(round(10 * sel_t))))
         if sel_t > 0.2 and it.get("sub"):
             sub = f_small.render(fit(f_small, it["sub"], W - tx - 20), True, _xq(_mix(BG, DIM, al * sel_t)))
-            c.blit(sub, (tx + int((1.0 - sel_t) * 12), yi + 3))
-
-
-def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, enter, now=0.0, out=None, bump=0.0, intro=9.0):
-    ax, bar_y, big, small, sp_x = 170, int(H * 0.26), 76, 50, 118
-    sp, gap = 56 + max(0, H - 480) // 10, 16
-    for i, (cid, cname) in enumerate(XMB_CATS):
-        d = i - cx_f
-        x = int(round(ax + d * sp_x + max(-1.0, min(1.0, d)) * 24))
-        if x < -60 or x > W + 60:
-            continue
-        pi = ease_out_cubic((intro - 0.06 * i) / 0.35)      # startup: the bar drops in icon by icon
-        if pi <= 0.01:
-            continue
-        t = max(0.0, 1.0 - abs(d))
-        t = t * t * (3.0 - 2.0 * t)
-        size = int(round((small + (big - small) * t) / 2.0)) * 2
-        by_ = bar_y - int((1.0 - pi) * 18)
-        if t > 0.05:
-            lvl = int(round(8 * t * pi * (0.72 + 0.28 * math.sin(now * 2.4))))
-            if lvl >= 1:
-                c.blit(_xmb_halo(int(big * 0.9), lvl), (x - int(big * 0.9), by_ - int(big * 0.9)))
-            pygame.draw.circle(c, xmb_tint(x, by_, 0.09 * t * pi), (x, by_), int(size * 0.62))
-        c.blit(xmb_icon(cid, size, _mix(DIM, TEXT, t), (0.5 + 0.5 * t) * pi), (x - size // 2, by_ - size // 2))
-        if t > 0.3:
-            lab = f_row.render(cname, True, _xq(_mix(BG, TEXT, t * pi)))
-            c.blit(lab, (x - lab.get_width() // 2, by_ + big // 2 + 8 + int((1.0 - t) * 10)))
-    y0 = bar_y + big // 2 + 8 + 26 + sp // 2 + 6
-    if out is not None:       # the column we just left slides away with the camera and fades out
-        o_cat, o_items, o_vy, o_k = out
-        _xmb_column(c, f_row, f_small, int(round(ax + (o_cat - cx_f) * sp_x)), y0, sp, gap, o_items, o_vy, 9.0, o_k, 0.0, False)
-    _xmb_column(c, f_row, f_small, int(round(ax + (cat_i - cx_f) * sp_x)), y0, sp, gap, items, vy, enter, 1.0, bump, True)
+            c.blit(sub, (tx, yi + 3))
 
 
 _XDD = [None, None]
-_XDD_T = [None, 0.0]
-
-
-def _xdd_blit(c, panel, x, y, dd):
-    if _XDD_T[0] is not dd:
-        _XDD_T[0], _XDD_T[1] = dd, time.monotonic()
-    p = ease_out_cubic((time.monotonic() - _XDD_T[1]) / 0.18)
-    if p < 1.0:
-        _anim_clock[2] = True
-    panel.set_alpha(int(255 * p))
-    c.blit(panel, (x, y + int((1.0 - p) * 12)))
 
 
 def draw_xmb_dropdown(c, f_small, dd, opts):
@@ -1732,7 +1693,7 @@ def draw_xmb_dropdown(c, f_small, dd, opts):
     acc = tuple(ACCENT)[:3]
     key = (dd["sel"], dd["orig"], dd.get("kind"), first, vis, w, h, acc, tuple(TEXT), tuple(DIM), len(opts), f_small)
     if _XDD[0] == key:
-        _xdd_blit(c, _XDD[1], x, y, dd)
+        c.blit(_XDD[1], (x, y))
         return
     panel = pygame.Surface((w, h), pygame.SRCALPHA)
     pygame.draw.rect(panel, (0, 0, 0, 222), (0, 0, w, h), border_radius=12)
@@ -1757,10 +1718,17 @@ def draw_xmb_dropdown(c, f_small, dd, opts):
         if first + vis < len(opts):
             pygame.draw.polygon(panel, acc, [(w - 8, h - 12), (w - 14, h - 18), (w - 2, h - 18)])
     _XDD[0], _XDD[1] = key, panel
-    _xdd_blit(c, panel, x, y, dd)
+    c.blit(panel, (x, y))
 
 
 FONT_PATH = [None]
+FLOW_LEVELS = (1.0, 0.88, 0.77, 0.69, 0.62, 0.55, 0.50, 0.45)
+FLOW_CACHE_CARDS = 20
+FLOW_JUMP = 5  # the shoulder buttons move this many cards at once
+_FLOW = {"fonts": {}, "cards": {}, "bg": (None, None), "bar": (None, None), "glow": {}, "shadow": {}, "S": 0, "warm": None,
+         "jobs": {}, "op": 0.0}
+
+
 def _lru_get(d, key):
     v = d.pop(key, None)
     if v is not None:
@@ -1773,6 +1741,151 @@ def _lru_put(d, key, val, cap):
     while len(d) > cap:
         d.pop(next(iter(d)))
 
+
+def flow_level_width(S, li):
+    return max(16, int(round(S * FLOW_LEVELS[li])))
+
+
+def flow_level_index(tw, S):
+    best = 0
+    for li in range(len(FLOW_LEVELS)):
+        if flow_level_width(S, li) >= tw - 0.5:
+            best = li
+        else:
+            break
+    return best
+
+
+def _flow_font(size, bold=True):
+    key = (int(size), bold)
+    f = _FLOW["fonts"].get(key)
+    if f is None:
+        try:
+            f = pygame.font.Font(FONT_PATH[0], int(size)) if FONT_PATH[0] else pygame.font.Font(None, int(size * 1.3))
+        except Exception:
+            f = pygame.font.Font(None, int(size * 1.3))
+        f.set_bold(bold)
+        f = _FLOW["fonts"][key] = CFont(f)
+    return f
+
+
+def flow_abbr(title):
+    words = re.findall(r"[A-Za-z0-9]+", title)
+    if len(words) > 1 and words[0].lower() in ("the", "a", "an"):
+        words = words[1:]
+    if len(words) >= 2:
+        return (words[0][0] + words[1][0]).upper()
+    return (words[0][:2] if words else "?").upper()
+
+
+def flow_hue(sid):
+    return sum((i + 1) * ord(ch) for i, ch in enumerate(sid or "x")) * 47 % 360
+
+
+def _flow_hsv(h, s, v):
+    import colorsys
+    r, g, b = colorsys.hsv_to_rgb(h / 360.0, s, v)
+    return (int(r * 255), int(g * 255), int(b * 255))
+
+
+def _flow_gradient_card(hue, tag, abbr, S, icon=None):
+    r = max(8, S // 10)
+    surf = pygame.Surface((S, S), pygame.SRCALPHA)
+    top, bot = _flow_hsv(hue, 0.42, 0.80), _flow_hsv(hue, 0.50, 0.50)
+    for y in range(S):
+        surf.fill(_mix(top, bot, y / max(1, S - 1)), (0, y, S, 1))
+    mask = pygame.Surface((S, S), pygame.SRCALPHA)
+    pygame.draw.rect(mask, (255, 255, 255, 255), (0, 0, S, S), border_radius=r)
+    surf.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    gl = pygame.Surface((S, S), pygame.SRCALPHA)
+    for y in range(S):
+        if y < S * 0.5:
+            gl.fill((255, 255, 255, int(52 * (1 - y / (S * 0.5)) ** 1.5)), (0, y, S, 1))
+        elif y > S * 0.72:
+            gl.fill((0, 0, 0, int(60 * (y - S * 0.72) / (S * 0.28))), (0, y, S, 1))
+    gl.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    surf.blit(gl, (0, 0))
+    pygame.draw.rect(surf, (255, 255, 255, 80), (0, 0, S, S), max(2, S // 130), border_radius=r)
+    if tag:
+        ft = _flow_font(S * 0.066, False)
+        tt = ft.render(tag, True, (240, 240, 250))
+        px, py = int(S * 0.045), int(S * 0.02)
+        cw, ch = tt.get_width() + 2 * px, tt.get_height() + 2 * py
+        chip = pygame.Surface((cw, ch), pygame.SRCALPHA)
+        pygame.draw.rect(chip, (30, 25, 60, 90), (0, 0, cw, ch), border_radius=max(4, ch // 4))
+        surf.blit(chip, (int(S * 0.06), int(S * 0.06)))
+        surf.blit(tt, (int(S * 0.06) + px, int(S * 0.06) + py))
+    if icon:
+        # A card with a short name (a system) lifts the icon and puts the name under it; the home cards have no name.
+        lift = bool(abbr)
+        dcy, dr, isz = (int(S * 0.44), int(S * 0.29), int(S * 0.42)) if lift else (S // 2, int(S * 0.34), int(S * 0.5))
+        disc = pygame.Surface((S, S), pygame.SRCALPHA)
+        pygame.draw.circle(disc, (255, 255, 255, 40), (S // 2, dcy), dr)
+        pygame.draw.circle(disc, (255, 255, 255, 60), (S // 2, dcy), dr, max(2, S // 90))
+        surf.blit(disc, (0, 0))
+        surf.blit(xmb_icon(icon, isz, (242, 242, 250)), ((S - isz) // 2, dcy - isz // 2))
+        if lift:
+            at = _flow_font(S * 0.115).render(abbr, True, (242, 242, 250))
+            surf.blit(at, ((S - at.get_width()) // 2, int(S * 0.84) - at.get_height() // 2))
+    else:
+        fa = _flow_font(S * (0.32 if len(abbr) <= 3 else 0.24))
+        at = fa.render(abbr, True, (242, 242, 250))
+        surf.blit(at, ((S - at.get_width()) // 2, int(S * 0.55) - at.get_height() // 2))
+    return surf
+
+
+def _flow_art_steps(path, S):
+    """Square card made from a cover image: fitted whole, over a blurred copy of itself.
+
+    A generator that yields after every heavy step (decode, each scale, blur), so flow_warm can spread a
+    card over several frames instead of stalling one frame for the whole build. Returns the card, or None.
+    """
+    try:
+        img = pygame.image.load(path)
+        try:
+            img = img.convert_alpha()
+        except Exception:
+            pass
+        yield
+        iw, ih = img.get_size()
+        if iw < 2 or ih < 2:
+            return None
+        surf = pygame.Surface((S, S), pygame.SRCALPHA)
+        if abs(iw / float(ih) - 1.0) < 0.06:
+            surf.blit(pygame.transform.smoothscale(img, (S, S)), (0, 0))
+            yield
+        else:
+            kc = max(S / float(iw), S / float(ih))
+            cw, ch = max(S, int(iw * kc + 0.5)), max(S, int(ih * kc + 0.5))
+            surf.blit(pygame.transform.smoothscale(img, (cw, ch)), ((S - cw) // 2, (S - ch) // 2))
+            yield
+            surf = _flow_blur(surf, 8)
+            yield
+            shade = pygame.Surface((S, S), pygame.SRCALPHA)
+            shade.fill((0, 0, 0, 110))
+            surf.blit(shade, (0, 0))
+            kf = min(S / float(iw), S / float(ih))
+            fw, fh = max(1, int(iw * kf + 0.5)), max(1, int(ih * kf + 0.5))
+            surf.blit(pygame.transform.smoothscale(img, (fw, fh)), ((S - fw) // 2, (S - fh) // 2))
+            yield
+        r = max(8, S // 10)
+        mask = pygame.Surface((S, S), pygame.SRCALPHA)
+        pygame.draw.rect(mask, (255, 255, 255, 255), (0, 0, S, S), border_radius=r)
+        surf.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        pygame.draw.rect(surf, (255, 255, 255, 80), (0, 0, S, S), max(2, S // 130), border_radius=r)
+        return surf
+    except Exception as e:
+        log("artwork: cannot use %s: %s" % (path, e))
+        return None
+
+
+def _flow_art_card(path, S):
+    gen = _flow_art_steps(path, S)
+    while True:
+        try:
+            next(gen)
+        except StopIteration as e:
+            return e.value
 
 _DETAIL_ART = {}
 
@@ -1808,6 +1921,766 @@ def _detail_cover(path, w, h, load=True):
         log("artwork: cannot use %s: %s" % (path, e))
     _lru_put(_DETAIL_ART, key, surf, 12)
     return surf or None
+
+
+def _flow_key(hue, tag, abbr, S, icon=None, art=None):
+    return (hue, tag, abbr, S, icon) + ((art,) if art else ())
+
+
+def _flow_base(hue, tag, abbr, S, icon=None, art=None):
+    key = _flow_key(hue, tag, abbr, S, icon, art)
+    cards = _FLOW["cards"]
+    lv = _lru_get(cards, key)
+    if lv is None:
+        surf = _flow_art_card(art, S) if art else None
+        if surf is None:
+            surf = _flow_gradient_card(hue, tag, abbr, S, icon)
+        lv = [surf] + [None] * (len(FLOW_LEVELS) - 1)
+        _lru_put(cards, key, lv, FLOW_CACHE_CARDS)
+    return key, lv
+
+
+def _flow_draw_base(hue, tag, abbr, S, icon=None, art=None):
+    """Card for the draw loop. A cover that is not built yet shows the cheap gradient card for now.
+
+    Decoding and scaling a cover inside the frame is what made scrolling stutter; flow_warm builds it
+    over the next frames and the cover appears as soon as it is ready.
+    """
+    key = _flow_key(hue, tag, abbr, S, icon, art)
+    lv = _lru_get(_FLOW["cards"], key)
+    if lv is not None:
+        return key, lv
+    if art:
+        return _flow_base(hue, tag, abbr, S, icon)
+    return _flow_base(hue, tag, abbr, S, icon, art)
+
+
+def _flow_art_advance(k, end):
+    """Advance the build of cover card k until it is finished or time `end` passes; None while unfinished."""
+    jobs = _FLOW["jobs"]
+    job = jobs.get(k)
+    if job is None:
+        job = jobs[k] = _flow_art_steps(k[5], k[3])
+    while True:
+        try:
+            next(job)
+        except StopIteration as e:
+            jobs.pop(k, None)
+            surf = e.value
+            if surf is None:
+                surf = _flow_gradient_card(k[0], k[1], k[2], k[3], k[4])
+            lv = [surf] + [None] * (len(FLOW_LEVELS) - 1)
+            _lru_put(_FLOW["cards"], k, lv, FLOW_CACHE_CARDS)
+            return lv
+        if time.perf_counter() >= end:
+            return None
+
+
+def _flow_build_level(lv, S, li):
+    if lv[li] is None:
+        w, base = flow_level_width(S, li), lv[0]
+        lv[li] = pygame.transform.smoothscale(base, (w, w)) if w != base.get_width() else base
+    return lv[li]
+
+
+def _flow_cover(lv, S, li):
+    while li > 0 and lv[li] is None:
+        li -= 1
+    return lv[li]
+
+
+def _flow_blur(base, k=5):
+    sz = base.get_size()
+    small = pygame.transform.smoothscale(base, (max(4, sz[0] // k), max(4, sz[1] // k)))
+    return pygame.transform.smoothscale(small, sz)
+
+
+def _flow_glow_level(S, li, build=True):
+    w = flow_level_width(S, li)
+    key = (w, tuple(ACCENT[:3]))
+    glow = _FLOW["glow"]
+    s = _lru_get(glow, key)
+    if s is None and build:
+        g = max(12, w // 6)
+        base = pygame.Surface((w + 2 * g, w + 2 * g), pygame.SRCALPHA)
+        pygame.draw.rect(base, tuple(ACCENT[:3]) + (150,), (g, g, w, w), border_radius=max(8, w // 8))
+        s = _flow_blur(base)
+        _lru_put(glow, key, s, 24)
+    return s
+
+
+def _flow_shadow(w):
+    w = max(8, (w // 4) * 4)
+    s = _lru_get(_FLOW["shadow"], w)
+    if s is None:
+        small = pygame.Surface((20, 5), pygame.SRCALPHA)
+        pygame.draw.ellipse(small, (0, 0, 0, 170), (2, 0, 16, 5))
+        s = pygame.transform.smoothscale(small, (max(8, int(w * 0.94)), max(6, int(w * 0.11))))
+        _lru_put(_FLOW["shadow"], w, s, 64)
+    return s
+
+
+def _flow_title(title, compact):
+    tsize = 34 if compact else 44
+    while tsize > 20 and _flow_font(tsize).size(title)[0] > W - 40:
+        tsize -= 2
+    tf = _flow_font(tsize)
+    ttxt = fit(tf, title, W - 40)
+    tt = tf.render(ttxt, True, TEXT)
+    ts = None
+    if sum(BG) < 384:
+        ts = tf.render(ttxt, True, (0, 0, 0))
+        ts.set_alpha(130)
+    return tt, ts
+
+
+def flow_warm(cards, centre, budget, moving=False):
+    """Build cards, glows and scaled levels near the centre, never running past `budget` seconds.
+
+    While scrolling the budget is a few milliseconds, so an operation is only started when the measured
+    cost of the last one still fits; the first one of a call always runs so warming cannot stall.
+
+    With `moving` set (a glide is running or a button was just pressed) nothing heavy may run: no cover
+    decoding, no glow or scaled levels, because one 20-50 ms operation in the middle of a glide is exactly
+    the stutter. Only the cheap gradient cards the next few steps will need are built (one per call), so a
+    shoulder-button jump of 5 never has to build them inside a frame; the rest waits until the glide ends.
+    """
+    n, S = len(cards), _FLOW["S"]
+    if not n or S <= 0:
+        return
+    sig = (id(cards), centre % n if n >= 3 else centre, S, tuple(ACCENT[:3]))
+    if _FLOW["warm"] == sig:
+        return
+    t0 = time.perf_counter()
+    end = t0 + budget
+    compact = H < 600
+    order, seen = [], set()
+    for dist in range(FLOW_JUMP + 3 if moving else 5):
+        for sgn in ((0,) if dist == 0 else (1, -1)):
+            i = centre + sgn * dist
+            if n >= 3:
+                i %= n
+            elif not 0 <= i < n:
+                continue
+            if i not in seen:
+                seen.add(i)
+                order.append((dist, i))
+    keys = [_flow_key(cards[i]["hue"], cards[i]["tag"], cards[i]["abbr"], S, cards[i].get("icon"), cards[i].get("art"))
+            for _d, i in order]
+    for k in [k for k in _FLOW["jobs"] if k not in keys]:
+        del _FLOW["jobs"][k]  # scrolled far away: drop half-built covers
+    levels, lkeys = [], []
+    steam = _STEAM["on"]
+    for (dist, i), k in zip(order, keys):
+        g = cards[i]
+        lv = _lru_get(_FLOW["cards"], k)
+        if moving:
+            # Cheap path: make sure the gradient card exists (a cover shows it until it is built at rest).
+            if lv is None and _lru_get(_FLOW["cards"], k[:5]) is None:
+                _flow_base(*k[:5])
+                return
+            continue
+        if lv is None:
+            if len(k) > 5:
+                lv = _flow_art_advance(k, end)
+                if lv is None:
+                    return
+            else:
+                lv = _flow_base(*k)[1]
+            if time.perf_counter() >= end:
+                if dist <= 2:
+                    levels.append(lv)
+                    lkeys.append(k)
+                return
+        if dist <= 2:
+            levels.append(lv)
+            lkeys.append(k)
+        if dist <= 3:
+            _flow_title(g["title"], compact)
+
+    if moving:
+        return
+    ops = [0]
+
+    def room():
+        """True if another scale operation may start now."""
+        if ops[0] == 0:
+            if budget >= 0.010 or _FLOW["op"] <= 2 * budget:
+                return True
+            _FLOW["skip"] = _FLOW.get("skip", 0) + 1
+            return _FLOW["skip"] % 4 == 0  # an op too big for a scrolling frame still runs now and then
+        return time.perf_counter() + _FLOW["op"] <= end
+
+    def timed(fn, *a):
+        t = time.perf_counter()
+        r = fn(*a)
+        dt = time.perf_counter() - t
+        _FLOW["op"] = dt if dt > _FLOW["op"] else _FLOW["op"] * 0.9 + dt * 0.1
+        ops[0] += 1
+        return r
+
+    if steam:
+        # SteamOS draws only the focus size and the 80 % size and has no glow: build the hero for the focus first, then
+        # the next and previous ones (so the next press already has its backdrop), then the resting-size covers.
+        for lv in levels[:3]:
+            if _steam_hero_peek(lv[0]) is None:
+                if not room():
+                    return
+                timed(_steam_hero, lv[0])
+        small = max(16, int(round(S * 0.8)))
+        for lv, k in zip(levels, lkeys):
+            if lv[1] is None:
+                if not room():
+                    return
+                timed(_flow_build_level, lv, S, 1)
+            if (k, small) not in _STEAM["covers"]:
+                if not room():
+                    return
+                timed(_steam_cover, k, lv, S, small)
+        _FLOW["warm"] = sig
+        return
+    for li in (0, 1):
+        if _flow_glow_level(S, li, False) is None:
+            if not room():
+                return
+            timed(_flow_glow_level, S, li)
+    rest = (4, 7)
+    for tier in (rest, [li for li in range(1, len(FLOW_LEVELS)) if li not in rest]):
+        for lv in levels:
+            for li in tier:
+                if lv[li] is None:
+                    if not room():
+                        return
+                    timed(_flow_build_level, lv, S, li)
+    _FLOW["warm"] = sig
+
+
+def flow_bg(c):
+    key = (BG, ACCENT, W, H)
+    if _FLOW["bg"][0] != key:
+        dark = sum(BG) < 384
+        top = _mix(BG, ACCENT, 0.22 if dark else 0.16)
+        bot = _mix(BG, (0, 0, 0), 0.55) if dark else _mix(BG, ACCENT, 0.04)
+        s = pygame.Surface((W, H))
+        for y in range(H):
+            s.fill(_mix(top, bot, (y / max(1, H - 1)) ** 0.8), (0, y, W, 1))
+        lg = pygame.Surface((32, 18), pygame.SRCALPHA)
+        pygame.draw.ellipse(lg, tuple(ACCENT[:3]) + (70 if dark else 40,), (3, 2, 26, 14))
+        s.blit(pygame.transform.smoothscale(lg, (W, int(H * 0.8))), (0, int(H * 0.08)))
+        _FLOW["bg"] = (key, s)
+    c.blit(_FLOW["bg"][1], (0, 0))
+
+
+def draw_flow_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk, bat, scanning):
+    _STEAM["on"] = False
+    compact = H < 600
+    arrows = bool(FONT_PATH[0])
+    flow_bg(c)
+    fl = _flow_font(26 if not compact else 22)
+    x = 20
+    for ch in "RG":
+        t = fl.render(ch, True, _mix(ACCENT, TEXT, 0.35))
+        c.blit(t, (x, 18)); x += t.get_width() + 5
+    x += 10
+    for ch in "OS":
+        t = fl.render(ch, True, TEXT)
+        c.blit(t, (x, 18)); x += t.get_width() + 5
+    info = "Scanning..." if scanning else clk
+    if bat and not scanning:
+        info += "   %d%%%s" % (bat[0], "+" if bat[1].lower() == "charging" else "")
+    it = f_small.render(info, True, (230, 70, 60) if bat and bat[0] <= 15 and bat[1].lower() != "charging" and not scanning else DIM)
+    c.blit(it, (x + 6, 18 + (fl.get_height() - it.get_height()) // 2))
+    left_end = x + 6 + it.get_width() + 14
+    if crumb:
+        cf = f_small if compact else f_row
+        txt = fit(cf, crumb, max(60, W - 40 - left_end - 28))
+        ct = cf.render(txt, True, BG)
+        cw_, ch_h = ct.get_width() + 28, 28 if compact else 34
+        cy_ = 14 if compact else 16
+        pygame.draw.rect(c, _mix(BG, ACCENT, 0.75), (W - 20 - cw_, cy_, cw_, ch_h), border_radius=8)
+        c.blit(ct, (W - 20 - cw_ + 14, cy_ + (ch_h - ct.get_height()) // 2))
+
+    bar_h = 34 if compact else 38
+    bar_y = H - bar_h - (12 if compact else 16)
+    sub_cy = bar_y - (50 if compact else 76)
+    title_cy = sub_cy - (36 if compact else 47)
+    card_bot = title_cy - (30 if compact else 45)
+    S = int(min(W * 0.466, card_bot - (78 if compact else 84)))
+    _FLOW["S"] = S
+    n = len(cards)
+    if not n:
+        t = _flow_font(26 if not compact else 22).render(empty[0], True, TEXT)
+        c.blit(t, ((W - t.get_width()) // 2, H // 2 - 30))
+        t2 = f_small.render(empty[1], True, DIM)
+        c.blit(t2, ((W - t2.get_width()) // 2, H // 2 + 8))
+    else:
+        wrap_ = n >= 3
+        base_i = int(round(fx))
+        reach = 2 if n >= 5 else 1
+        vis = []
+        for i in range(base_i - reach, base_i + reach + 1):
+            if not wrap_ and not 0 <= i < n:
+                continue
+            d = i - fx
+            if abs(d) > reach + 0.6:
+                continue
+            vis.append((abs(d), i, d))
+        for _ad, i, d in sorted(vis, reverse=True):
+            g = cards[i % n]
+            a = min(abs(d), 2.0)
+            scale = 1 - 0.38 * min(a, 1.0) - 0.17 * max(0.0, a - 1.0)
+            off = (1 if d > 0 else -1) * S * (0.745 * min(a, 1.0) + 0.42 * max(0.0, a - 1.0)) * (abs(d) / a if a else 0)
+            alpha = 255 - 55 * min(a, 1.0) - 110 * max(0.0, a - 1.0) if a < 2 else 90
+            tw_ = S * scale
+            w = max(16, int(round(tw_)))
+            key, lv = _flow_draw_base(g["hue"], g["tag"], g["abbr"], S, g.get("icon"), g.get("art"))
+            li = flow_level_index(tw_, S)
+            src = _flow_cover(lv, S, li)
+            surf = src if src.get_width() == w else pygame.transform.scale(src, (w, w))
+            surf.set_alpha(int(max(0, min(255, alpha * fade))))
+            ccx, ccy = W // 2 + off, card_bot - S // 2
+            x0_, y0_ = int(ccx - w / 2), int(ccy - w / 2)
+            if abs(d) < 0.5:
+                j = li
+                gs = _flow_glow_level(S, j, False)
+                while gs is None and j > 0:
+                    j -= 1
+                    gs = _flow_glow_level(S, j, False)
+                if gs is None:
+                    j, gs = 0, _flow_glow_level(S, 0)
+                lw_ = flow_level_width(S, j)
+                if lw_ != w:
+                    gs = pygame.transform.scale(gs, (max(1, gs.get_width() * w // lw_), max(1, gs.get_height() * w // lw_)))
+                gs.set_alpha(int(255 * fade * (1 - abs(d) * 2)))
+                c.blit(gs, (x0_ - (gs.get_width() - w) // 2, y0_ - (gs.get_height() - w) // 2))
+            sh = _flow_shadow(w)
+            sh.set_alpha(int(210 * fade * (1 - 0.4 * min(a, 1.0))))
+            c.blit(sh, (int(ccx - sh.get_width() / 2), y0_ + w - sh.get_height() // 3))
+            c.blit(surf, (x0_, y0_))
+        ci = int(round(fx))
+        g = cards[ci % n] if wrap_ else cards[max(0, min(n - 1, ci))]
+        tt, ts = _flow_title(g["title"], compact)
+        star = f_row.render("\u2605" if arrows else "*", True, ACCENT) if g.get("fav") else None
+        tw = tt.get_width() + (star.get_width() + 10 if star else 0)
+        tx = (W - tw) // 2
+        if ts:
+            c.blit(ts, (tx + 2, title_cy - tt.get_height() // 2 + 2))
+        c.blit(tt, (tx, title_cy - tt.get_height() // 2))
+        if star:
+            c.blit(star, (tx + tt.get_width() + 10, title_cy - star.get_height() // 2))
+        pos = "%d / %d" % ((ci % n) + 1, n)
+        sub = ("%s   \u2022   %s" if arrows else "%s  -  %s") % (g["sub"], pos) if g["sub"] else pos
+        st = (f_small if compact else f_row).render(fit(f_small if compact else f_row, sub, W - 40), True, DIM)
+        c.blit(st, ((W - st.get_width()) // 2, sub_cy - st.get_height() // 2))
+        if 1 < n <= 12:
+            dy = sub_cy + (23 if compact else 33)
+            gap = 14
+            dx = (W - (n - 1) * gap) // 2 - 0
+            sel_i = ci % n if wrap_ else max(0, min(n - 1, ci))
+            for k in range(n):
+                if k == sel_i:
+                    pygame.draw.rect(c, ACCENT, (dx + k * gap - 7, dy - 3, 14, 6), border_radius=3)
+                else:
+                    pygame.draw.circle(c, _mix(BG, TEXT, 0.35), (dx + k * gap, dy), 3)
+
+    if _FLOW["bar"][0] != (BG, W, bar_h):
+        bs = pygame.Surface((W - 40, bar_h), pygame.SRCALPHA)
+        pygame.draw.rect(bs, (0, 0, 0, 90) if sum(BG) < 384 else (255, 255, 255, 110), (0, 0, W - 40, bar_h), border_radius=bar_h // 3)
+        _FLOW["bar"] = ((BG, W, bar_h), bs)
+    c.blit(_FLOW["bar"][1], (20, bar_y))
+    hy = bar_y + bar_h // 2
+    for k_, (key_, label) in enumerate(hints):
+        key_ = key_.replace("<>", "\u25c0 \u25b6" if arrows else "L/R")
+        fxp = (k_ + 0.5) / len(hints)
+        hot = key_ in ("A",)
+        kt = f_small.render(key_, True, BG if hot else TEXT)
+        lt = f_row.render(label, True, DIM) if not compact else f_small.render(label, True, DIM)
+        bw, bh = kt.get_width() + 14, kt.get_height() + 4
+        tw = bw + 8 + lt.get_width()
+        x0 = max(32, min(W - 32 - tw, int(W * fxp - tw / 2)))
+        pygame.draw.rect(c, _mix(BG, ACCENT, 0.8) if hot else _mix(BG, TEXT, 0.2), (x0, hy - bh // 2, bw, bh), border_radius=bh // 2)
+        c.blit(kt, (x0 + 7, hy - kt.get_height() // 2))
+        c.blit(lt, (x0 + bw + 8, hy - lt.get_height() // 2))
+
+
+# ---- SteamOS launcher (Steam Deck gaming-mode look) --------------------------------------------------------------
+# Reuses the RG Flow plumbing (cards, scrolling, cover cache, input) and only changes how a level is drawn: a left-
+# anchored capsule row with a pulsing focus ring, a title block with a green Play button, a crossfading hero backdrop,
+# a Steam-button side menu (MENU) and a Deck-style prompt bar (MENU/X on the left, A/B/Y on the right). The palette is
+# fixed (it is the look being cloned) and does not follow the RG OS theme.
+FLOW_LIKE = ("flow", "steamos")
+STEAM_BG, STEAM_BG2 = (14, 20, 27), (30, 45, 62)
+STEAM_BLUE, STEAM_TEXT, STEAM_DIM, STEAM_YELLOW = (26, 159, 255), (199, 213, 224), (132, 146, 160), (232, 188, 48)
+STEAM_GREEN, STEAM_GREEN2 = (112, 192, 52), (72, 128, 30)
+STEAM_PANEL, STEAM_LINE, STEAM_SEL = (22, 29, 38), (44, 60, 80), (52, 74, 100)
+STEAM_BTN = {"A": (91, 163, 43), "B": (214, 76, 62), "X": (26, 159, 255), "Y": (232, 188, 48)}
+STEAM_FADE = 0.22
+HERO_DIV = 4            # the hero is composed at 1/4 size and upscaled once; it is blurred and shaded anyway
+HERO_CACHE = 6          # finished full-screen heroes kept (about 1.5 MB each)
+COVER_CACHE = 48        # per-width scaled capsule covers kept
+# the Steam-button menu: (target view, label); "home" and "power" are handled by the input code
+STEAM_MENU = (("home", "Home"), ("games", "Library"), ("recents", "Recent Games"), ("favorites", "Favorites"),
+              ("tools", "Tools"), ("settings", "Settings"), ("power", "Power"))
+STEAM_UI = {"open": False, "slide": 0.0, "sel": 0, "wifi": None, "rest": True}
+_STEAM = {"grad": (None, None), "shade": (None, None, None), "heroes": {}, "shown": None, "prev": None, "dim": (None, None),
+          "covers": {}, "btn": {}, "on": False}
+
+
+def steam_menu_index(view):
+    return {"systems": 1, "games": 1, "recents": 2, "favorites": 3}.get(view, 0)
+
+
+def steam_clock(clk):
+    """24 h 'HH:MM' from the clock -> the Deck's default 12 h 'h:MM AM'."""
+    try:
+        h, m = clk.split(":")[:2]
+        h = int(h)
+    except ValueError:
+        return clk
+    return "%d:%s %s" % (h % 12 or 12, m[:2], "AM" if h < 12 else "PM")
+
+
+def steam_heading(crumb):
+    return {"": "Home", "Recents": "Recent Games"}.get(crumb, crumb)
+
+
+def steam_hints(hints, is_game, menu_open):
+    """Flow hints -> Deck prompts: A reads Play on a game and Select elsewhere, the MENU hint moves to the left side of
+    the bar, and X (rescan) is always offered. While the side menu is open only A and B apply."""
+    if menu_open:
+        return [("A", "Select"), ("B", "Back")]
+    out = [(k, ("Play" if is_game else "Select") if k == "A" else l) for k, l in hints if k != "MENU"]
+    if not any(k == "X" for k, _l in out):
+        out.append(("X", "Rescan"))
+    return out
+
+
+def _steam_layers(gk):
+    """Small-size gradient and the two shade layers, built once per screen size."""
+    if _STEAM["shade"][0] != gk:
+        sw, sh = max(8, W // HERO_DIV), max(8, H // HERO_DIV)
+        g = pygame.Surface((sw, sh), 0, 32)
+        for y in range(sh):
+            g.fill(_mix(STEAM_BG2, STEAM_BG, min(1.0, y / (sh * 0.8))), (0, y, sw, 1))
+        left = pygame.Surface((sw, sh), pygame.SRCALPHA)
+        for x in range(sw):
+            left.fill((8, 12, 18, int(185 * max(0.0, 1.0 - x / (sw * 0.8)))), (x, 0, 1, sh))
+        low = pygame.Surface((sw, sh), pygame.SRCALPHA)
+        y0 = int(sh * 0.42)
+        for y in range(y0, sh):
+            low.fill((8, 12, 18, int(215 * (y - y0) / float(max(1, sh - y0)))), (0, y, sw, 1))
+        _STEAM["grad"] = (gk, g)
+        _STEAM["shade"] = (gk, left, low, (sw, sh))
+    return _STEAM["grad"][1], _STEAM["shade"]
+
+
+def _steam_hero_peek(base):
+    ent = _STEAM["heroes"].get(((W, H), id(base)))
+    return ent[1] if ent is not None and ent[0] is base else None
+
+
+def _steam_hero(base, ref=None):
+    """Finished hero for a capsule: navy gradient, the art blurred across the screen, then shaded on the left and at the
+    bottom so the title and prompts stay readable, all baked into ONE opaque surface. Showing it costs a single plain
+    blit per frame (the old code alpha-blended two full-screen shade layers on top of the gradient every frame). The
+    composing happens at 1/HERO_DIV size and is upscaled once, so building one is cheap enough to do at rest."""
+    hit = _steam_hero_peek(base)
+    if hit is not None:
+        return hit
+    gk = (W, H)
+    grad, (_gk, left, low, (sw, sh)) = _steam_layers(gk)
+    out = grad.copy()
+    if base is not None:
+        try:
+            blur = pygame.transform.smoothscale(pygame.transform.smoothscale(base, (12, max(6, 12 * H // W))), (sw, sh))
+            blur.set_alpha(150)
+            out.blit(blur, (0, 0))
+        except Exception:
+            pass
+    out.blit(left, (0, 0))
+    out.blit(low, (0, 0))
+    try:
+        hero = pygame.transform.smoothscale(out, (W, H))
+    except Exception:
+        hero = pygame.transform.scale(out, (W, H))
+    if ref is not None:
+        try:
+            hero = hero.convert(ref)  # same pixel format as the canvas: the per-frame blit is then a straight copy
+        except Exception:
+            pass
+    _lru_put(_STEAM["heroes"], (gk, id(base)), (base, hero), HERO_CACHE)
+    return hero
+
+
+def _steam_backdrop(c, base, rest=True):
+    """Draw the hero for the focused capsule. Moving to another capsule crossfades from the previous hero over
+    STEAM_FADE seconds. While the cursor is still travelling (rest False) the current hero is kept, so a held d-pad
+    never starts a crossfade per step and the backdrop changes once, when the cursor settles."""
+    now = time.monotonic()
+    shown = _STEAM["shown"]
+    if shown is None:
+        shown = _STEAM["shown"] = _steam_hero(base, c)
+    elif rest:
+        want = _steam_hero(base, c)
+        if want is not shown:
+            _STEAM["prev"] = (shown, now)
+            shown = _STEAM["shown"] = want
+    prev = _STEAM["prev"]
+    if prev is not None and now - prev[1] < STEAM_FADE and prev[0] is not shown:
+        c.blit(prev[0], (0, 0))
+        shown.set_alpha(int(255 * (now - prev[1]) / STEAM_FADE))
+        c.blit(shown, (0, 0))
+        shown.set_alpha(255)
+        _anim_clock[2] = True
+    else:
+        c.blit(shown, (0, 0))
+
+
+def _steam_cover(key, lv, S, w):
+    """Capsule cover at width w without scaling inside the frame. The width is snapped (exactly S, exactly the resting
+    small size, else a multiple of 4) and the scaled surface cached, so a glide reuses surfaces instead of resizing
+    every card on every frame. Returns (surface, snapped width)."""
+    small = max(16, int(round(S * 0.8)))
+    wq = S if w >= S - 2 else small if abs(w - small) <= 2 else max(16, w - w % 4)
+    src = _flow_cover(lv, S, flow_level_index(wq, S))
+    if src.get_width() == wq:
+        return src, wq
+    ck = (key, wq)
+    ent = _lru_get(_STEAM["covers"], ck)
+    if ent is None or ent[0] is not lv[0]:
+        ent = (lv[0], pygame.transform.smoothscale(src, (wq, wq)))
+        _lru_put(_STEAM["covers"], ck, ent, COVER_CACHE)
+    return ent[1], wq
+
+
+def _steam_prompt(c, f_small, x, cy, key_, label, arrows):
+    """One button prompt: a coloured disc for A/B/X/Y, a dark pill for anything else. Returns the x it ends at."""
+    key_ = key_.replace("<>", "\u25c0 \u25b6" if arrows else "L/R")
+    kt = f_small.render(key_, True, (255, 255, 255))
+    lt = f_small.render(label, True, STEAM_TEXT)
+    col = STEAM_BTN.get(key_)
+    gw = 24 if col else kt.get_width() + 16
+    if col:
+        pygame.draw.circle(c, col, (x + 12, cy), 12)
+    else:
+        pygame.draw.rect(c, STEAM_LINE, (x, cy - 12, gw, 24), border_radius=12)
+    c.blit(kt, (x + (gw - kt.get_width()) // 2, cy - kt.get_height() // 2))
+    c.blit(lt, (x + gw + 7, cy - lt.get_height() // 2))
+    return x + gw + 7 + lt.get_width()
+
+
+def _steam_prompt_width(f_small, key_, label, arrows=False):
+    """Width _steam_prompt will draw; `arrows` must match what it is given or the bar lays out with the wrong gaps."""
+    kw = 24 if key_ in STEAM_BTN else f_small.size(key_.replace("<>", "\u25c0 \u25b6" if arrows else "L/R"))[0] + 16
+    return kw + 7 + f_small.size(label)[0]
+
+
+def _steam_play_button(c, x, y, bw, bh, label, bf, focus):
+    """Deck Play button: rounded green gradient with a play triangle, lighter outline while it is the focus. The shape is
+    drawn once per (label, size, focus) and blitted afterwards; it is identical on every frame of a scroll."""
+    m = 4  # margin around the button for the focus outline
+    key = (label, bw, bh, focus)
+    sf = _STEAM["btn"].get(key)
+    if sf is None:
+        if len(_STEAM["btn"]) > 12:
+            _STEAM["btn"].clear()
+        r = 6
+        sf = pygame.Surface((bw + 2 * m, bh + 2 * m), pygame.SRCALPHA)
+        pygame.draw.rect(sf, STEAM_GREEN2, (m, m, bw, bh), border_radius=r)
+        pygame.draw.rect(sf, _mix(STEAM_GREEN, STEAM_GREEN2, 0.25), (m, m, bw, bh * 2 // 3), border_top_left_radius=r, border_top_right_radius=r)
+        pygame.draw.rect(sf, STEAM_GREEN, (m + 2, m + 2, bw - 4, bh // 3), border_top_left_radius=r - 2, border_top_right_radius=r - 2)
+        if focus:
+            pygame.draw.rect(sf, (255, 255, 255), (m - 2, m - 2, bw + 4, bh + 4), 2, border_radius=r + 2)
+        lt = bf.render(label, True, (255, 255, 255))
+        ix, cy = m + 20, m + bh // 2
+        tw = 12 if label == "Play" else 0
+        if tw:
+            pygame.draw.polygon(sf, (255, 255, 255), [(ix, cy - 8), (ix, cy + 8), (ix + tw + 2, cy)])
+        sf.blit(lt, (m + (bw + (tw + 8 if tw else 0) - lt.get_width()) // 2 + (6 if tw else 0), cy - lt.get_height() // 2))
+        _STEAM["btn"][key] = sf
+    c.blit(sf, (x - m, y - m))
+
+
+def _steam_wifi(c, right, cy, on):
+    """Three arcs and a dot, white while a Wi-Fi link is up and grey while it is not. Returns the x it starts at."""
+    col = (255, 255, 255) if on else (110, 122, 136)
+    cx, by = right - 12, cy + 8
+    for r in (6, 11, 16):
+        pygame.draw.arc(c, col, (cx - r, by - r, 2 * r, 2 * r), math.pi * 0.25, math.pi * 0.75, 2)
+    pygame.draw.circle(c, col, (cx, by), 2)
+    return right - 26
+
+
+def draw_steam_menu(c, f_small, f_row, bottom):
+    """The Steam-button panel: slides in from the left over a dimmed screen, profile on top, then the menu rows."""
+    s = STEAM_UI["slide"]
+    if s <= 0.001:
+        return
+    e = 1 - (1 - min(1.0, s)) ** 3
+    pw = max(250, int(W * 0.36))
+    if _STEAM["dim"][0] != (W, bottom):
+        d = pygame.Surface((W, bottom), pygame.SRCALPHA)
+        d.fill((4, 8, 14, 170))
+        _STEAM["dim"] = ((W, bottom), d)
+    d = _STEAM["dim"][1]
+    d.set_alpha(int(255 * e))
+    c.blit(d, (0, 0))
+    x = int(-pw * (1 - e))
+    pygame.draw.rect(c, STEAM_PANEL, (x, 0, pw, bottom))
+    pygame.draw.rect(c, STEAM_LINE, (x + pw - 1, 0, 1, bottom))
+    compact = H < 600
+    pad, r = 18, 18 if compact else 22
+    head = 58 if compact else 70
+    cy0 = head // 2 + 6
+    pygame.draw.circle(c, STEAM_LINE, (x + pad + r, cy0), r)
+    pygame.draw.circle(c, STEAM_TEXT, (x + pad + r, cy0), r, 2)
+    rg = f_small.render("RG", True, (255, 255, 255))
+    c.blit(rg, (x + pad + r - rg.get_width() // 2, cy0 - rg.get_height() // 2))
+    tx = x + pad + 2 * r + 12
+    nt = f_row.render("RG OS", True, (255, 255, 255))
+    c.blit(nt, (tx, cy0 - nt.get_height() + 2))
+    online = STEAM_UI["wifi"]
+    pygame.draw.circle(c, STEAM_GREEN if online else (110, 122, 136), (tx + 4, cy0 + 12), 4)
+    c.blit(f_small.render("Online" if online else "Offline", True, STEAM_DIM), (tx + 14, cy0 + 12 - f_small.get_height() // 2 + 1))
+    y = head + 14
+    pygame.draw.rect(c, STEAM_LINE, (x + pad, y - 8, pw - 2 * pad, 1))
+    rh = max(30, min(46, (bottom - y - 8) // len(STEAM_MENU)))
+    for i, (_k, label) in enumerate(STEAM_MENU):
+        sel = i == STEAM_UI["sel"]
+        ry = y + i * rh
+        if sel:
+            pygame.draw.rect(c, STEAM_SEL, (x + 10, ry, pw - 20, rh - 4), border_radius=6)
+            pygame.draw.rect(c, STEAM_BLUE, (x + 10, ry + 4, 4, rh - 12), border_radius=2)
+        t = f_row.render(fit(f_row, label, pw - 70), True, (255, 255, 255) if sel else STEAM_TEXT)
+        c.blit(t, (x + 30, ry + (rh - 4 - t.get_height()) // 2))
+
+
+def draw_steam_level(c, f_small, f_row, cards, fx, fade, crumb, hints, empty, clk, bat, scanning):
+    compact = H < 600
+    arrows = bool(FONT_PATH[0])
+    n = len(cards)
+    top_h, bar_h = (40, 44) if compact else (50, 52)
+    head_h = 28 if compact else 34
+    S = int(max(96, min(W * 0.30, (H - top_h - bar_h - head_h) * 0.46)))
+    _FLOW["S"] = S
+    ci = int(round(fx))
+    cur = (cards[ci % n] if n >= 3 else cards[max(0, min(n - 1, ci))]) if n else None
+    base0 = _flow_draw_base(cur["hue"], cur["tag"], cur["abbr"], S, cur.get("icon"), cur.get("art"))[1][0] if cur else None
+    _STEAM["on"] = True
+    _steam_backdrop(c, base0, STEAM_UI["rest"])
+
+    # top bar: no panel, like gaming mode; clock, Wi-Fi and battery on the right, nothing on the left
+    cy = top_h // 2 + 2
+    right = W - 24
+    if bat:
+        pct, status = bat
+        chg = status.lower() == "charging"
+        col = (230, 70, 60) if pct <= 15 and not chg else STEAM_GREEN if chg else (255, 255, 255)
+        pt = f_small.render("%d%%" % pct, True, col)
+        right -= pt.get_width()
+        c.blit(pt, (right, cy - pt.get_height() // 2))
+        bx, by = right - 34, cy - 7
+        pygame.draw.rect(c, col, (bx, by, 25, 14), 2, border_radius=2)
+        pygame.draw.rect(c, col, (bx + 25, by + 4, 3, 6))
+        pygame.draw.rect(c, col, (bx + 3, by + 3, max(2, 19 * pct // 100), 8))
+        right = bx - 18
+    if STEAM_UI["wifi"] is not None:
+        right = _steam_wifi(c, right, cy, STEAM_UI["wifi"]) - 14
+    info = _flow_font(20 if compact else 22).render("Scanning..." if scanning else steam_clock(clk), True, (255, 255, 255))
+    c.blit(info, (right - info.get_width(), cy - info.get_height() // 2))
+
+    # section heading above the row, like "Recent Games"
+    hf = _flow_font(22 if compact else 26)
+    ht = hf.render(fit(hf, steam_heading(crumb) or "Home", W - 56), True, (255, 255, 255))
+    c.blit(ht, (28, top_h - 2))
+
+    # capsule row, focus anchored on the left; the others follow at 80 % and dimmed
+    if not n:
+        t = _flow_font(26 if not compact else 22).render(empty[0], True, (255, 255, 255))
+        c.blit(t, ((W - t.get_width()) // 2, H // 2 - 40))
+        t2 = f_small.render(empty[1], True, STEAM_DIM)
+        c.blit(t2, ((W - t2.get_width()) // 2, H // 2 - 2))
+    else:
+        gap, x0, row_top = 14, 28, top_h + head_h + (6 if compact else 10)
+        mid, small = row_top + S // 2, int(S * 0.8)
+        wrap_ = n >= 3
+        lo = int(math.floor(fx)) - 1 if wrap_ else 0
+        idxs = range(lo, lo + min(n, 6)) if wrap_ else range(n)
+        pulse = round((0.5 + 0.5 * math.sin(time.time() * 2.6)) * 8) / 8.0  # 8 steps: an unchanged frame is not re-sent
+        vis = []
+        for i in idxs:
+            d = i - fx
+            left = x0 + (min(d, 1.0) * (S + gap) + max(0.0, d - 1.0) * (small + gap) if d >= 0 else d * (small + gap))
+            w = max(16, int(round(S * (1 - 0.2 * min(abs(d), 1.0)))))
+            if left < W and left + w > 0:
+                vis.append((abs(d), i, d, int(left), w))
+        for _ad, i, d, left, w in sorted(vis, reverse=True):
+            g = cards[i % n]
+            ck, lv = _flow_draw_base(g["hue"], g["tag"], g["abbr"], S, g.get("icon"), g.get("art"))
+            surf, wq = _steam_cover(ck, lv, S, w)
+            surf.set_alpha(int(max(0, min(255, (255 - 120 * min(abs(d), 1.0)) * fade))))
+            left += (w - wq) // 2  # a snapped cover stays centred on where the exact one would be
+            w = wq
+            top = mid - w // 2
+            sh = _flow_shadow(w)
+            sh.set_alpha(int(190 * fade))
+            c.blit(sh, (left + w // 2 - sh.get_width() // 2, top + w - sh.get_height() // 3))
+            c.blit(surf, (left, top))
+            if abs(d) < 0.5:
+                pygame.draw.rect(c, _mix(STEAM_BG2, STEAM_BLUE, 0.55), (left - 9, top - 9, w + 18, w + 18), 2, border_radius=9)
+                pygame.draw.rect(c, _mix(STEAM_BLUE, (255, 255, 255), 0.5 + 0.5 * pulse), (left - 5, top - 5, w + 10, w + 10), 3, border_radius=6)
+            if g.get("fav"):
+                pygame.draw.circle(c, STEAM_YELLOW, (left + w - 15, top + 15), 9)
+                if arrows:
+                    st = f_small.render("\u2605", True, (40, 30, 0))
+                    c.blit(st, (left + w - 15 - st.get_width() // 2, top + 15 - st.get_height() // 2))
+
+        # title block: big name, then Play + favourite buttons and Deck-style info columns
+        y = row_top + S + (20 if compact else 30)
+        tsize = 28 if compact else 36
+        while tsize > 18 and _flow_font(tsize).size(cur["title"])[0] > W - 56:
+            tsize -= 2
+        tf = _flow_font(tsize)
+        tt = tf.render(fit(tf, cur["title"], W - 56), True, (255, 255, 255))
+        c.blit(tt, (28, y))
+        y += tt.get_height() + (8 if compact else 14)
+        label = "Play" if "game" in cur else "Shut down" if cur.get("id") == "power" else "Open"
+        bf = _flow_font(20 if compact else 22)
+        bw, bh = max(150, bf.size(label)[0] + 76), 38 if compact else 44
+        _steam_play_button(c, 28, y, bw, bh, label, bf, not STEAM_UI["open"])
+        nx = 28 + bw + 12
+        if "game" in cur:
+            fav = bool(cur.get("fav"))
+            pygame.draw.rect(c, (36, 50, 66), (nx, y, bh, bh), border_radius=6)
+            pygame.draw.circle(c, STEAM_YELLOW if fav else STEAM_BTN["Y"], (nx + bh // 2, y + bh // 2), bh // 4 + 2, 0 if fav else 2)
+            yt = f_small.render("Y", True, (40, 30, 0) if fav else STEAM_YELLOW)
+            c.blit(yt, (nx + (bh - yt.get_width()) // 2, y + (bh - yt.get_height()) // 2))
+            nx += bh + 26
+        else:
+            nx += 14
+        cols = [("SYSTEM", cur["sub"]), ("POSITION", "%d / %d" % ((ci % n) + 1, n))]
+        for head, val in cols:
+            if not val or nx >= W - 90:
+                continue
+            ht_ = f_small.render(head, True, STEAM_DIM)
+            vt = f_row.render(fit(f_row, val, max(40, W - 28 - nx)), True, (255, 255, 255))
+            c.blit(ht_, (nx, y - 4))
+            c.blit(vt, (nx, max(y - 4 + ht_.get_height(), y + bh + 2 - vt.get_height())))
+            nx += max(ht_.get_width(), vt.get_width()) + 34
+
+    # bottom bar: MENU on the left like the Steam button, button prompts on the right
+    by = H - bar_h
+    cyb = by + bar_h // 2
+    pygame.draw.rect(c, (40, 56, 74), (0, by, W, 1))
+    left_end = 24 if STEAM_UI["open"] else _steam_prompt(c, f_small, 24, cyb, "MENU", "Menu", arrows) + 22
+    prompts = steam_hints(hints, bool(cur and "game" in cur), STEAM_UI["open"])
+    while len(prompts) > 2 and sum(_steam_prompt_width(f_small, k, l, arrows) for k, l in prompts) + 22 * (len(prompts) - 1) > W - 24 - left_end:
+        prompts.pop(0)
+    x = W - 24 - sum(_steam_prompt_width(f_small, k, l, arrows) for k, l in prompts) - 22 * (len(prompts) - 1)
+    for key_, label in prompts:
+        _steam_prompt(c, f_small, x, cyb, key_, label, arrows)
+        x += _steam_prompt_width(f_small, key_, label, arrows) + 22
+    draw_steam_menu(c, f_small, f_row, by)
 
 
 def rd_file(path):
@@ -2567,6 +3440,12 @@ def _on_term(_sig, _frm):
 
 def main():
     windowed = os.environ.get("RGOS_WINDOWED") == "1"
+    try:
+        # Worker threads (ROM scan, cover decoding, status polls) hold the GIL for up to 5 ms at a time by default; the
+        # render loop waits that long every time it needs it back. 1 ms keeps a busy worker from costing whole frames.
+        sys.setswitchinterval(float(os.environ.get("RGOS_SWITCH_S", "0.001")))
+    except (ValueError, AttributeError):
+        pass
     if not windowed:
         try:
             signal.signal(signal.SIGTERM, _on_term)  # SIGTERM would skip atexit and leave the clocks pinned
@@ -2611,8 +3490,13 @@ def main():
 
     classic_ui = ThemedClassic(W, H)
     inp = Input()
-    all_games = scan_roms()
     rescan = Rescan()
+    all_games = load_scan_cache()
+    if all_games is None:
+        all_games = scan_roms()
+        save_scan_cache(all_games)
+    else:
+        rescan.start()  # the cached list is shown now; the real scan replaces it as soon as it is done
     _gcache = [None, {}]
 
     def games_of(sid):
@@ -2772,8 +3656,7 @@ def main():
             return "Download covers from SteamGridDB   A opens it (free API key needed)"
         return "SteamGridDB covers are %s   A opens it" % ("shown" if art_on() else "hidden")
     dd = None
-    xmb_cat, xmb_sel, xmb_cx, xmb_vy, xmb_fade = XMB_START, {}, float(XMB_START), 0.0, 0.0   # xmb_fade: seconds since the column appeared
-    xmb_out, xmb_press, xmb_intro = None, -9.0, None
+    xmb_cat, xmb_sel, xmb_cx, xmb_vy, xmb_fade = XMB_START, {}, float(XMB_START), 0.0, 1.0
     xmb_cv, xmb_vv = 0.0, 0.0
     xmb_ret = [False]
     pending_acts = []
@@ -2840,6 +3723,39 @@ def main():
     if last:
         sys_idx = next(i for i, sy in enumerate(vsys) if sy[0] == last["sid"])
         idx_by[last["sid"]] = games_of(last["sid"]).index(last)
+    flow_t, flow_fx, flow_fv, flow_fade, flow_pos, flow_key, flow_grid = 0, 0.0, 0.0, 1.0, {}, None, False
+    FLOW_HOME = {"games": (200, "Browse your systems"), "recents": (30, "Recently played"), "favorites": (48, "Your starred games"),
+                 "tools": (140, "File manager and more"), "settings": (265, "Theme, Wi-Fi, Bluetooth..."), "power": (350, "Shut down")}
+
+    _fcm = [None, None, None]
+
+    def flow_cards():
+        if view == "home":
+            key, keep = ("home",), HOME_ITEMS
+        elif view == "systems":
+            key, keep = ("systems", id(all_games)), vsys
+        else:
+            keep = recent_games() if view == "recents" else favorite_games() if view == "favorites" else games_of(vsys[sys_idx][0] if vsys else "")
+            key = (view, id(keep), len(keep), frozenset(favorite_paths), art["ver"], art_on())
+        if _fcm[0] == key and _fcm[1] is keep:
+            return _fcm[2]
+        if view == "home":
+            out = [{"id": hid, "title": lbl, "sub": FLOW_HOME.get(hid, (0, ""))[1], "hue": FLOW_HOME.get(hid, (0, ""))[0], "tag": "",
+                    "abbr": "", "icon": hid, "fav": False} for hid, lbl in HOME_ITEMS]
+        elif view == "systems":
+            out = [{"id": sy[0], "title": sy[4], "sub": "%d game%s" % (len(games_of(sy[0])), "" if len(games_of(sy[0])) == 1 else "s"),
+                    "hue": flow_hue(sy[0]), "tag": "", "abbr": sy[1], "icon": system_icon(sy[0]), "fav": False} for sy in vsys]
+        else:
+            _fav_now, _art_now = frozenset(favorite_paths), art_on()
+            out = LazyCards(keep, lambda g: {"game": g, "title": g["title"], "sub": sysname.get(g["sid"], g["tag"]),
+                                             "hue": flow_hue(g["sid"]), "tag": g["tag"], "abbr": flow_abbr(g["title"]),
+                                             "icon": None, "fav": g["path"] in _fav_now,
+                                             "art": art_index.lookup(g["sid"], g["path"]) if _art_now else None})
+        _fcm[0], _fcm[1], _fcm[2] = key, keep, out
+        return out
+
+    def flow_cur_key():
+        return ("g:" + (vsys[sys_idx][0] if vsys else "")) if view == "games" else view
     rows, list_x, list_w, top_y, row_h = 8 + DY // 44, 20, 450 + DX, 84, 44
     PH = 352 + DY
     clock = pygame.time.Clock()
@@ -2944,13 +3860,6 @@ def main():
         mark_calibrated()
 
     blanked = False
-
-    # RG OS motion state (helpers live next to anim_tick)
-    fx_view, fx_snap, fx_trans = [None], [None], [0.0, 1]
-    fx_home_t0, fx_tiles = [None], {}
-    fx_lpos, fx_lscroll, fx_lkey, fx_dkey = Spring(), Spring(), [None], [None, 0.0]
-    fx_cur = [Spring(), Spring(), False]                       # gliding focus glow of the RG OS home grid
-    fx_tkey, fx_tsnap, fx_tt0 = [(theme_id, launcher_id)], [None], [0.0]   # theme / launcher cross-fade
     prof = FrameProfiler(os.environ.get("RGOS_PROFILE") == "1", log)
     while code is None:
         if os.path.exists(SCREENOFF_FILE):
@@ -2981,6 +3890,8 @@ def main():
             ci_idx = min(ci_idx, max(0, len(ci_rows) - 1))
             rescan.start()
         _scanned = rescan.take()
+        if _scanned is not None and same_games(_scanned, all_games):
+            _scanned = None  # nothing changed: keep the list (and every cache keyed on it) instead of rebuilding
         if _scanned is not None:
             cur_sid = vsys[sys_idx][0] if vsys else None
             all_games = _scanned
@@ -3028,13 +3939,68 @@ def main():
                 elif a in ("b", "menu"):
                     dd_set(dd["kind"], dd["orig"])
                     dd = None
+            elif launcher_id == "steamos" and STEAM_UI["open"] and view in ("home", "systems", "games", "recents", "favorites"):
+                if a in ("up", "down"):
+                    STEAM_UI["sel"] = (STEAM_UI["sel"] + (1 if a == "down" else -1)) % len(STEAM_MENU)
+                elif a in ("b", "menu"):
+                    STEAM_UI["open"] = False
+                elif a == "a":
+                    STEAM_UI["open"] = False
+                    target = STEAM_MENU[STEAM_UI["sel"]][0]
+                    if target == "power":
+                        code = EXIT_POWER
+                    elif target == "games":
+                        view = "systems"
+                        sys_idx = min(sys_idx, max(0, len(vsys) - 1))
+                    else:
+                        view = target
             elif a == "menu":
-                if view in ("systems", "games", "recents", "favorites", "tools", "settings", "wifi", "bt", "ssh", "info", "bios", "artwork", "files", "coreinstall"):
+                if launcher_id == "steamos" and view in ("home", "systems", "games", "recents", "favorites"):
+                    STEAM_UI["open"], STEAM_UI["sel"] = True, steam_menu_index(view)
+                elif view == "home" and launcher_id in FLOW_LIKE:
+                    flow_t = 0
+                    flow_fade = 0.0
+                elif view in ("systems", "games", "recents", "favorites") and launcher_id in FLOW_LIKE:
+                    view = "home"
+                elif view in ("systems", "games", "recents", "favorites", "tools", "settings", "wifi", "bt", "ssh", "info", "bios", "artwork", "files", "coreinstall"):
                     view = "home"
                 elif view == "bmap" and bmap and bmap.state in ("done", "fail"):
                     view = "home"
             elif a == "x" and view in ("home", "systems", "games", "recents", "favorites"):
                 rescan.start()
+            elif launcher_id in FLOW_LIKE and view in ("home", "systems", "games", "recents", "favorites"):
+                fc = flow_cards()
+                fn_ = len(fc)
+                cur_ = fc[flow_t % fn_ if fn_ >= 3 else max(0, min(fn_ - 1, flow_t))] if fn_ else None
+                if a in ("left", "right", "l", "r", "up", "down") and fn_:
+                    fwd = a in ("right", "r", "down")
+                    step = (1 if fwd else -1) * (5 if a in ("l", "r") else 1)
+                    flow_t = flow_t + step if fn_ >= 3 else max(0, min(fn_ - 1, flow_t + step))
+                elif a == "b":
+                    view = "systems" if view == "games" else "home" if view != "home" else view
+                elif a == "y" and cur_ and "game" in cur_:
+                    path = cur_["game"]["path"]
+                    if path in favorite_paths:
+                        favorite_paths.discard(path)
+                    else:
+                        favorite_paths.add(path)
+                    if not save_favorites(favorite_paths):
+                        favorite_paths = set(load_favorites())
+                    fav_changed()
+                elif a == "a" and cur_:
+                    if view == "home":
+                        hid = cur_["id"]
+                        if hid == "power":
+                            code = EXIT_POWER
+                        elif hid == "games":
+                            view = "systems"
+                            sys_idx = min(sys_idx, max(0, len(vsys) - 1))
+                        else:
+                            view = hid
+                    elif view == "systems":
+                        sys_idx, view = next(i for i, sy in enumerate(vsys) if sy[0] == cur_["id"]), "games"
+                    else:
+                        code = launch(cur_["game"]["path"], cur_["game"])
             elif view == "home" and launcher_id == "xmb":
                 cat = XMB_CATS[xmb_cat][0]
                 nav = a in ("left", "right", "l", "r", "up", "down")
@@ -3044,21 +4010,15 @@ def main():
                 cur = min(xmb_sel.get(cat, 0), len(items) - 1)
                 if a in ("left", "right", "l", "r"):
                     new = max(0, min(len(XMB_CATS) - 1, xmb_cat + (1 if a in ("right", "r") else -1)))
-                    if new == xmb_cat:
-                        xmb_cv += 7.0 * (1 if a in ("right", "r") else -1)   # rubber-band nudge at the end of the bar
                     if new != xmb_cat:
-                        xmb_out = (xmb_cat, items, xmb_vy)
                         xmb_cat, xmb_fade = new, 0.0
                         xmb_vy, xmb_vv = float(xmb_sel.get(XMB_CATS[new][0], 0)), 0.0
                 elif a in ("up", "down"):
                     xmb_sel[cat] = max(0, min(len(items) - 1, cur + (1 if a == "down" else -1)))
-                    if xmb_sel[cat] == cur:
-                        xmb_vv += 7.0 * (1 if a == "down" else -1)
                 elif a == "y" and items and items[cur]["act"] and items[cur]["act"][0] == "setting" and SETTINGS_ROWS[items[cur]["act"][1]] == "splash":
                     play_splash("silent" if splash.mode_of(state) == "silent" else "on")
                 elif a == "a" and items and items[cur]["act"]:
                     act = items[cur]["act"]
-                    xmb_press = time.monotonic()
                     if act[0] == "system":
                         sys_idx, view = act[1], "games"
                     elif act[0] == "launch":
@@ -3507,23 +4467,11 @@ def main():
             _BOOST.poke()
         _BOOST.tick()
         XMB_UI[0] = launcher_id == "xmb"
-        if (theme_id, launcher_id) != fx_tkey[0]:
-            if fx_tkey[0][1] != launcher_id:      # new launcher style: replay its entrance
-                fx_home_t0[0], xmb_fade, xmb_intro = None, 0.0, None
-            fx_tsnap[0], fx_tt0[0], fx_tkey[0] = canvas.copy(), time.monotonic(), (theme_id, launcher_id)
         CLASSIC_UI[0], CLASSIC_UI[1] = launcher_id == "rgclassic", classic_unit()
-
-        if launcher_id in ("rgos", "xmb"):
-            if fx_view[0] is not None and view != fx_view[0]:
-                fx_snap[0] = canvas.copy()
-                fx_trans[0] = time.monotonic()
-                fx_trans[1] = 1 if FX_DEPTH.get(view, 2) >= FX_DEPTH.get(fx_view[0], 2) else -1
-            fx_view[0] = view
-        else:
-            fx_view[0], fx_snap[0] = None, None
         f_logo, f_big, f_row, f_small, f_tiny = PX_FONTS if CLASSIC_UI[0] else TT_FONTS
+        flow_on = launcher_id in FLOW_LIKE and view in ("home", "systems", "games", "recents", "favorites")
         classic_on = launcher_id == "rgclassic" and view == "home"
-        if classic_on:
+        if flow_on or classic_on:
             pass
         elif launcher_id == "rgclassic":
             classic_ui.apply(BG, PANEL, SEL_BG, ACCENT, TEXT, DIM)
@@ -3576,10 +4524,10 @@ def main():
             info = "First-time setup   %s" % clk
         if rescan.busy:
             info = "Scanning...   " + info
-        if classic_on:
+        if flow_on or classic_on:
             info = ""
         s = f_small.render(info, True, DIM)
-        bat = None if classic_on else rd_bat()
+        bat = None if flow_on or classic_on else rd_bat()
         right = W - 20
         if launcher_id == "xmb":
             pl = (W - 90 - 16 if bat else W - 20) - s.get_width() - 20
@@ -3609,25 +4557,58 @@ def main():
                 right = bx - 16
         canvas.blit(s, (right - s.get_width(), 24))
 
-        if view == "home" and launcher_id == "xmb":
+        if flow_on:
+            fk_ = flow_cur_key()
+            if fk_ != flow_key:
+                if flow_key is not None:
+                    flow_pos[flow_key] = flow_t
+                flow_key = fk_
+                flow_t = flow_pos.get(fk_, 0)
+                flow_fx, flow_fv, flow_fade = float(flow_t), 0.0, 0.0
+            fcards = flow_cards()
+            fn_ = len(fcards)
+            if fn_ >= 3:
+                kk = (flow_t // fn_) * fn_
+                flow_t, flow_fx = flow_t - kk, flow_fx - kk
+            elif fn_:
+                flow_t = max(0, min(fn_ - 1, flow_t))
+            fdt = _anim_clock[1]
+            if launcher_id == "steamos":
+                s_tgt = 1.0 if STEAM_UI["open"] else 0.0
+                STEAM_UI["slide"] += (s_tgt - STEAM_UI["slide"]) * min(1.0, fdt * 14.0)
+                if abs(s_tgt - STEAM_UI["slide"]) < 0.01:
+                    STEAM_UI["slide"] = s_tgt
+                else:
+                    _anim_clock[2] = True
+                STEAM_UI["wifi"] = rd_net()
+            flow_fx, flow_fv = _smooth_damp(flow_fx, flow_fv, flow_t, fdt)
+            flow_fade = min(1.0, flow_fade + fdt * 6.0)
+            # the SteamOS backdrop only changes once the cursor settles (no input for a moment, or arrived)
+            STEAM_UI["rest"] = flow_fx == flow_t or (time.monotonic() - last_act > 0.12 and abs(flow_fx - flow_t) < 0.6)
+            if flow_fx != flow_t or flow_fade < 1.0:
+                _anim_clock[2] = True
+            if view == "home":
+                crumb, hints, empty = "", [("<>", "Browse"), ("A", "Open"), ("MENU", "First")], ("", "")
+            elif view == "systems":
+                crumb, hints = "Games", [("<>", "Browse"), ("A", "Open"), ("B", "Back")]
+                empty = ("No games found", "Copy ROMs to the SD card, then press X to rescan")
+            else:
+                crumb = {"recents": "Recents", "favorites": "Favorites"}.get(view) or (sysname.get(vsys[sys_idx][0], "") if vsys else "")
+                hints = [("<>", "Browse"), ("A", "Play"), ("Y", "Favorite"), ("B", "Back")]
+                empty = ("Nothing here yet", "Play or star some games first") if view != "games" else ("No games found", "Press X to rescan")
+            (draw_steam_level if launcher_id == "steamos" else draw_flow_level)(canvas, f_small, f_row, fcards, flow_fx, flow_fade, crumb, hints, empty, clk, rd_bat(), rescan.busy)
+            hint = ""
+        elif view == "home" and launcher_id == "xmb":
             xcat = XMB_CATS[xmb_cat][0]
             xitems = xmb_items(xcat)
             xmb_sel[xcat] = max(0, min(xmb_sel.get(xcat, 0), len(xitems) - 1))
             xdt = _anim_clock[1]
             xmb_cx, xmb_cv = _smooth_damp(xmb_cx, xmb_cv, xmb_cat, xdt)
             xmb_vy, xmb_vv = _smooth_damp(xmb_vy, xmb_vv, xmb_sel[xcat], xdt)
-            xmb_fade = min(5.0, xmb_fade + xdt)
-            xnow = time.monotonic()
-            if xmb_intro is None:
-                xmb_intro = xnow
-            xk = 1.0 - xmb_fade / 0.16
-            if xk <= 0.0:
-                xmb_out = None
-            xbump = math.sin(math.pi * max(0.0, min(1.0, (xnow - xmb_press) / 0.28)))
-            if xmb_cx != xmb_cat or xmb_vy != xmb_sel[xcat] or xmb_fade < 0.7 or xnow - xmb_intro < 0.8 or xnow - xmb_press < 0.28:
+            xmb_fade = min(1.0, xmb_fade + xdt * 6.0)
+            if xmb_cx != xmb_cat or xmb_vy != xmb_sel[xcat] or xmb_fade < 1.0:
                 _anim_clock[2] = True
-            draw_xmb_home(canvas, f_row, f_small, xmb_cx, xmb_cat, xitems, xmb_vy, xmb_fade, xnow,
-                          (xmb_out + (xk,)) if xmb_out else None, xbump, xnow - xmb_intro)
+            draw_xmb_home(canvas, f_row, f_small, xmb_cx, xmb_cat, xitems, xmb_vy, xmb_fade)
             hint = "Left/Right Category   Up/Down Item   A Open   X Rescan"
             if dd is not None:
                 draw_xmb_dropdown(canvas, f_small, dd, dd_options(dd["kind"]))
@@ -3658,43 +4639,13 @@ def main():
                     "tools": "Files, ports, RetroArch",
                     "settings": "Theme, Wi-Fi, info, controls",
                     "power": "Shut down RG OS"}
-
-            fx_on, now_ = launcher_id == "rgos", time.monotonic()
-            if fx_home_t0[0] is None:
-                fx_home_t0[0] = now_
-            if fx_on and bh >= 80:
-                gx_, gy_ = x0 + (home_idx % HOME_COLS) * (bw + gap), top_y + (home_idx // HOME_COLS) * (bh + gap)
-                if not fx_cur[2]:
-                    fx_cur[0].snap(gx_)
-                    fx_cur[1].snap(gy_)
-                    fx_cur[2] = True
-                if fx_cur[0].step(gx_, _anim_clock[1], 26.0, 0.75) | fx_cur[1].step(gy_, _anim_clock[1], 26.0, 0.75):
-                    _anim_clock[2] = True
-                gip_ = ease_out_cubic((now_ - fx_home_t0[0] - 0.07 * home_idx) / 0.4)
-                glow_ = int(round(8 * gip_ * (0.8 + 0.2 * (0.5 + 0.5 * math.sin(now_ * 2.6)))))
-                if glow_ > 0:
-                    canvas.blit(_glow_face(bw, bh, 18, ACCENT, glow_),
-                                (int(fx_cur[0].x) - GLOW_PAD, int(fx_cur[1].x) - int(LIFT_PX * 1.5) - GLOW_PAD + int((1.0 - gip_) * 30)))
             for i, (hid, hname) in enumerate(HOME_ITEMS):
                 bx, by, sel = x0 + (i % HOME_COLS) * (bw + gap), top_y + (i // HOME_COLS) * (bh + gap), i == home_idx
-                pop, ip_ = (1.0 if sel else 0.0), 1.0
-                if fx_on:
-                    sp_ = fx_tiles.get(i)
-                    if sp_ is None:
-                        sp_ = fx_tiles[i] = Spring(pop)
-                    if sp_.step(pop, _anim_clock[1], 20.0, 0.5):   # under-damped: the tile pops up a touch too far, then settles
-                        _anim_clock[2] = True
-                    pop = max(0.0, sp_.x)
-                    ip_ = ease_out_cubic((now_ - fx_home_t0[0] - 0.07 * i) / 0.4)   # staggered entrance
-                    if ip_ < 1.0:
-                        _anim_clock[2] = True
-                        by += int((1.0 - ip_) * 30)
-                hl, lift = draw_button(canvas, (bx, by, bw, bh), SEL_BG if sel else PANEL, 18, 6, sel, 1.5 * pop if fx_on else None)
+                hl, lift = draw_button(canvas, (bx, by, bw, bh), SEL_BG if sel else PANEL, 18, 6, sel)
                 by -= lift
-                isc_ = 1.0 + 0.14 * pop if fx_on else 1.0
                 if bh < 130:
                     icx, tx = bx + 62, bx + 128
-                    draw_icon(ICONS[hid], canvas, icx, by + bh // 2, _mix(DIM, ACCENT, hl), _mix(PANEL, SEL_BG, hl), isc_)
+                    ICONS[hid](canvas, icx, by + bh // 2, _mix(DIM, ACCENT, hl), _mix(PANEL, SEL_BG, hl))
                     title = f_row.render(fit(f_row, hname, bw - (tx - bx) - 14), True, _mix(DIM, TEXT, hl))
                     sub_lines = wrap(f_small, subs[hid], bw - (tx - bx) - 14)[:2]
                     th_, lh_ = title.get_height(), f_small.get_linesize() + 1
@@ -3702,17 +4653,13 @@ def main():
                     canvas.blit(title, (tx, ty0))
                     for li, ln in enumerate(sub_lines):
                         canvas.blit(f_small.render(ln, True, DIM), (tx, ty0 + th_ + 4 + li * lh_))
-                else:
-                    cx = bx + bw // 2
-                    draw_icon(ICONS[hid], canvas, cx, by + 44 + vo, _mix(DIM, ACCENT, hl), _mix(PANEL, SEL_BG, hl), isc_)
-                    title = f_row.render(hname, True, _mix(DIM, TEXT, hl))
-                    canvas.blit(title, (cx - title.get_width() // 2, by + 84 + vo))
-                    sub = f_small.render(fit(f_small, subs[hid], bw - 24), True, DIM)
-                    canvas.blit(sub, (cx - sub.get_width() // 2, by + 114 + vo))
-                if ip_ < 1.0:   # fade in from the background
-                    ov_ = pygame.Surface((bw + 2 * GLOW_PAD, bh + 2 * GLOW_PAD + 8), pygame.SRCALPHA)
-                    ov_.fill(tuple(BG[:3]) + (int(255 * (1.0 - ip_)),))
-                    canvas.blit(ov_, (bx - GLOW_PAD, by - GLOW_PAD))
+                    continue
+                cx = bx + bw // 2
+                ICONS[hid](canvas, cx, by + 44 + vo, _mix(DIM, ACCENT, hl), _mix(PANEL, SEL_BG, hl))
+                title = f_row.render(hname, True, _mix(DIM, TEXT, hl))
+                canvas.blit(title, (cx - title.get_width() // 2, by + 84 + vo))
+                sub = f_small.render(fit(f_small, subs[hid], bw - 24), True, DIM)
+                canvas.blit(sub, (cx - sub.get_width() // 2, by + 114 + vo))
             hint = "A Open   X Rescan   START+SELECT Power off"
             if dd is not None:
                 draw_xmb_dropdown(canvas, f_small, dd, dd_options(dd["kind"]))
@@ -4196,37 +5143,23 @@ def main():
                                        "or launcher scripts in roms/ports/, then press X (B = back)."]):
                     canvas.blit((f_big if i == 0 else f_row).render(m, True, TEXT if i == 0 else DIM),
                                 (40, 150 + i * 34))
-
             sys_rows = 6 + DY // 56
             sys_first = max(0, min(sys_idx - sys_rows // 2, len(vsys) - sys_rows))
-            if launcher_id in ("rgos", "xmb"):
-                if fx_lkey[0] != "systems":
-                    fx_lkey[0] = "systems"
-                    fx_lpos.snap(sys_idx)
-                    fx_lscroll.snap(sys_first)
-                if fx_lpos.step(sys_idx, _anim_clock[1], 30.0) | fx_lscroll.step(sys_first, _anim_clock[1], 22.0):
-                    _anim_clock[2] = True
-                pos_f, scroll_f = fx_lpos.x, fx_lscroll.x
-            else:
-                pos_f, scroll_f = float(sys_idx), float(sys_first)
-            canvas.set_clip(pygame.Rect(list_x, top_y, list_w, sys_rows * 56 - 4))
-            if vsys:
-                yb_ = top_y + int(round((pos_f - scroll_f) * 56))
-                ui_rect(canvas, SEL_BG, (list_x, yb_, list_w, 52), 8)
-                pygame.draw.rect(canvas, ACCENT, (list_x, yb_, 5, 52), border_radius=3)
-            for r in range(max(0, int(scroll_f)), min(len(vsys), int(scroll_f) + sys_rows + 2)):
-                xid, xtag, xcore, _e, xname = vsys[r]
-                y, cnt = top_y + int(round((r - scroll_f) * 56)), len(games_of(xid))
-                prox_ = max(0.0, 1.0 - abs(r - pos_f))
-                ui_rect(canvas, BG if prox_ > 0.5 else PANEL, (list_x + 18, y + 6, 64, 40), 6)
-                t = f_big.render(xtag, True, _mix(DIM, ACCENT, prox_))
+            for r, (xid, xtag, xcore, _e, xname) in enumerate(vsys):
+                if not sys_first <= r < sys_first + sys_rows:
+                    continue
+                y, sel, cnt = top_y + (r - sys_first) * 56, r == sys_idx, len(games_of(xid))
+                if sel:
+                    ui_rect(canvas, SEL_BG, (list_x, y, list_w, 52), 8)
+                    pygame.draw.rect(canvas, ACCENT, (list_x, y, 5, 52), border_radius=3)
+                ui_rect(canvas, PANEL if not sel else BG, (list_x + 18, y + 6, 64, 40), 6)
+                t = f_big.render(xtag, True, ACCENT if sel else DIM)
                 canvas.blit(t, (list_x + 50 - t.get_width() // 2, y + 13))
-                canvas.blit(f_row.render(fit(f_row, xname, list_w - 220), True, _mix(DIM, TEXT, prox_)),
+                canvas.blit(f_row.render(fit(f_row, xname, list_w - 220), True, TEXT if sel else DIM),
                             (list_x + 98, y + 4))
                 canvas.blit(f_small.render("%d %s%s" % (cnt, "port" if xid == "ports" else "game",
                                                          "" if cnt == 1 else "s"), True, DIM),
                             (list_x + 98, y + 28))
-            canvas.set_clip(None)
             px, cnt = 500 + DX, len(games)
             if vsys:
                 ui_rect(canvas, PANEL, (px, top_y, 200, PH), 10)
@@ -4238,17 +5171,6 @@ def main():
                 canvas.blit(f_small.render("%d %s%s" % (cnt, "port" if sid == "ports" else "game", "" if cnt == 1 else "s"), True, DIM),
                             (px + 15, top_y + 300 + DY))
                 canvas.blit(f_small.render("Native Linux games" if score == "native" else "RetroArch + " + core_label(sid, state), True, DIM), (px + 15, top_y + 322 + DY))
-
-            if launcher_id in ("rgos", "xmb") and vsys:
-                dk_ = ("systems", sys_idx)
-                if fx_dkey[0] != dk_:
-                    fx_dkey[0], fx_dkey[1] = dk_, time.monotonic()
-                fk_ = ease_out_cubic((time.monotonic() - fx_dkey[1]) / 0.22)
-                if fk_ < 1.0:
-                    _anim_clock[2] = True
-                    ov_ = pygame.Surface((184, PH - 16), pygame.SRCALPHA)
-                    ov_.fill(tuple(PANEL[:3]) + (int(150 * (1.0 - fk_)),))
-                    canvas.blit(ov_, (500 + DX + 8, top_y + 8))
             if not os.path.isdir(ROMS_DIR):
                 canvas.blit(f_small.render("ROMS partition not found.", True, ACCENT), (list_x + 18, H - 52))
             hint = "A Open   B Back   X Rescan   START+SELECT Power off"
@@ -4271,42 +5193,30 @@ def main():
                             (40, 150 + i * 34))
             hint = "B Back   X Rescan   START+SELECT Power off"
         else:
-
             first = max(0, min(idx - rows // 2, len(games) - rows))
-            if launcher_id in ("rgos", "xmb"):
-                lk_ = (view, sid if view == "games" else "")
-                if fx_lkey[0] != lk_:
-                    fx_lkey[0] = lk_
-                    fx_lpos.snap(idx)
-                    fx_lscroll.snap(first)
-                if fx_lpos.step(idx, _anim_clock[1], 30.0) | fx_lscroll.step(first, _anim_clock[1], 22.0):
-                    _anim_clock[2] = True
-                pos_f, scroll_f = fx_lpos.x, fx_lscroll.x
-            else:
-                pos_f, scroll_f = float(idx), float(first)
-            canvas.set_clip(pygame.Rect(list_x, top_y, list_w, rows * row_h - 4))
-            yb_ = top_y + int(round((pos_f - scroll_f) * row_h))
-            ui_rect(canvas, SEL_BG, (list_x, yb_, list_w, row_h - 4), 8)
-            pygame.draw.rect(canvas, ACCENT, (list_x, yb_, 5, row_h - 4), border_radius=3)
-            for gi in range(max(0, int(scroll_f)), min(len(games), int(scroll_f) + rows + 2)):
-                y = top_y + int(round((gi - scroll_f) * row_h))
-                prox_ = max(0.0, 1.0 - abs(gi - pos_f))
+            for r in range(rows):
+                gi = first + r
+                if gi >= len(games):
+                    break
+                y = top_y + r * row_h
+                if gi == idx:
+                    ui_rect(canvas, SEL_BG, (list_x, y, list_w, row_h - 4), 8)
+                    pygame.draw.rect(canvas, ACCENT, (list_x, y, 5, row_h - 4), border_radius=3)
                 badges = []
                 if games[gi]["path"] in favorite_paths:
-                    badges.append("\u2605")
+                    badges.append("★")
                 if games[gi].get("card", 1) == 2:
                     badges.append("SD2")
                 suffix = "  ".join(badges)
                 canvas.blit(f_row.render(fit(f_row, games[gi]["title"], list_w - 40 - (len(suffix) * 10 if suffix else 0)),
-                                         True, _mix(DIM, TEXT, prox_)), (list_x + 18, y + 9))
+                                         True, TEXT if gi == idx else DIM), (list_x + 18, y + 9))
                 if suffix:
                     bt = f_tiny.render(suffix, True, ACCENT)
                     canvas.blit(bt, (list_x + list_w - 14 - bt.get_width(), y + 14))
-            canvas.set_clip(None)
             if len(games) > rows:
                 bar_h = H - 64 - top_y
                 th = max(24, int(bar_h * rows / len(games)))
-                ty = top_y + int((bar_h - th) * scroll_f / max(1, len(games) - rows))
+                ty = top_y + int((bar_h - th) * first / max(1, len(games) - rows))
                 ui_rect(canvas, PANEL, (list_x + list_w + 6, top_y, 6, bar_h), 3)
                 pygame.draw.rect(canvas, ACCENT, (list_x + list_w + 6, ty, 6, th), border_radius=3)
 
@@ -4331,7 +5241,7 @@ def main():
                 ty_ += 24
             _gm = game_meta(g, _settled) if art_on() else {}
             _yr = _gm.get("year") or ""
-            canvas.blit(f_small.render("%.1f MB%s" % (g["size"] / 1048576, ("   %s" % _yr) if _yr else ""), True, DIM),
+            canvas.blit(f_small.render("%.1f MB%s" % (rom_size(g) / 1048576, ("   %s" % _yr) if _yr else ""), True, DIM),
                         (px + 15, top_y + 300 + DY))
             canvas.blit(f_small.render(fit(f_small, game_runner_text(g, state), 175), True, DIM), (px + 15, top_y + 322 + DY))
             _desc = _gm.get("description")
@@ -4341,17 +5251,6 @@ def main():
                 for _line in (wrap_n(f_small, _desc, 170, min(_n, 6)) if _n else []):
                     canvas.blit(f_small.render(_line, True, DIM), (px + 15, ty_ + 2))
                     ty_ += _lh
-
-            if launcher_id in ("rgos", "xmb"):
-                dk_ = (view, sid if view == "games" else "", idx)
-                if fx_dkey[0] != dk_:
-                    fx_dkey[0], fx_dkey[1] = dk_, time.monotonic()
-                fk_ = ease_out_cubic((time.monotonic() - fx_dkey[1]) / 0.22)
-                if fk_ < 1.0:
-                    _anim_clock[2] = True
-                    ov_ = pygame.Surface((184, PH - 16), pygame.SRCALPHA)
-                    ov_.fill(tuple(PANEL[:3]) + (int(150 * (1.0 - fk_)),))
-                    canvas.blit(ov_, (px + 8, top_y + 8))
             hint = ("A Run   Y Favorite/unfavorite   B Back   L/R Page   X Rescan   START+SELECT Power off"
                     if view == "games" else "A Run   B Back   L/R Page   X Rescan   START+SELECT Power off")
 
@@ -4363,39 +5262,6 @@ def main():
         else:
             canvas.blit(f_small.render(hint, True, DIM), (20, H - 28))
 
-
-        if fx_snap[0] is not None:
-            p_ = (time.monotonic() - fx_trans[0]) / FX_TRANS_S
-            if p_ >= 1.0 or launcher_id not in ("rgos", "xmb"):
-                fx_snap[0] = None
-            elif launcher_id == "xmb":
-                # the old screen lifts away (deeper) or sinks (back) while dissolving over the new one
-                _anim_clock[2] = True
-                e_, d_ = ease_out_cubic(p_), fx_trans[1]
-                fx_snap[0].set_alpha(int(255 * (1.0 - ease_out_cubic(min(1.0, p_ / 0.85)))))
-                canvas.set_clip(pygame.Rect(0, FX_TOP, W, H - FX_TOP))
-                canvas.blit(fx_snap[0], (0, int(-d_ * 26 * e_)))
-                canvas.set_clip(None)
-            else:
-                _anim_clock[2] = True
-                e_, d_ = ease_out_cubic(p_), fx_trans[1]
-                area_ = (0, FX_TOP, W, H - FX_TOP)
-                new_ = canvas.copy()
-                canvas.fill(BG, area_)
-                ao_, an_ = int(255 * max(0.0, 1.0 - p_ / 0.55)), int(255 * min(1.0, p_ / 0.7))
-                if ao_ > 0:
-                    fx_snap[0].set_alpha(ao_)
-                    canvas.blit(fx_snap[0], (int(-d_ * 56 * e_), FX_TOP), area_)
-                new_.set_alpha(an_)
-                canvas.blit(new_, (int(d_ * 90 * (1.0 - e_)), FX_TOP), area_)
-        if fx_tsnap[0] is not None:
-            q_ = (time.monotonic() - fx_tt0[0]) / 0.45
-            if q_ >= 1.0:
-                fx_tsnap[0] = None
-            else:
-                _anim_clock[2] = True
-                fx_tsnap[0].set_alpha(int(255 * (1.0 - ease_out_cubic(q_))))
-                canvas.blit(fx_tsnap[0], (0, 0))
         bri = rd_bri()
         if bri and bri[1] != bri_seen:
             if bri_seen is not None:
@@ -4413,30 +5279,15 @@ def main():
         _pt2 = time.perf_counter()
         present()
         _pt3 = time.perf_counter()
+        if flow_on:
+            fmoving = (anim_moving or flow_fx != flow_t or flow_fv != 0.0 or time.monotonic() - last_act < 0.35)
+            flow_warm(fcards, flow_t, 0.004 if fmoving else 0.012, fmoving)
         if prof.enabled:
             prof.frame(_pt1 - _pt0, _pt2 - _pt1, _pt3 - _pt2, time.perf_counter() - _pt3, "%s/%s" % (launcher_id, view))
         idle = (view in IDLE_VIEWS and not forced and time.monotonic() - last_act > 3.0
                 and time.time() >= bri_show_until)
         clock.tick(60 if anim_moving or (time.monotonic() - last_act < 0.5) else (15 if idle else 30))
 
-
-    if code == EXIT_LAUNCH and launcher_id in ("rgos", "xmb"):
-        # a short zoom-and-fade so starting a game feels like the screen is being pulled into it;
-        # on the XMB it grows out of the focused row instead of the screen centre
-        last_f, shade = canvas.copy(), pygame.Surface((W, H))
-        xz_ = launcher_id == "xmb"
-        ox_, oy_ = _XMB_FOCUS if (xz_ and view == "home") else (W // 2, H // 2)
-        n_z = 16 if xz_ else 12
-        for i_ in range(1, n_z + 1):
-            k_ = i_ / float(n_z)
-            z_ = 1.0 + (0.22 if xz_ else 0.09) * k_ * k_
-            zs_ = pygame.transform.smoothscale(last_f, (int(W * z_), int(H * z_)))
-            canvas.fill((0, 0, 0))
-            canvas.blit(zs_, (int(ox_ * (1.0 - z_)), int(oy_ * (1.0 - z_))))
-            shade.set_alpha(int(255 * k_ * k_))
-            canvas.blit(shade, (0, 0))
-            present()
-            clock.tick(60)
     try:
         if pygame.mixer.get_init():
             pygame.mixer.music.stop()
