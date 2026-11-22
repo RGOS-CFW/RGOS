@@ -944,13 +944,20 @@ def home_intro(key, now=None):
 
 
 def _ring_step(tx, ty, dt, now):
-    """Critically damped glide of the focus ring to (tx, ty); returns (speed, distance left)."""
+    """Damped spring glide of the focus ring to (tx, ty), same constants as RG Classic (about 5% overshoot);
+    returns (speed, distance left). Integrated in steps of at most 8 ms so a long frame cannot make it unstable."""
     st = _RING
     if st["p"] is None:
         st["p"], st["v"], st["tgt"], st["trail"] = [float(tx), float(ty)], [0.0, 0.0], (tx, ty), []
     p, v = st["p"], st["v"]
-    for a, g in ((0, tx), (1, ty)):
-        p[a], v[a] = _smooth_damp(p[a], v[a], g, dt, 19.0)
+    steps = max(1, int(dt / 0.008) + 1)
+    h = dt / steps
+    for _ in range(steps):
+        for a, g in ((0, tx), (1, ty)):
+            v[a] += ((g - p[a]) * SPRING_K - v[a] * SPRING_C) * h
+            p[a] += v[a] * h
+    if math.hypot(tx - p[0], ty - p[1]) < 0.002 and math.hypot(v[0], v[1]) < 0.02:
+        p[0], p[1], v[0], v[1] = float(tx), float(ty), 0.0, 0.0   # settled: snap so the main loop can go idle
     rem, speed = math.hypot(tx - p[0], ty - p[1]), math.hypot(v[0], v[1])
     if rem > 0.0 or speed > 0.0:
         _anim_clock[2] = True
