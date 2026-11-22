@@ -25,7 +25,8 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import installer  # noqa: E402
 
-BG, PANEL, ACCENT = (24, 22, 18), (38, 35, 28), (240, 184, 0)
+BG, PANEL, ACCENT = (20, 19, 16), (36, 33, 27), (240, 184, 0)
+EDGE, PANEL_HI = (58, 54, 44), (52, 47, 36)
 TEXT, DIM, OK, BAD = (245, 238, 220), (158, 148, 118), (126, 217, 120), (255, 99, 71)
 BTN_A, BTN_B, BTN_START = 0x131, 0x130, 0x13b
 KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT = 0x220, 0x221, 0x222, 0x223
@@ -48,6 +49,48 @@ def wrap(font, text, width):
     if cur:
         lines.append(cur)
     return lines
+
+
+def header(pg, canvas, size, fonts, device="", step=None):
+    """Top bar shared by every screen: the RG OS mark, a dim "Installer" tag, the device name as a pill, and a hairline."""
+    W, H = size
+    f_title, f_row, f_small = fonts
+    m = 28
+    pg.draw.rect(canvas, ACCENT, (m, 22, 8, 30), border_radius=3)
+    canvas.blit(f_title.render("RG OS", True, TEXT), (m + 20, 18))
+    canvas.blit(f_small.render("INSTALLER", True, ACCENT), (m + 20 + f_title.size("RG OS")[0] + 14, 36))
+    dev = installer.DEVICE_NAMES.get(device, device)
+    if dev:
+        pw, ph = f_small.size(dev)[0] + 26, f_small.size(dev)[1] + 10
+        pg.draw.rect(canvas, PANEL, (W - m - pw, 24, pw, ph), border_radius=ph // 2)
+        canvas.blit(f_small.render(dev, True, DIM), (W - m - pw + 13, 29))
+    pg.draw.line(canvas, EDGE, (m, 68), (W - m, 68), 1)
+    if step:
+        dots = 3
+        for i in range(dots):
+            pg.draw.circle(canvas, ACCENT if i < step else EDGE, (W // 2 - 20 + i * 20, 62), 3)
+
+
+def key_hint(pg, canvas, font, x, y, key, label, col=DIM):
+    """One footer hint: a small rounded key cap followed by what it does. Returns the x where the next hint may start."""
+    kw, kh = max(font.size(key)[1] + 4, font.size(key)[0] + 14), font.size(key)[1] + 4
+    pg.draw.rect(canvas, col, (x, y, kw, kh), border_radius=kh // 2)
+    canvas.blit(font.render(key, True, BG), (x + (kw - font.size(key)[0]) // 2, y + 2))
+    canvas.blit(font.render(label, True, col), (x + kw + 8, y + 2))
+    return x + kw + 8 + font.size(label)[0] + 24
+
+
+def hint_bar(pg, canvas, size, font, hints, y=None, x0=0):
+    """Centred footer made of key_hint()s, e.g. [("A", "Confirm"), ("B", "Back")]. `size` is the width and height of the area to
+    centre in (x0 is its left edge); y overrides the default spot near the bottom."""
+    W, H = size
+    widths = []
+    for key, label in hints:
+        widths.append(max(font.size(key)[1] + 4, font.size(key)[0] + 14) + 8 + font.size(label)[0])
+    total = sum(widths) + 24 * (len(hints) - 1)
+    x, y = x0 + (W - total) // 2, H - 38 if y is None else y
+    for key, label in hints:
+        x = key_hint(pg, canvas, font, x, y, key, label)
 
 
 def draw(pg, canvas, size, fonts, snap, t, countdown=None):
@@ -265,12 +308,19 @@ def fit(font, text, width):
 
 
 def draw_console(pg, canvas, size, font, feed, snap, t, countdown=None):
-    """Green-on-black scrolling console: the last screenful of feed lines, then the error / restart notice, then a prompt."""
+    """Green-on-black scrolling console: a title strip, the last screenful of feed lines, the error / restart notice, a prompt,
+    and a slim bar at the bottom that shows the real install progress."""
     W, H = size
-    pad = 12
+    pad = 14
     lh = font.size("Ag")[1] + 3
+    top, foot_h = 30, lh + 14
     canvas.fill(CON_BG)
-    rows = max(3, (H - 2 * pad - lh) // lh)
+    pg.draw.rect(canvas, (6, 28, 12), (0, 0, W, top))
+    pg.draw.line(canvas, (0, 80, 30), (0, top), (W, top), 1)
+    for i, col in enumerate(((235, 190, 40), (40, 225, 80), (0, 125, 45))):
+        pg.draw.circle(canvas, col, (pad + 5 + i * 18, top // 2), 4)
+    canvas.blit(font.render("rgos-pwn - root@rgos", True, CON_COL["dim"]), (pad + 66, top // 2 - lh // 2 + 1))
+    rows = max(3, (H - top - foot_h - pad) // lh)
     view = list(feed.lines)
     fail = bool(snap["error"])
     if fail:
@@ -281,7 +331,7 @@ def draw_console(pg, canvas, size, font, feed, snap, t, countdown=None):
         view.append(("[*] restarting in %d ..." % max(0, int(countdown + 0.99)), "ok"))
     prompt = not fail and countdown is None
     view = view[-(rows - 1 if prompt else rows):]
-    y = pad
+    y = top + pad
     for text, kind in view:
         if text:
             canvas.blit(font.render(fit(font, text, W - 2 * pad), True, CON_COL[kind]), (pad, y))
@@ -291,8 +341,19 @@ def draw_console(pg, canvas, size, font, feed, snap, t, countdown=None):
         canvas.blit(font.render(label, True, CON_COL["ok"]), (pad, y))
         if int(t * 2) % 2 == 0:
             pg.draw.rect(canvas, CON_COL["ok"], (pad + font.size(label)[0], y + 2, max(6, font.size("M")[0]), lh - 4))
+    # the real install progress, as a thin bar above the footer text
+    frac = max(0.0, min(1.0, snap.get("fraction", 0.0) or 0.0))
+    bar_y = H - foot_h + 2
+    pg.draw.rect(canvas, (0, 45, 18), (pad, bar_y, W - 2 * pad, 4), border_radius=2)
+    if fail:
+        pg.draw.rect(canvas, BAD, (pad, bar_y, max(4, int((W - 2 * pad) * frac)), 4), border_radius=2)
+    elif frac > 0:
+        pg.draw.rect(canvas, CON_COL["info"], (pad, bar_y, max(4, int((W - 2 * pad) * frac)), 4), border_radius=2)
     foot = "Details: rgos-install-log.txt on the boot partition" if fail else "Do not turn off the console"
-    canvas.blit(font.render(foot, True, CON_COL["dim"]), (pad, H - pad - lh + 3))
+    canvas.blit(font.render(foot, True, CON_COL["dim"]), (pad, bar_y + 9))
+    if not fail:
+        pct = "%d%%" % int(frac * 100)
+        canvas.blit(font.render(pct, True, CON_COL["dim"]), (W - pad - font.size(pct)[0], bar_y + 9))
 
 
 def menu_input(sel, typ, code, val):
@@ -340,32 +401,41 @@ def draw_format_popup(pg, canvas, size, fonts, sel, device=""):
     f_title, f_row, f_small = fonts
     draw_welcome(pg, canvas, size, fonts, 0, device)
     shade = pg.Surface((W, H), pg.SRCALPHA)
-    shade.fill((0, 0, 0, 190))
+    shade.fill((0, 0, 0, 200))
     canvas.blit(shade, (0, 0))
 
-    row_h, pad = 58, 18
-    pw = min(W - 56, 620)
-    ph = pad + 34 + 10 + row_h * len(FORMAT_CHOICES) + 8 + 22 + 10 + 20 + pad
+    row_h, pad = 60, 20
+    pw = min(W - 56, 600)
+    ph = pad + 28 + 4 + 20 + 12 + row_h * len(FORMAT_CHOICES) + 4 + 20 + 12 + 1 + 12 + 22 + pad - 6
     px, py = (W - pw) // 2, max(8, (H - ph) // 2)
-    pg.draw.rect(canvas, BG, (px, py, pw, ph), border_radius=16)
-    pg.draw.rect(canvas, ACCENT, (px, py, pw, ph), 2, border_radius=16)
-    title = f_row.render("Format the ROMS partition as", True, ACCENT)
-    canvas.blit(title, (px + pad, py + pad))
+    pg.draw.rect(canvas, EDGE, (px - 1, py - 1, pw + 2, ph + 2), border_radius=19)
+    pg.draw.rect(canvas, BG, (px, py, pw, ph), border_radius=18)
+    canvas.blit(f_row.render("Storage format", True, TEXT), (px + pad, py + pad))
+    canvas.blit(f_small.render("How should the ROMS partition be formatted?", True, DIM), (px + pad, py + pad + 28))
 
-    y = py + pad + 34 + 10
+    y = py + pad + 28 + 4 + 20 + 12
     for i, key in enumerate(FORMAT_CHOICES):
         on = i == sel
-        box = (px + pad, y, pw - 2 * pad, row_h - 6)
-        pg.draw.rect(canvas, ACCENT if on else PANEL, box, border_radius=10)
-        fg, sub = (BG, BG) if on else (TEXT, DIM)
-        label = installer.FORMAT_LABELS[key] + ("   (recommended)" if key == installer.DEFAULT_ROMS_FORMAT else "")
-        canvas.blit(f_row.render(label, True, fg), (box[0] + 14, box[1] + 5))
-        canvas.blit(f_small.render(installer.FORMAT_HINTS[key], True, sub), (box[0] + 14, box[1] + 30))
+        box = (px + pad, y, pw - 2 * pad, row_h - 8)
+        pg.draw.rect(canvas, ACCENT if on else PANEL, box, border_radius=12)
+        fg, sub = (BG, (70, 52, 0)) if on else (TEXT, DIM)
+        cx, cy = box[0] + 26, box[1] + (row_h - 8) // 2
+        pg.draw.circle(canvas, fg, (cx, cy), 9, 0 if on else 2)       # radio dot
+        if on:
+            pg.draw.circle(canvas, ACCENT, (cx, cy), 4)
+        canvas.blit(f_row.render(installer.FORMAT_LABELS[key], True, fg), (box[0] + 50, box[1] + 6))
+        hint = installer.FORMAT_HINTS[key].replace("Recommended. ", "")
+        canvas.blit(f_small.render(hint, True, sub), (box[0] + 50, box[1] + 30))
+        if key == installer.DEFAULT_ROMS_FORMAT:
+            tag = "RECOMMENDED"
+            tw, th = f_small.size(tag)[0] + 18, f_small.size(tag)[1] + 4
+            tx, ty = box[0] + box[2] - tw - 14, box[1] + 8
+            pg.draw.rect(canvas, BG if on else PANEL_HI, (tx, ty, tw, th), border_radius=th // 2)
+            canvas.blit(f_small.render(tag, True, ACCENT if on else DIM), (tx + 9, ty + 2))
         y += row_h
-    note = "A ROMS partition that already exists keeps its format."
-    canvas.blit(f_small.render(note, True, DIM), (px + pad, y + 2))
-    foot = f_small.render("D-pad  Choose        A  Confirm        B  Back", True, TEXT)
-    canvas.blit(foot, (px + (pw - foot.get_width()) // 2, py + ph - pad - 16))
+    canvas.blit(f_small.render("An existing ROMS partition keeps its format.", True, DIM), (px + pad, y + 2))
+    pg.draw.line(canvas, EDGE, (px + pad, y + 28), (px + pw - pad, y + 28), 1)
+    hint_bar(pg, canvas, (pw, H), f_small, [("D-pad", "Choose"), ("A", "Confirm"), ("B", "Back")], y=y + 40, x0=px)
 
 
 def button_boxes(size, y_top):
@@ -400,35 +470,31 @@ def draw_welcome(pg, canvas, size, fonts, sel, device=""):
     f_title, f_row, f_small = fonts
     canvas.fill(BG)
     m = 28
-    canvas.blit(f_title.render("RG OS", True, ACCENT), (m, 20))
-    canvas.blit(f_small.render("Installer", True, DIM), (m + f_title.size("RG OS")[0] + 12, 34))
-    dev = installer.DEVICE_NAMES.get(device, device)
-    if dev:
-        s = f_small.render(dev, True, DIM)
-        canvas.blit(s, (W - m - s.get_width(), 34))
-    pg.draw.line(canvas, PANEL, (m, 64), (W - m, 64), 2)
+    header(pg, canvas, size, fonts, device)
 
-    y = 88
-    intro = ("RG OS is ready to be installed on this SD card.",
-             "Install sets up the card and restarts into RG OS. Games on an existing ROMS partition are never deleted.")
-    for k, text in enumerate(intro):
-        for ln in wrap(f_row if k == 0 else f_small, text, W - 2 * m):
-            canvas.blit((f_row if k == 0 else f_small).render(ln, True, TEXT if k == 0 else DIM), (m, y))
-            y += 28 if k == 0 else 22
-        y += 6
+    y = 90
+    canvas.blit(f_title.render("Ready to install", True, TEXT), (m, y))
+    y += 44
+    for ln in wrap(f_small, "Sets up this SD card and restarts into RG OS.", W - 2 * m):
+        canvas.blit(f_small.render(ln, True, DIM), (m, y))
+        y += 22
+    pg.draw.circle(canvas, OK, (m + 6, y + 10), 5)
+    canvas.blit(f_small.render("Games on an existing ROMS partition are never deleted.", True, DIM), (m + 20, y + 1))
+    y += 28
 
     for i, (key, box) in enumerate(zip(CHOICES, button_boxes((W, H), y))):
         on = i == sel
         fg = BG if on else TEXT
-        pg.draw.rect(canvas, ACCENT if on else PANEL, box, border_radius=18)
-        if not on:
-            pg.draw.rect(canvas, DIM, box, 2, border_radius=18)
         bx, by, side = box[0], box[1], box[2]
-        draw_icon(pg, canvas, key, bx + side // 2, by + int(side * 0.42), int(side * 0.26), fg)
+        if on:
+            pg.draw.rect(canvas, (110, 84, 0), (bx - 4, by - 4, side + 8, side + 8), border_radius=24)
+        pg.draw.rect(canvas, ACCENT if on else PANEL, box, border_radius=20)
+        if not on:
+            pg.draw.rect(canvas, EDGE, box, 1, border_radius=20)
+        draw_icon(pg, canvas, key, bx + side // 2, by + int(side * 0.40), int(side * 0.24), fg)
         label = f_row.render(CHOICE_LABELS[key], True, fg)
-        canvas.blit(label, (bx + (side - label.get_width()) // 2, by + side - 44))
-    foot = f_small.render("D-pad  Choose        A  Confirm", True, DIM)
-    canvas.blit(foot, ((W - foot.get_width()) // 2, H - 40))
+        canvas.blit(label, (bx + (side - label.get_width()) // 2, by + side - 42))
+    hint_bar(pg, canvas, size, f_small, [("D-pad", "Choose"), ("A", "Confirm")])
 
 
 def show_headless(inst):

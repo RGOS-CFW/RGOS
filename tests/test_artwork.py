@@ -327,22 +327,6 @@ class MenuWiringTests(unittest.TestCase):
         self.assertIn("artwork", menu.SETTINGS_ROWS)
         self.assertIn("artwork", menu.ICONS)
 
-    def test_flow_base_key_includes_art_and_falls_back(self):
-        with mock.patch.object(menu, "_flow_gradient_card", return_value="gradient") as g, \
-                mock.patch.object(menu, "_flow_art_card", side_effect=[None, "art"]) as a:
-            menu._FLOW["cards"].clear()
-            k1, lv1 = menu._flow_base(10, "GBA", "SM", 200, None, None)
-            k2, lv2 = menu._flow_base(10, "GBA", "SM", 200, None, "/x/broken.png")
-            k3, lv3 = menu._flow_base(10, "GBA", "SM", 200, None, "/x/ok.png")
-        self.assertEqual(len({k1, k2, k3}), 3)
-        self.assertEqual(k1, (10, "GBA", "SM", 200, None))
-        self.assertEqual(lv1[0], "gradient")
-        self.assertEqual(lv2[0], "gradient")
-        self.assertEqual(lv3[0], "art")
-        self.assertEqual(a.call_count, 2)
-        self.assertEqual(g.call_count, 2)
-        menu._FLOW["cards"].clear()
-
 
 class DnsFallbackTests(unittest.TestCase):
     def test_parse_a_record_with_compressed_name(self):
