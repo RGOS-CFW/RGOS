@@ -40,7 +40,7 @@ Systems that the build does not provide a core for (for example Arcade/Neo Geo w
 
 ## Dreamcast
 
-Flycast is not part of the image. Dreamcast stays hidden in the Games list until the core is installed: *Tools > Core Installer*, select **Flycast**, press A (needs Wi-Fi, see [CORE-INSTALLER.md](CORE-INSTALLER.md)). Or copy `flycast_libretro.so` into `cores/` on the ROMS card.
+`build.sh` builds Flycast as an **OpenGL ES** core (`DC_REPO=none` skips it; `DC_MAKE_ARGS` changes the make arguments). RetroArch on this image is a GLES build, and the libretro buildbot Flycast (what *Tools > Core Installer* downloads) is desktop-OpenGL only: it closes right after launch with `Requesting OpenGL context, but RetroArch is compiled against OpenGLES`. The image's own core is looked up before the one on the ROMS card, so it wins. Without a GLES Flycast, put one in `cores/` on the ROMS card (it must be built with `FORCE_GLES=1`).
 
 Put discs in `roms/dreamcast/`, one folder per game is fine. Use `.gdi` (keep its track files next to it), `.cdi`, `.chd`, or `.cue`/`.m3u` for multi-disc games. Only the disc file is listed, not the track files. The system runs with the CPU and GPU clocks pinned to `performance` while a game is running, and it is demanding: on the RG35XX H and similar H700 consoles many games will not reach full speed. A real BIOS is optional ([BIOS.md](BIOS.md)).
 

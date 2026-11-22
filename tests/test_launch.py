@@ -211,12 +211,17 @@ class GameCubeLaunchTests(unittest.TestCase):
         self.assertEqual(self.launch.video_attempts("gba", "/nonexistent"), [None])
 
     def test_dreamcast_gets_a_gl_driver_then_retries_and_logs_verbosely(self):
-        self.assertEqual(self.launch.video_attempts("dreamcast", "/nonexistent"), ["gl", "glcore"])
+        self.assertEqual(self.launch.video_attempts("dreamcast", "/nonexistent"), ["gl"])
         d = tempfile.mkdtemp(prefix="rgos-boot-")
         with open(os.path.join(d, "retroarch-dc-video.txt"), "w") as f:
             f.write("glcore\n")
         self.assertEqual(self.launch.video_attempts("dreamcast", d), ["glcore"])
         self.assertIn("--verbose", self.launch.build_command("/c.so", "/g.chd", "/r", "/run.cfg", verbose=True))
+
+    def test_gles_mismatch_is_detected_so_it_is_not_retried(self):
+        self.assertTrue(self.launch.gl_mismatch("[ERROR] Requesting OpenGL context, but RetroArch is compiled against OpenGLES. Cannot use HW context."))
+        self.assertFalse(self.launch.gl_mismatch("[ERROR] something else"))
+        self.assertFalse(self.launch.gl_mismatch(""))
 
     def test_boot_file_forces_one_video_driver(self):
         d = tempfile.mkdtemp(prefix="rgos-boot-")
