@@ -220,6 +220,77 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse(inst.start(["dolphin", "../x"]))
 
 
+class ReinstallTests(unittest.TestCase):
+    def setUp(self):
+        self.dest = os.path.join(helpers.sandbox(), "cores")
+
+    def test_has_copy_only_for_a_file_in_the_roms_cores_folder(self):
+        self.assertFalse(coreinstall.has_copy(self.dest, "gpsp"))
+        os.makedirs(self.dest)
+        open(os.path.join(self.dest, "gpsp_libretro.so"), "wb").write(b"x")
+        self.assertTrue(coreinstall.has_copy(self.dest, "gpsp"))
+        self.assertFalse(coreinstall.has_copy(self.dest, "vbam"))
+        self.assertFalse(coreinstall.has_copy(self.dest, "../gpsp"))
+
+    def test_reinstall_replaces_the_copy_and_says_reinstalled(self):
+        os.makedirs(self.dest)
+        path = os.path.join(self.dest, "gpsp_libretro.so")
+        open(path, "wb").write(b"old")
+        inst = coreinstall.Installer(self.dest, "https://e.test", serving({"gpsp_libretro.so.zip": make_zip("gpsp_libretro.so", elf())}),
+                                     {"gpsp": "gpSP"})
+        self.assertTrue(inst.start(["gpsp"], reinstall=True))
+        s = wait(inst)
+        self.assertEqual((s["ok"], s["msg"]), (["gpsp"], "Reinstalled gpSP"))
+        self.assertEqual(open(path, "rb").read(), elf())
+        self.assertTrue(inst.take_changed())
+
+    def test_a_plain_install_still_says_installed_after_a_reinstall(self):
+        inst = coreinstall.Installer(self.dest, "https://e.test", serving({"gpsp_libretro.so.zip": make_zip("gpsp_libretro.so", elf())}))
+        inst.start(["gpsp"], reinstall=True)
+        wait(inst)
+        inst.start(["gpsp"])
+        self.assertEqual(wait(inst)["msg"], "Installed gpsp")
+
+    def test_a_failed_reinstall_keeps_the_old_core_and_reports_why(self):
+        os.makedirs(self.dest)
+        path = os.path.join(self.dest, "gpsp_libretro.so")
+        open(path, "wb").write(b"old")
+        inst = coreinstall.Installer(self.dest, "https://e.test", serving({}), {"gpsp": "gpSP"})
+        inst.start(["gpsp"], reinstall=True)
+        s = wait(inst)
+        self.assertEqual((s["ok"], s["msg"]), ([], "gpSP: Not available for this device"))
+        self.assertEqual(open(path, "rb").read(), b"old")
+        self.assertFalse(inst.take_changed())
+
+    def test_say_shows_a_note_only_when_idle(self):
+        inst = coreinstall.Installer(self.dest)
+        self.assertTrue(inst.say("hello"))
+        self.assertEqual(inst.snapshot()["msg"], "hello")
+        inst._s["busy"] = True
+        self.assertFalse(inst.say("again"))
+        self.assertEqual(inst.snapshot()["msg"], "hello")
+
+    def test_rows_know_which_cores_have_a_copy_on_the_roms_card(self):
+        root = helpers.sandbox()
+        os.makedirs(os.path.join(root, "cores"))
+        open(os.path.join(root, "cores", "gpsp_libretro.so"), "wb").write(b"x")
+        old_root, old_inst = menu.ROMS_ROOT, menu.installed_cores
+        menu.ROMS_ROOT, menu.installed_cores = root, lambda: ["mgba", "gpsp"]
+        try:
+            rows = {r["core"]: r for r in menu.core_installer_rows()}
+        finally:
+            menu.ROMS_ROOT, menu.installed_cores = old_root, old_inst
+        self.assertTrue(rows["gpsp"]["copy"])           # downloaded: X can reinstall it
+        self.assertFalse(rows["mgba"]["copy"])          # ships in the image: nothing to replace
+        self.assertFalse(rows["fbneo"]["copy"])         # not installed at all
+
+    def test_the_menu_wires_x_to_reinstall_and_shows_it(self):
+        src = open(os.path.join(helpers.RGOS, "menu.py"), encoding="utf-8").read()
+        self.assertIn('elif a == "x" and ci_rows and not ci_s["busy"]:', src)
+        self.assertIn('ci.start([r["core"]], reinstall=True)', src)
+        self.assertIn("X Reinstall", src)
+
+
 class MenuTests(unittest.TestCase):
     def test_tool_is_listed(self):
         self.assertIn(("coreinstall", "Core Installer"), [(t[0], t[1]) for t in menu.TOOLS])

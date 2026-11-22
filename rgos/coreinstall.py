@@ -50,6 +50,12 @@ def core_dir(roms_root):
     return os.path.join(roms_root, "cores")
 
 
+def has_copy(dest, core):
+    """True if `core` has its own file in the ROMS cores folder, i.e. one this installer can replace (a core that ships in
+    the read-only system image does not)."""
+    return bool(NAME_RE.match(core)) and os.path.isfile(os.path.join(dest, core + "_libretro.so"))
+
+
 def candidates(systems, compat, installed, names=None):
     """Every core that could serve one of the given systems, as rows for the menu.
 
@@ -197,6 +203,7 @@ class Installer:
         self._lock = threading.Lock()
         self._cancel = False
         self._changed = False
+        self._verb = "Installed"
         self._s = {"busy": False, "core": "", "pct": 0, "index": 0, "total": 0, "msg": "", "ok": [], "failed": []}
 
     def snapshot(self):
@@ -211,15 +218,27 @@ class Installer:
             c, self._changed = self._changed, False
             return c
 
-    def start(self, cores):
+    def start(self, cores, reinstall=False):
+        """Download cores on a worker thread. reinstall=True is for cores that are already there: they are fetched again and
+        replaced (a failed or cancelled download leaves the old file untouched, see download()); only the final message
+        differs ("Reinstalled ...")."""
         cores = [c for c in dict.fromkeys(cores) if NAME_RE.match(c) and c not in EXCLUDE]
         with self._lock:
             if self._s["busy"] or not cores:
                 return False
             self._cancel = False
+            self._verb = "Reinstalled" if reinstall else "Installed"
             self._s.update(busy=True, core=cores[0], pct=0, index=1, total=len(cores), msg="", ok=[], failed=[])
         threading.Thread(target=self._run, args=(cores,), daemon=True).start()
         return True
+
+    def say(self, msg):
+        """Show a one line note in the menu header (not while a download runs). Returns False if it was busy."""
+        with self._lock:
+            if self._s["busy"]:
+                return False
+            self._s.update(msg=msg, ok=[], failed=[])
+            return True
 
     def cancel(self):
         with self._lock:
@@ -259,8 +278,8 @@ class Installer:
             elif failed:
                 msg = "%d installed, %d failed (%s)" % (len(ok), len(failed), failed[0][1])
             elif len(ok) == 1:
-                msg = "Installed %s" % label(ok[0])
+                msg = "%s %s" % (self._verb, label(ok[0]))
             else:
-                msg = "Installed %d cores" % len(ok)
+                msg = "%s %d cores" % (self._verb, len(ok))
             self._changed = bool(ok)
             self._s.update(busy=False, core="", pct=0, msg=msg)
