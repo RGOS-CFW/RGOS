@@ -17,6 +17,16 @@ While you use the launcher the CPU and GPU clocks are held at `performance` (and
 ### Startup and big libraries
 
 The launcher keeps the result of the last ROM scan in `scan-cache.json` next to `state.json`. On the next start (including every return from a game) the library is shown at once from that file and a background scan replaces it only if something changed. Game cards are built when they come into view instead of for the whole list, and a game's file size is read when it is selected rather than for every ROM during the scan, so systems with thousands of games open and scroll without a pause. `RGOS_SWITCH_S` (default `0.001`) sets how long a background thread may hold the interpreter before the render loop gets it back.
+### Animation
+
+All three launchers animate. RG Classic has its own pixel animation; **RG OS** and **RG XMB** share the same kind of motion:
+
+- **Entrance.** On the home screen, tiles (RG OS) or categories and items (RG XMB) pop in one after another with a small overshoot. It replays whenever you come back to the home screen, for example after a game or a sub-menu.
+- **RG OS focus ring.** One focus ring glides between tiles on a damped spring: it hops, stretches along the direction of travel and leaves a short ghost trail on fast moves. At rest it pulses, sweeps a diagonal shine across the tile and twinkles, the selected icon bobs, and the description fades up after each move. Slow embers drift up behind the tiles.
+- **RG XMB.** The selected category icon breathes and sends out a ring when picked, with an occasional sparkle. Items slide in from the right in a staggered wave after a category change; the selected item pops, pulses a ring and gets a nudging chevron.
+
+Animation redraws at full speed only while something moves and drops back to the idle frame rate once the screen settles, so it costs nothing when you leave the launcher alone.
+
 ## Themes
 
 *Settings > Theme* opens the list; the colours apply to the launchers and the in-game menu.
