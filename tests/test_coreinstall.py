@@ -151,7 +151,7 @@ class DownloadTests(unittest.TestCase):
         op = serving({"flycast_libretro.so.zip": make_zip("flycast_libretro.so", elf())})
         old = os.environ.pop("RGOS_CORE_URL", None)
         try:
-            with self.assertRaisesRegex(coreinstall.CoreInstallError, "desktop OpenGL"):
+            with self.assertRaisesRegex(coreinstall.CoreInstallError, "Desktop GL only"):
                 coreinstall.download("flycast", self.dest, None, None, None, op)
             self.assertEqual(op.seen, [])
             coreinstall.download("flycast", self.dest, "https://mirror.test/gles", None, None, op)

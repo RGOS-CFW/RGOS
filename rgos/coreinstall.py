@@ -114,7 +114,7 @@ def download(core, dest, base=None, progress=None, cancelled=None, opener=None):
     if not NAME_RE.match(core):
         raise CoreInstallError("Bad core name")
     if core in DESKTOP_GL_ONLY and not base and base_url() == DEFAULT_URL:
-        raise CoreInstallError("The buildbot %s is desktop OpenGL and cannot run on this device. Rebuild the image (build.sh builds a GLES one)" % core.capitalize())
+        raise CoreInstallError("Desktop GL only, won't run. Rebuild image")
     progress = progress or (lambda pct: None)
     cancelled = cancelled or (lambda: False)
     opener = opener or urllib.request.urlopen
