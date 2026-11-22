@@ -16,6 +16,7 @@ Put games in `<ROMS>/roms/<folder>/`. Systems whose core is not installed are hi
 | Sega CD / Mega-CD | `segacd` | genesis_plus_gx | `.cue` `.chd` `.iso` `.m3u` `.ccd` |
 | Sega 32X | `sega32x` | genesis_plus_gx | `.32x` `.md` `.gen` `.smd` `.bin` |
 | Sega Pico | `segapico` | genesis_plus_gx | `.pico` `.bin` |
+| Sega Dreamcast | `dreamcast` | flycast | `.cdi` `.gdi` `.chd` `.cue` `.m3u` |
 | Atari 2600 | `atari2600` | stella2014 | `.a26` `.bin` |
 | Atari 5200 | `atari5200` | atari800 | `.a52` `.bin` `.car` |
 | Atari 7800 | `atari7800` | prosystem | `.a78` `.bin` |
@@ -36,6 +37,12 @@ Files that start with `.` are ignored.
 `build.sh` installs these Debian libretro packages: gambatte, mgba, snes9x, nestopia and beetle-wswan. It also builds, best effort, the PlayStation core (pcsx_rearmed), Genesis Plus GX, the Neo Geo Pocket core and the three Atari cores (stella2014 for the 2600, atari800 for the 5200, prosystem for the 7800) from source, plus Dolphin on the RG Rotate. A failed source build is reported with a `!!` line and the image is built without that core.
 
 Systems that the build does not provide a core for (for example Arcade/Neo Geo with FinalBurn Neo) only appear when you supply the core yourself: put a prebuilt aarch64 `<name>_libretro.so` in `cores/` before building, or install a Debian package with `EXTRA_PKGS` ([BUILDING.md](BUILDING.md)). The menu lists a system only when a compatible core is present.
+
+## Dreamcast
+
+Flycast is not part of the image. Dreamcast stays hidden in the Games list until the core is installed: *Tools > Core Installer*, select **Flycast**, press A (needs Wi-Fi, see [CORE-INSTALLER.md](CORE-INSTALLER.md)). Or copy `flycast_libretro.so` into `cores/` on the ROMS card.
+
+Put discs in `roms/dreamcast/`, one folder per game is fine. Use `.gdi` (keep its track files next to it), `.cdi`, `.chd`, or `.cue`/`.m3u` for multi-disc games. Only the disc file is listed, not the track files. The system runs with the CPU and GPU clocks pinned to `performance` while a game is running, and it is demanding: on the RG35XX H and similar H700 consoles many games will not reach full speed. A real BIOS is optional ([BIOS.md](BIOS.md)).
 
 ## Choosing another core
 

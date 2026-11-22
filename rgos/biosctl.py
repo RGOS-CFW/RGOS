@@ -35,6 +35,10 @@ BIOS = {
         ("bios_CD_E.bin", "Mega-CD BIOS (Europe)", ("e66fa1dc5820d254611fdcdba0662372",), "*", "segacd"),
         ("bios_CD_J.bin", "Mega-CD BIOS (Japan)", ("278a9397d192149e84e820ac621a8edd",), "*", "segacd"),
     ],
+    "dreamcast": [
+        ("dc/dc_boot.bin", "Dreamcast BIOS", ("e10c53c2f8b90bab96ead2d368858623",), (), ""),
+        ("dc/dc_flash.bin", "Dreamcast flash (clock and region settings)", ("",), (), ""),
+    ],
     "atari5200": [
         ("5200.rom", "Atari 5200 BIOS", ("281f20ea4320404ec820fb7ec0693b38",), "*", ""),
     ],

@@ -12,6 +12,7 @@ Names are matched exactly, then without regard to upper/lower case (a case-only 
 | Master System | `bios_E.sms`, `bios_U.sms`, `bios_J.sms` | optional |
 | Game Gear | `bios.gg` | optional |
 | Sega CD / Mega-CD | `bios_CD_U.bin`, `bios_CD_E.bin`, `bios_CD_J.bin` | required (one for your region) |
+| Dreamcast | `dc/dc_boot.bin`, `dc/dc_flash.bin` | optional: Flycast has a built-in replacement BIOS, but the real one is more compatible |
 | Atari 5200 | `5200.rom` | required |
 | Atari 7800 | `7800 BIOS (U).rom`, `7800 BIOS (E).rom` | optional |
 | Neo Geo | `neogeo.zip` (leave zipped) | required |

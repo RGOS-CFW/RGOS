@@ -33,6 +33,7 @@ SYSTEMS = [("gba", "GBA", "retroarch", (".gba",), "Game Boy Advance"),
            ("segacd", "CD", "retroarch", (".cue", ".chd", ".iso", ".m3u", ".ccd"), "Sega CD / Mega-CD"),
            ("sega32x", "32X", "retroarch", (".32x", ".md", ".gen", ".smd", ".bin"), "Sega 32X"),
            ("segapico", "PICO", "retroarch", (".pico", ".bin"), "Sega Pico"),
+           ("dreamcast", "DC", "retroarch", (".cdi", ".gdi", ".chd", ".cue", ".m3u"), "Sega Dreamcast"),
            ("atari2600", "A26", "retroarch", (".a26", ".bin"), "Atari 2600"),
            ("atari5200", "A52", "retroarch", (".a52", ".bin", ".car"), "Atari 5200"),
            ("atari7800", "A78", "retroarch", (".a78", ".bin"), "Atari 7800"),
@@ -537,7 +538,7 @@ CORE_NAMES = {"mgba": "mGBA", "gpsp": "gpSP", "vbam": "VBA-M", "gambatte": "Gamb
               "genesis_plus_gx": "Genesis Plus GX", "picodrive": "PicoDrive", "stella2014": "Stella 2014", "stella": "Stella",
               "atari800": "Atari800", "prosystem": "ProSystem", "mednafen_ngp": "Beetle NeoPop", "race": "RACE",
               "mednafen_wswan": "Beetle Cygne", "pcsx_rearmed": "PCSX ReARMed", "mednafen_psx": "Beetle PSX",
-              "mednafen_psx_hw": "Beetle PSX HW", "swanstation": "SwanStation", "dolphin": "Dolphin", "fbneo": "FinalBurn Neo",
+              "mednafen_psx_hw": "Beetle PSX HW", "swanstation": "SwanStation", "dolphin": "Dolphin", "flycast": "Flycast", "fbneo": "FinalBurn Neo",
               "mednafen_gba": "Beetle GBA", "mednafen_gb": "Beetle GB"}
 
 
@@ -1416,6 +1417,14 @@ def icon_sys_gc(c, cx, cy, col, bg):
     pygame.draw.line(c, bg, (cx, cy), (cx, cy + 34), 3)
     pygame.draw.circle(c, bg, (cx, cy - 16), 6)
     pygame.draw.circle(c, col, (cx, cy - 16), 2)
+
+
+def icon_sys_dreamcast(c, cx, cy, col, bg):
+    pygame.draw.circle(c, col, (cx, cy), 36)
+    for turn in (0.6, 0.6 + math.pi):  # two spiral arms, like the console's swirl
+        pygame.draw.lines(c, bg, False, [(cx + (5 + 25 * k / 40.0) * math.cos(k * 0.14 + turn),
+                                          cy + (5 + 25 * k / 40.0) * math.sin(k * 0.14 + turn)) for k in range(41)], 4)
+    pygame.draw.circle(c, bg, (cx, cy), 4)
 
 
 def icon_sys_arcade(c, cx, cy, col, bg):
