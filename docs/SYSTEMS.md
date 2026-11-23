@@ -18,6 +18,7 @@ Put games in `<ROMS>/roms/<folder>/`. Systems whose core is not installed are hi
 | Sega Pico | `segapico` | genesis_plus_gx | `.pico` `.bin` |
 | Nintendo 64 | `n64` | mupen64plus_next | `.z64` `.n64` `.v64` `.u64` `.ndd` |
 | Sega Dreamcast | `dreamcast` | flycast | `.cdi` `.gdi` `.chd` `.cue` `.m3u` |
+| Sega Saturn | `saturn` | yabasanshiro | `.cue` `.chd` `.iso` `.m3u` `.ccd` `.mds` |
 | Atari 2600 | `atari2600` | stella2014 | `.a26` `.bin` |
 | Atari 5200 | `atari5200` | atari800 | `.a52` `.bin` `.car` |
 | Atari 7800 | `atari7800` | prosystem | `.a78` `.bin` |
@@ -44,6 +45,10 @@ Systems that the build does not provide a core for (for example Arcade/Neo Geo w
 `build.sh` builds Mupen64Plus-Next (`mupen64plus_next`) as an **OpenGL ES** core, for the same reason as Flycast below: RetroArch on this image is a GLES build and a desktop-OpenGL core closes right after launch. `N64_REPO=none` skips it, `N64_MAKE_ARGS` changes the make arguments (default `platform=unix FORCE_GLES=1`; the ARM64 dynarec is picked automatically on aarch64) and `N64_REQUIRED=1` stops the build when the core fails to build. The image's own core is looked up before the one on the ROMS card. ParaLLEl N64 (`parallel_n64`) is listed as an alternative core and can be added with *Tools > Core Installer* or by putting a GLES build in `cores/`.
 
 Put ROMs in `roms/n64/` as `.z64`, `.n64` or `.v64` (any byte order works), or `.ndd` for 64DD disks. No BIOS is needed. The system runs with the CPU and GPU clocks pinned to `performance` while a game is running. Many games need the right stick: turn on *DPAD to joystick* ([SETTINGS.md](SETTINGS.md)) if your console has no sticks. Speed varies a lot between games and consoles; the RG35XX H and similar H700 consoles will not run every title at full speed. The video driver can be forced with `retroarch-n64-video.txt` ([SD-CARD-LAYOUT.md](SD-CARD-LAYOUT.md)).
+
+## Saturn
+
+Put discs in `roms/saturn/` (`.cue` with its `.bin` tracks next to it, `.chd`, `.iso`, `.mds`, or `.m3u` for multi-disc games). RG OS ships no Saturn core: install one from *Tools > Core Installer* (YabaSanshiro is the default and the best fit for ARM handhelds; Yabause and Beetle Saturn are alternatives) or drop a `<name>_libretro.so` into `cores/` on the ROMS card. The Saturn menu entry appears once a compatible core is present. The CPU and GPU clocks are pinned to `performance` while a game runs. BIOS files are listed in [BIOS.md](BIOS.md).
 
 ## Dreamcast
 
