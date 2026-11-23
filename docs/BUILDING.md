@@ -26,6 +26,7 @@ Root (or `sudo`), and: `debootstrap`, `losetup`, `mksquashfs`/`unsquashfs`, `wge
 | `EXTRA_PKGS` | empty | Extra Debian packages, space separated |
 | `PSX_REPO`, `GENESIS_REPO`, `NGP_SRC` | libretro upstreams | Sources of the cores built from source |
 | `STELLA_REPO`, `ATARI800_REPO`, `PROSYSTEM_REPO` | libretro upstreams | Sources of the Atari 2600 (`stella2014`), 5200 (`atari800`) and 7800 (`prosystem`) cores; `none` skips that core |
+| `PICO8_REPO`, `PICO8_ALT_REPO` | fake-08, retro8 upstreams | Sources of the PICO-8 cores `fake08` (default) and `retro8`; `none` skips that core, both `none` skips PICO-8. `PICO8_MAKE_DIR` / `PICO8_MAKE_ARGS` change how fake-08 is built, `PICO8_REQUIRED=1` stops the build when neither core builds |
 | `GC_REPO` | libretro/dolphin | RG Rotate only; `none` skips GameCube ([GAMECUBE.md](GAMECUBE.md)) |
 | `PORTMASTER` | `1` | `0` leaves PortMaster out |
 | `PORTMASTER_URL`, `PORTMASTER_ZIP` | latest release / none | Where to get PortMaster; a local zip builds offline |

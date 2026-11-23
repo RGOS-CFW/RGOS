@@ -548,7 +548,9 @@ def consume_restart():
 
 
 def game_title(path):
-    return os.path.splitext(os.path.basename(path or ""))[0]
+    name = os.path.basename(path or "")
+    stem = os.path.splitext(name)[0]
+    return stem[:-3] if stem.lower().endswith(".p8") and name.lower().endswith(".png") else stem
 
 
 def ra_verbose():

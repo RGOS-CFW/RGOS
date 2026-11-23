@@ -18,7 +18,7 @@ DEV_DIR = "/dev"
 PRIMARY_MOUNT = "/media/roms"
 SYSTEM_MOUNTS = ("/", "/boot", PRIMARY_MOUNT)
 SKIP_LABELS = ("RGBOOT", "RGOS", "ROCKNIX", "rgos-root")
-SYSTEM_DIRS = ("gba", "nes", "snes", "gb", "gbc", "genesis", "mastersystem", "gamegear", "sg1000", "segacd", "sega32x", "segapico", "n64", "dreamcast", "saturn", "atari2600", "atari5200", "atari7800", "psx", "gc", "ngp", "ngpc", "ws", "wsc", "arcade", "neogeo", "ports")
+SYSTEM_DIRS = ("gba", "nes", "snes", "gb", "gbc", "genesis", "mastersystem", "gamegear", "sg1000", "segacd", "sega32x", "segapico", "n64", "dreamcast", "saturn", "atari2600", "atari5200", "atari7800", "psx", "gc", "ngp", "ngpc", "ws", "wsc", "arcade", "neogeo", "pico8", "ports")
 MOUNT_TYPES = {"exfat": ("exfat",), "vfat": ("vfat",), "ext4": ("ext4",), "ntfs": ("ntfs3", "ntfs")}
 MOUNT_OPTS = {"exfat": "noatime,umask=000", "vfat": "noatime,umask=000", "ext4": "noatime", "ntfs3": "noatime,umask=000", "ntfs": "noatime,umask=000"}
 DISK_RE = re.compile(r"^mmcblk\d+$")

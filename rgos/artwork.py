@@ -161,7 +161,10 @@ def art_dir(roms_root):
 
 
 def stem_of(path):
-    return os.path.splitext(os.path.basename(path))[0]
+    name = os.path.basename(path)
+    stem = os.path.splitext(name)[0]
+    # a PICO-8 "game.p8.png" cart is called "game" (its artwork is game.png, not game.p8.png)
+    return stem[:-3] if stem.lower().endswith(".p8") and name.lower().endswith(".png") else stem
 
 
 class ArtIndex:

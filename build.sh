@@ -133,6 +133,14 @@ N64_MAKE_ARGS="${N64_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
 SATURN_REPO="${SATURN_REPO:-https://github.com/libretro/yabasanshiro.git}"
 SATURN_MAKE_DIR="${SATURN_MAKE_DIR:-yabause/src/libretro}"
 SATURN_MAKE_ARGS="${SATURN_MAKE_ARGS:-platform=unix}"
+# PICO-8 (fantasy console, `roms/pico8/`, .p8 and .p8.png carts): fake-08 (default) and retro8 are built as libretro cores; either
+# is enough, and each is best effort. PICO8_REPO is fake-08's repo, PICO8_ALT_REPO retro8's (set one to none to skip that core,
+# or PICO8_REPO=none PICO8_ALT_REPO=none to skip PICO-8); PICO8_MAKE_DIR is the folder of fake-08's libretro Makefile;
+# PICO8_REQUIRED=1 makes a build with neither core stop the whole build. Neither emulator needs a BIOS or the Lexaloffle runtime.
+PICO8_REPO="${PICO8_REPO:-https://github.com/jtothebell/fake-08.git}"
+PICO8_ALT_REPO="${PICO8_ALT_REPO:-https://github.com/libretro/retro8.git}"
+PICO8_MAKE_DIR="${PICO8_MAKE_DIR:-platform/libretro}"
+PICO8_MAKE_ARGS="${PICO8_MAKE_ARGS:-platform=unix}"
 # Standalone Flycast (Dreamcast, started by RG OS itself instead of RetroArch): built from DC_REPO as an OpenGL ES program
 # and installed as /usr/local/bin/flycast. DC_STANDALONE=0 skips it; DC_SA_CMAKE_ARGS adds CMake arguments;
 # DC_SA_REQUIRED=1 makes a failed build stop the whole build.
@@ -397,7 +405,7 @@ if ls "$HERE"/cores/*_libretro.so >/dev/null 2>&1; then
   echo "==> Copying prebuilt cores from cores/"; cp "$HERE"/cores/*_libretro.so "$LRDIR/"
 fi
 [[ "$DEVICE" == "rg-rotate" ]] || rm -f "$LRDIR/dolphin_libretro.so"
-WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0; WANT_DC=0; WANT_N64=0; WANT_DCSA=0; WANT_SATURN=0
+WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0; WANT_DC=0; WANT_N64=0; WANT_DCSA=0; WANT_SATURN=0; WANT_FAKE08=0; WANT_RETRO8=0
 [[ "$NGP_SRC" != none && ! -e "$LRDIR/mednafen_ngp_libretro.so" ]] && WANT_NGP=1
 [[ "$PSX_REPO" != none && ! -e "$LRDIR/pcsx_rearmed_libretro.so" ]] && WANT_PSX=1
 have_core() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so "$ROOTFS/usr/lib/libretro/$1"_libretro.so "$ROOTFS/usr/local/lib/libretro/$1"_libretro.so; do [[ -e "$f" ]] && return 0; done; return 1; }
@@ -407,10 +415,12 @@ have_core() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so "$
 [[ "$DC_REPO" != none && "$DC_STANDALONE" == 1 && ! -x "$ROOTFS/usr/local/bin/flycast" && ! -x "$ROOTFS/usr/bin/flycast" ]] && WANT_DCSA=1
 [[ "$N64_REPO" != none && ! -e "$LRDIR/mupen64plus_next_libretro.so" ]] && ! have_core mupen64plus_next && WANT_N64=1
 [[ "$SATURN_REPO" != none && ! -e "$LRDIR/yabasanshiro_libretro.so" ]] && ! have_core yabasanshiro && WANT_SATURN=1
+[[ "$PICO8_REPO" != none && ! -e "$LRDIR/fake08_libretro.so" ]] && ! have_core fake08 && WANT_FAKE08=1
+[[ "$PICO8_ALT_REPO" != none && ! -e "$LRDIR/retro8_libretro.so" ]] && ! have_core retro8 && WANT_RETRO8=1
 [[ "$STELLA_REPO" != none ]] && ! have_core stella2014 && WANT_ATARI=1
 [[ "$ATARI800_REPO" != none ]] && ! have_core atari800 && WANT_ATARI=1
 [[ "$PROSYSTEM_REPO" != none ]] && ! have_core prosystem && WANT_ATARI=1
-if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC || WANT_N64 || WANT_DCSA || WANT_SATURN )); then
+if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC || WANT_N64 || WANT_DCSA || WANT_SATURN || WANT_FAKE08 || WANT_RETRO8 )); then
   echo "==> Installing a compiler in the rootfs to build libretro cores"
   rm -rf "$ROOTFS/tmp/core-src"; mkdir -p "$ROOTFS/tmp/core-src"
   cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
@@ -642,6 +652,51 @@ KEEP
         [[ "${SATURN_REQUIRED:-0}" != 1 ]] || { echo "!! SATURN_REQUIRED=1: stopping" >&2; exit 1; }
       fi
     fi
+    if (( WANT_FAKE08 )); then
+      echo "==> Building the PICO-8 core (fake08)"
+      P8_LOG="$WORK/fake08-build.log"; : > "$P8_LOG"
+      if (
+        set -e
+        command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
+        rm -rf "$WORK/fake08"
+        git clone -q --depth 1 --recurse-submodules --shallow-submodules "$PICO8_REPO" "$WORK/fake08"
+        rm -rf "$ROOTFS/tmp/core-src/fake08"; cp -r "$WORK/fake08" "$ROOTFS/tmp/core-src/fake08"
+        built=0
+        for jobs in "$(nproc)" 2 1; do
+          echo "   make -j$jobs $PICO8_MAKE_ARGS (log: $P8_LOG)"
+          if chroot "$ROOTFS" sh -c "cd /tmp/core-src/fake08/$PICO8_MAKE_DIR && make $PICO8_MAKE_ARGS -j$jobs" >>"$P8_LOG" 2>&1; then built=1; break; fi
+          echo "   make -j$jobs failed, retrying with fewer jobs"
+        done
+        (( built )) || { echo "fake08: make failed, last lines of $P8_LOG:"; tail -n 40 "$P8_LOG"; exit 1; }
+        so="$(find "$ROOTFS/tmp/core-src/fake08" -name fake08_libretro.so -type f | head -n1)"
+        [[ -n "$so" ]] || { echo "fake08: make finished but fake08_libretro.so was not produced (check PICO8_MAKE_DIR=$PICO8_MAKE_DIR, log: $P8_LOG)"; exit 1; }
+        install -m 755 "$so" "$LRDIR/fake08_libretro.so"
+      ); then echo "   fake08_libretro.so built"
+      else
+        echo "!! could not build fake-08 (log: $P8_LOG): PICO-8 will use retro8 if that builds, otherwise it has no core."
+        rm -f "$LRDIR/fake08_libretro.so"
+      fi
+    fi
+    if (( WANT_RETRO8 )); then
+      echo "==> Building the PICO-8 alternative core (retro8)"
+      R8_LOG="$WORK/retro8-build.log"; : > "$R8_LOG"
+      if (
+        set -e
+        command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
+        rm -rf "$WORK/retro8"
+        git clone -q --depth 1 --recurse-submodules --shallow-submodules "$PICO8_ALT_REPO" "$WORK/retro8"
+        rm -rf "$ROOTFS/tmp/core-src/retro8"; cp -r "$WORK/retro8" "$ROOTFS/tmp/core-src/retro8"
+        chroot "$ROOTFS" sh -c 'cd /tmp/core-src/retro8 && make platform=unix -j"$(nproc)"' >>"$R8_LOG" 2>&1 \
+          || { echo "retro8: make failed, last lines of $R8_LOG:"; tail -n 40 "$R8_LOG"; exit 1; }
+        so="$(find "$ROOTFS/tmp/core-src/retro8" -name retro8_libretro.so -type f | head -n1)"
+        [[ -n "$so" ]] || { echo "retro8: make finished but retro8_libretro.so was not produced (log: $R8_LOG)"; exit 1; }
+        install -m 755 "$so" "$LRDIR/retro8_libretro.so"
+      ); then echo "   retro8_libretro.so built"
+      else
+        echo "!! could not build retro8 (log: $R8_LOG): it will not be offered as an alternative PICO-8 core (Tools > Core Installer can fetch it)."
+        rm -f "$LRDIR/retro8_libretro.so"
+      fi
+    fi
     if (( WANT_GC )); then
       echo "==> Building the GameCube core (Dolphin libretro, GameCube only in the menu; RG Rotate)"
       if chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git ca-certificates cmake ninja-build pkg-config \
@@ -702,6 +757,12 @@ if [[ "$DEVICE" == "rg-rotate" && "$GC_REPO" != none ]]; then core_present dolph
 [[ "$DC_REPO" == none || "$DC_STANDALONE" != 1 || -x "$ROOTFS/usr/local/bin/flycast" || -x "$ROOTFS/usr/bin/flycast" ]] || echo "!! standalone flycast is missing from the image: Dreamcast will only offer the libretro Flycast core"
 [[ "$N64_REPO" == none ]] || core_present mupen64plus_next || echo "!! mupen64plus_next_libretro.so is missing from the image: no Nintendo 64 on this build"
 [[ "$SATURN_REPO" == none ]] || core_present yabasanshiro || echo "!! yabasanshiro_libretro.so is missing from the image: Sega Saturn needs a core from Tools > Core Installer"
+if [[ "$PICO8_REPO" != none || "$PICO8_ALT_REPO" != none ]]; then
+  core_present fake08 || core_present retro8 || {
+    echo "!! no PICO-8 core (neither fake08 nor retro8) is in the image: PICO-8 needs a core from Tools > Core Installer or cores/"
+    [[ "${PICO8_REQUIRED:-0}" != 1 ]] || { echo "!! PICO8_REQUIRED=1: stopping" >&2; exit 1; }
+  }
+fi
 core_present mednafen_psx || core_present pcsx_rearmed || echo "!! no PlayStation core (neither pcsx_rearmed nor mednafen_psx) is in the image"
 [[ -x "$ROOTFS/usr/bin/retroarch" ]] || echo "!! retroarch is not in the image (package missing from $DEBIAN_SUITE?)"
 for a in reboot poweroff halt; do ln -sf /bin/busybox "$ROOTFS/sbin/$a"; done

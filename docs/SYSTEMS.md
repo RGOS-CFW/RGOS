@@ -30,13 +30,14 @@ Put games in `<ROMS>/roms/<folder>/`. Systems whose core is not installed are hi
 | GameCube (Rotate only) | `gc` | dolphin | `.gcm` `.iso` `.gcz` `.rvz` `.ciso` `.m3u` `.dol` `.elf` |
 | Arcade (FinalBurn Neo) | `arcade` | fbneo | `.zip` `.7z` |
 | Neo Geo | `neogeo` | fbneo | `.zip` `.7z` |
+| PICO-8 | `pico8` | fake08 | `.p8` `.p8.png` |
 | Ports | `ports` | native | `.sh` |
 
 Files that start with `.` are ignored.
 
 ## Which cores ship in the image
 
-`build.sh` installs these Debian libretro packages: gambatte, mgba, snes9x, nestopia and beetle-wswan. It also builds, best effort, the PlayStation core (pcsx_rearmed), Genesis Plus GX, the Neo Geo Pocket core the three Atari cores (stella2014 for the 2600, atari800 for the 5200, prosystem for the 7800), Flycast, Mupen64Plus-Next and YabaSanshiro (Saturn) from source, plus Dolphin on the RG Rotate. A failed source build is reported with a `!!` line and the image is built without that core.
+`build.sh` installs these Debian libretro packages: gambatte, mgba, snes9x, nestopia and beetle-wswan. It also builds, best effort, the PlayStation core (pcsx_rearmed), Genesis Plus GX, the Neo Geo Pocket core the three Atari cores (stella2014 for the 2600, atari800 for the 5200, prosystem for the 7800), Flycast, Mupen64Plus-Next and YabaSanshiro (Saturn) from source, the two PICO-8 cores (fake-08 and retro8), plus Dolphin on the RG Rotate. A failed source build is reported with a `!!` line and the image is built without that core.
 
 Systems that the build does not provide a core for (for example Arcade/Neo Geo with FinalBurn Neo) only appear when you supply the core yourself: put a prebuilt aarch64 `<name>_libretro.so` in `cores/` before building, or install a Debian package with `EXTRA_PKGS` ([BUILDING.md](BUILDING.md)). The menu lists a system only when a compatible core is present.
 
@@ -58,9 +59,17 @@ Put discs in `roms/saturn/` (`.cue` with its `.bin` tracks next to it, `.chd`, `
 
 Put discs in `roms/dreamcast/`, one folder per game is fine. Use `.gdi` (keep its track files next to it), `.cdi`, `.chd`, or `.cue`/`.m3u` for multi-disc games. Only the disc file is listed, not the track files. The system runs with the CPU and GPU clocks pinned to `performance` while a game is running, and it is demanding: on the RG35XX H and similar H700 consoles many games will not reach full speed. A real BIOS is optional ([BIOS.md](BIOS.md)).
 
+## PICO-8
+
+PICO-8 is a fantasy console, so there is no hardware to dump: games are *carts*, either a text `.p8` file or a `.p8.png` picture with the game hidden inside it (the format used by the PICO-8 BBS and itch.io). Put them in `roms/pico8/`. Both kinds show in the Games list; a plain `.png` next to them is ignored, and a `game.p8.png` is listed as `game` (its artwork is `artwork/pico8/game.png`).
+
+The image carries two open-source libretro cores, both built by `build.sh` and both best effort: **fake-08** (`fake08`, the default, written for low-power handhelds) and **retro8** (`retro8`, an alternative to try when a cart misbehaves). Pick between them in *Settings > Emulators*, or fetch either from *Tools > Core Installer* if the build of one failed. `PICO8_REPO` / `PICO8_ALT_REPO` change the sources (`none` skips that core, both `none` skips PICO-8), `PICO8_MAKE_DIR` / `PICO8_MAKE_ARGS` change how fake-08 is built and `PICO8_REQUIRED=1` stops the build when neither core builds ([BUILDING.md](BUILDING.md)). If both fail, the PICO-8 entry stays hidden until you install a core.
+
+No BIOS is needed and the official Lexaloffle PICO-8 program is not used, so nothing is installed from lexaloffle.com. Both cores re-implement the PICO-8 API themselves, so a few carts that lean on rarely used features can run differently from the real console; if one does, try the other core. PICO-8 only has a D-pad and two action buttons (O and X) plus Start/Select, so the console's normal button layout applies. Carts that need a keyboard or mouse cannot be used without one.
+
 ## Choosing another core
 
-*Settings > Emulators* lists each system and the installed cores that are compatible with it. Compatible alternatives include, for example, gpsp / vbam for GBA, sameboy for Game Boy, fceumm / quicknes / mesen for NES, bsnes variants for SNES, picodrive for Sega systems, and swanstation / mednafen_psx for PlayStation. Only cores that are actually installed appear. *Tools > Core Installer* downloads the ones you do not have yet ([CORE-INSTALLER.md](CORE-INSTALLER.md)).
+*Settings > Emulators* lists each system and the installed cores that are compatible with it. Compatible alternatives include, for example, gpsp / vbam for GBA, sameboy for Game Boy, fceumm / quicknes / mesen for NES, bsnes variants for SNES, picodrive for Sega systems, and swanstation / mednafen_psx for PlayStation, and retro8 for PICO-8. Only cores that are actually installed appear. *Tools > Core Installer* downloads the ones you do not have yet ([CORE-INSTALLER.md](CORE-INSTALLER.md)).
 
 ## Multi-disc games
 
