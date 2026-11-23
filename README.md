@@ -8,6 +8,7 @@ RG OS is an open source Linux emulation distribution for retro handhelds built o
 | Anbernic RG35XX H | `rg35xxh` | Allwinner H700 | ROCKNIX-H700 (DDR4) | MBR |
 | Anbernic RG35XX SP | `rg35xxsp` | Allwinner H700 | ROCKNIX-H700 (DDR4) | MBR |
 | Anbernic RG Rotate | `rg-rotate` | Unisoc T618 | ROCKNIX-T618 | GPT (`uboot` partition) |
+| MiniLoong Pocket 1 | `miniloong` | Rockchip RK3566 | AURKNIX-RK3566 (Specific) | MBR |
 
 # Join the Discord!
 By joining our [Discord Server](https://discord.gg/PmQeRvpGa), you can help grow our community as well as chat with us, get support and much more.
@@ -15,5 +16,6 @@ By joining our [Discord Server](https://discord.gg/PmQeRvpGa), you can help grow
 # Credits & Thanks
 - Thanks to MuOS for being the entire inspiration behind this CFW.
 - Thanks to our testers for testing out the CFW, reporting bugs and giving feedback.
-- Credits to Noxwell for the ROCKNIX kernel and Device Trees for the Anbernic RG ROTATE.
-- Credits to ROCKNIX for the kernel and Device Trees.
+- Credits to Noxwell for the ROCKNIX Kernel and Device Trees for the Anbernic RG ROTATE.
+- Credits to ROCKNIX for the Kernel and Device Trees for H700 devices.
+- Credits to AURKNIX for the Kernel and Device Trees for the Miniloong Pocket 1.

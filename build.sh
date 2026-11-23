@@ -2,7 +2,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ALL_DEVICES=(rg-rotate rg34xxsp rg35xxh rg35xxsp)
+ALL_DEVICES=(rg-rotate rg34xxsp rg35xxh rg35xxsp miniloong)
 
 usage() {
   cat <<EOF
@@ -13,6 +13,7 @@ usage: sudo ./build.sh <device> [image|installer|update]
            rg35xxh    Anbernic RG35XX H (Allwinner H700, ROCKNIX-H700 base image)
            rg35xxsp   Anbernic RG35XX SP (Allwinner H700, ROCKNIX-H700 base image)
            rg-rotate  Anbernic RG Rotate (Unisoc T618, ROCKNIX-T618 base image)
+           miniloong  MiniLoong Pocket 1 (Rockchip RK3566, AURKNIX-RK3566 "Specific" base image)
            all        build every device above
   image    full SD card image (default)  -> out/<device>-rgos.img
   installer  first-boot installer image  -> out/<device>-rgos-installer.img
@@ -26,7 +27,8 @@ usage: sudo ./build.sh <device> [image|installer|update]
 A device is required: ./build.sh with no argument does nothing but print this text.
 Options (environment): RG34XXSP: H700_RAM=DDR4|DDR3 (default DDR4, must match the console's RAM),
   RG34XXSP_DTB=sun50i-h700-anbernic-rg34xx-sp[-v2-panel], RG35XXH_DTB=sun50i-h700-anbernic-rg35xx-h[-rev6-panel],
-  RG35XXSP_DTB=sun50i-h700-anbernic-rg35xx-sp[-rev6-panel], ROCKNIX_H700_VERSION=<release tag>; any device: ROCKNIX_URL=<image .img.gz>.
+  RG35XXSP_DTB=sun50i-h700-anbernic-rg35xx-sp[-rev6-panel], ROCKNIX_H700_VERSION=<release tag>; miniloong: ROCKNIX_RK3566_VERSION=<AURKNIX release tag>, MINILOONG_DTB=<dtb name without .dtb, default miniloong>;
+  any device: ROCKNIX_URL=<image .img.gz>.
 EOF
 }
 
@@ -42,6 +44,7 @@ case "$DEVICE_ARG" in
   rg35xxh|rg35xx-h)    DEVICE_ARG=rg35xxh ;;
   rg35xxsp|rg35xx-sp)  DEVICE_ARG=rg35xxsp ;;
   rg-rotate|rgrotate)  DEVICE_ARG=rg-rotate ;;
+  miniloong|miniloong-pocket-1|miniloong-pocket1|pocket1|pocket-1) DEVICE_ARG=miniloong ;;
   all)                 ;;
   "")                  usage; exit 1 ;;
   *)                   echo "unknown device '${1}'" >&2; echo >&2; usage >&2; exit 1 ;;
@@ -105,6 +108,16 @@ case "$DEVICE" in
     RG35XXSP_DTB="${RG35XXSP_DTB:-sun50i-h700-anbernic-rg35xx-sp}"
     [[ "$RG35XXSP_DTB" =~ ^sun50i-h700-anbernic-rg35xx-sp(-rev6-panel)?$ ]] || { echo "RG35XXSP_DTB must be sun50i-h700-anbernic-rg35xx-sp or sun50i-h700-anbernic-rg35xx-sp-rev6-panel" >&2; exit 1; }
     H700_DTB="$RG35XXSP_DTB"
+    ;;
+  miniloong)
+    DEVICE_DESC="MiniLoong Pocket 1 (Rockchip RK3566)"
+    PTABLE=dos   # confirmed against the real image right after it is attached (see "Detecting the partition table")
+    # The AURKNIX (ROCKNIX fork) "Specific" RK3566 image is the one that carries the MiniLoong Pocket 1 device tree.
+    ROCKNIX_RK3566_VERSION="${ROCKNIX_RK3566_VERSION:-20260809}"
+    BASE_URL="https://github.com/AveyondFly/distribution_rocknix/releases/download/${ROCKNIX_RK3566_VERSION}/AURKNIX-RK3566.aarch64-${ROCKNIX_RK3566_VERSION}-Specific.img.gz"
+    MINILOONG_DTB="${MINILOONG_DTB:-miniloong}"
+    [[ "$MINILOONG_DTB" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "MINILOONG_DTB must be a plain file name without .dtb (default: miniloong)" >&2; exit 1; }
+    MINILOONG_DTB="${MINILOONG_DTB%.dtb}"
     ;;
 esac
 echo "==> Device: $DEVICE_DESC  (mode: $MODE)"
@@ -222,6 +235,30 @@ echo "==> Stock boot partition:"; ls -la "$WORK/mnt"
 echo "==> Stock extlinux config (left untouched):"
 cat "$WORK/mnt"/extlinux/extlinux.conf 2>/dev/null || cat "$WORK/mnt"/extlinux.conf 2>/dev/null || echo "(none found)"
 
+if [[ "$DEVICE" == "miniloong" ]]; then
+  echo "==> Detecting the partition table"
+  PT_LABEL="$(sfdisk -d "$IMG" 2>/dev/null | awk -F': ' '/^label:/ {print $2; exit}')"
+  echo "    $(basename "$ROCKNIX_URL"): label=${PT_LABEL:-unknown}"
+  [[ "$PT_LABEL" == dos ]] || { echo "!! the RK3566 stock image is '${PT_LABEL:-unknown}', not MBR (dos). rgos-roms only knows MBR (ROMS = partition 3) and the RG Rotate GPT layout, so ROMS would not be created. Paste 'sfdisk -d' of the image and the layout can be added." >&2; exit 1; }
+  # The stock image picks its device tree with an FDT line in extlinux.conf (the AURKNIX how-to edits it by hand:
+  # Powkiddy-55.dtb -> miniloong.dtb). Point that line at the MiniLoong tree, so no manual step is left for the user.
+  DTB_SRC="$(find "$WORK/mnt" -maxdepth 3 -type f -name "$MINILOONG_DTB.dtb" | head -1)"
+  [[ -n "$DTB_SRC" ]] || { echo "!! $MINILOONG_DTB.dtb is not on the stock boot partition ($(find "$WORK/mnt" -maxdepth 2 -name '*.dtb' | sed "s#$WORK/mnt/##" | tr '\n' ' '))"; exit 1; }
+  MINILOONG_DTB_REL="${DTB_SRC#"$WORK/mnt"/}"
+  echo "==> device tree: /$MINILOONG_DTB_REL"
+  MEXT="$WORK/mnt/extlinux/extlinux.conf"; [[ -f "$MEXT" ]] || MEXT="$WORK/mnt/extlinux.conf"
+  [[ -f "$MEXT" ]] || { echo "!! no extlinux.conf on the stock boot partition"; exit 1; }
+  if grep -qi '^[[:space:]]*fdt[[:space:]]' "$MEXT"; then
+    sed -i -E "s#^([[:space:]]*[Ff][Dd][Tt][[:space:]]+).*#\1/$MINILOONG_DTB_REL#" "$MEXT"
+  elif grep -qi '^[[:space:]]*fdtdir' "$MEXT"; then
+    sed -i -E "s#^([[:space:]]*)[Ff][Dd][Tt][Dd][Ii][Rr][[:space:]]+.*#\1FDT /$MINILOONG_DTB_REL#" "$MEXT"
+  else
+    sed -i -E "0,/^[[:space:]]*[Ii][Nn][Ii][Tt][Rr][Dd]|^[[:space:]]*[Aa][Pp][Pp][Ee][Nn][Dd]/s##\tFDT /$MINILOONG_DTB_REL\n&#" "$MEXT"
+  fi
+  grep -qi "^[[:space:]]*fdt[[:space:]]\+/$MINILOONG_DTB_REL" "$MEXT" || { echo "!! could not point extlinux.conf at /$MINILOONG_DTB_REL:" >&2; cat "$MEXT" >&2; exit 1; }
+  echo "==> extlinux.conf now loads /$MINILOONG_DTB_REL"
+fi
+
 if [[ "$DEVICE" == "rg34xxsp" || "$DEVICE" == "rg35xxh" || "$DEVICE" == "rg35xxsp" ]]; then
   DTB_SRC="$WORK/mnt/device_trees/$H700_DTB.dtb"
   [[ -f "$DTB_SRC" ]] || { echo "!! $H700_DTB.dtb is not in the stock image's device_trees/ ($(ls "$WORK/mnt/device_trees" 2>/dev/null | tr '\n' ' '))"; exit 1; }
@@ -336,6 +373,13 @@ case "$DEVICE" in
     [[ -f "$RA_CFG" ]] || { echo "!! $RA_CFG missing"; exit 1; }
     cp "$RA_CFG" "$ROOTFS/etc/rgos/retroarch-$DEVICE.cfg"
     ;;
+  miniloong)
+    mkdir -p "$ROOTFS/etc/rgos"
+    # one analog stick (left): the hub keeps the left stick axes, retroarch-miniloong.cfg leaves the right stick unbound
+    echo '{"analog": true, "sticks": 1}' > "$ROOTFS/etc/rgos/input-$DEVICE.json"
+    [[ -f "$HERE/config/retroarch-$DEVICE.cfg" ]] || { echo "!! $HERE/config/retroarch-$DEVICE.cfg missing"; exit 1; }
+    cp "$HERE/config/retroarch-$DEVICE.cfg" "$ROOTFS/etc/rgos/retroarch-$DEVICE.cfg"
+    ;;
 esac
 BOOTLOGO_RAW_DIR="$WORK/bootlogo-raw"
 rm -rf "$BOOTLOGO_RAW_DIR"
@@ -352,6 +396,8 @@ if [[ -d "$HERE/splash" ]]; then
   SPLASH_DEV="$DEVICE"
   # fall back to the RG35XX H splash only when there is no splash-rg35xxsp.* file of any type
   [[ "$DEVICE" == "rg35xxsp" ]] && ! compgen -G "$HERE/splash/splash-rg35xxsp.*" >/dev/null && SPLASH_DEV=rg35xxh
+  # the MiniLoong Pocket 1 panel is 4:3 like the RG35XX H: reuse its splash until a splash-miniloong.* file exists
+  [[ "$DEVICE" == "miniloong" ]] && ! compgen -G "$HERE/splash/splash-miniloong.*" >/dev/null && SPLASH_DEV=rg35xxh
   for f in "$HERE"/splash/*; do
     [[ -e "$f" ]] || continue   # empty splash/ folder: the glob stays literal and cp would abort the build
     b="$(basename "$f")"
@@ -980,13 +1026,21 @@ if [[ "$MODE" == "update" ]]; then
   cp "$WORK/mnt/SYSTEM" "$WORK/mnt/$INITRD_NAME" "$WORK/upd/"
   [[ -f "$WORK/mnt/SYSTEM.md5" ]] && cp "$WORK/mnt/SYSTEM.md5" "$WORK/upd/"
   [[ "${UPDATE_EXTLINUX:-0}" == "1" ]] && cp "$EXT" "$WORK/upd/extlinux.conf"
+  if [[ "$DEVICE" == "miniloong" && "${UPDATE_DTB:-0}" == "1" ]]; then
+    case "$MINILOONG_DTB_REL" in
+      miniloong.dtb|device_trees/miniloong.dtb) mkdir -p "$WORK/upd/$(dirname "$MINILOONG_DTB_REL")"; cp "$WORK/mnt/$MINILOONG_DTB_REL" "$WORK/upd/$MINILOONG_DTB_REL" ;;
+      *) echo "!! UPDATE_DTB=1: /$MINILOONG_DTB_REL is not an updatable path (miniloong.dtb or device_trees/miniloong.dtb): not in the update" >&2 ;;
+    esac
+  fi
   [[ ( "$DEVICE" == "rg34xxsp" || "$DEVICE" == "rg35xxh" || "$DEVICE" == "rg35xxsp" ) && "${UPDATE_DTB:-0}" == "1" ]] && cp "$WORK/mnt/dtb.img" "$WORK/upd/dtb.img"
 fi
 
 { echo "RG OS image info (written by build.sh)"
   echo "device: $DEVICE"
   echo "base image: $(basename "$ROCKNIX_URL")"
-  if [[ "$PTABLE" == dos ]]; then
+  if [[ "$DEVICE" == "miniloong" ]]; then
+    echo "device tree: /$MINILOONG_DTB_REL   (set by build.sh in extlinux.conf; to switch it by hand edit the FDT line of extlinux/extlinux.conf on the card)"
+  elif [[ "$PTABLE" == dos ]]; then
     echo "h700 ram type: $H700_RAM   (the U-Boot on this card only starts consoles with this RAM; black screen + nothing written = wrong type, rebuild with H700_RAM=DDR3 or DDR4)"
     echo "device tree: $H700_DTB   (screen black or garbage = wrong panel revision, rebuild with the other one)"
   fi
@@ -1003,6 +1057,7 @@ if [[ "$MODE" == "update" ]]; then
   [[ -f "$WORK/upd/SYSTEM.md5" ]] && ARGS+=("SYSTEM.md5=$WORK/upd/SYSTEM.md5")
   [[ -f "$WORK/upd/extlinux.conf" ]] && ARGS+=("extlinux/extlinux.conf=$WORK/upd/extlinux.conf")
   [[ -f "$WORK/upd/dtb.img" ]] && ARGS+=("dtb.img=$WORK/upd/dtb.img")
+  [[ -n "${MINILOONG_DTB_REL:-}" && -f "$WORK/upd/$MINILOONG_DTB_REL" ]] && ARGS+=("$MINILOONG_DTB_REL=$WORK/upd/$MINILOONG_DTB_REL")
   rm -f "$OUT"/rgos-update-"$DEVICE"-*.tar
   python3 "$HERE/tools/mkupdate.py" "$UPD_TAR" "$UPD_ID" "$(cat "$ROOTFS/etc/rgos-device")" "${ARGS[@]}"
   rm -rf "$WORK/upd"
@@ -1030,6 +1085,8 @@ echo "To go back to ROCKNIX's own init: copy extlinux/extlinux.conf.stock over e
 echo "RG OS logs are copied to rgos-logs.txt on the card's FAT partition at 8, 28 and 58 s after boot."
 if [[ "$DEVICE" == "rg-rotate" ]]; then
   echo "Flash the SPL once (cd spl-flasher && ./flash-spl.sh), then write the image to the SD card."
+elif [[ "$DEVICE" == "miniloong" ]]; then
+  echo "Write the image to the SD card and boot the Pocket 1 from it (the RK3566 boots from the card; the stock Android on the internal storage is not touched). Black screen = wrong FDT in extlinux/extlinux.conf; rgos-initramfs.txt on the card shows how far boot got."
 else
   echo "Built for $H700_RAM RAM. The H700 U-Boot on the card is specific to the RAM type: if the console stays black and nothing is written to the card, rebuild with the other one (H700_RAM=DDR3 / DDR4; unsure which? try DDR4 first, then DDR3)."
   echo "Write the image to the SD card (the H700 boots straight from it; no SPL flashing). dtb.img = $H700_DTB.dtb; to change it, rebuild with RG34XXSP_DTB=... / RG35XXH_DTB=... / RG35XXSP_DTB=... (device_trees/ is not on the card)."

@@ -65,7 +65,7 @@ def _device():
 
 
 DEVICE_ID = os.environ.get("RGOS_DEVICE") or _device() or "rg-rotate"
-CANVAS = {"rg-rotate": (720, 720), "rg34xxsp": (720, 480), "rg35xxh": (720, 540), "rg35xxsp": (720, 540)}
+CANVAS = {"rg-rotate": (720, 720), "rg34xxsp": (720, 480), "rg35xxh": (720, 540), "rg35xxsp": (720, 540), "miniloong": (720, 540)}
 W, H = CANVAS.get(DEVICE_ID, CANVAS["rg-rotate"])
 DY = H - 480
 DX = 0
@@ -585,6 +585,16 @@ def bios_summary_text(summ):
 
 
 ALL_SYSTEMS = list(SYSTEMS)
+
+
+def _stick_count():
+    """Physical analog sticks: 1 when /etc/rgos/input-<device>.json says \"sticks\": 1 (MiniLoong Pocket 1), else 2."""
+    try:
+        import json
+        with open("/etc/rgos/input-%s.json" % DEVICE_ID) as f:
+            return 1 if json.load(f).get("sticks") == 1 else 2
+    except Exception:
+        return 2
 
 
 def _gc_allowed():
@@ -2177,8 +2187,11 @@ class ButtonMap:
                ("D-pad RIGHT", 0x223, False), ("MENU (home) button", 0x13c, True), ("L2 / left trigger", 0x138, True),
                ("R2 / right trigger", 0x139, True), ("L3 (click left stick)", 0x13d, True), ("R3 (click right stick)", 0x13e, True)]
     STICK_BTNS = (0x13d, 0x13e)
+    if _stick_count() == 1:   # one-stick device: no R3 click and no right stick to calibrate
+        PROMPTS = PROMPTS[:-1]
+        STICK_BTNS = (0x13d,)
     TIMEOUT, OPT_TIMEOUT, GAP = 25.0, 5.0, 0.5
-    STICKS = [("LEFT stick", (0x00, 0x01)), ("RIGHT stick", (0x03, 0x04))]
+    STICKS = [("LEFT stick", (0x00, 0x01)), ("RIGHT stick", (0x03, 0x04))][:_stick_count()]
     CENTER_SETTLE, CENTER_TIME = 0.6, 2.0
     STICK_IDLE, STICK_TIMEOUT = 8.0, 30.0
     REACH, MOVED = 0.5, 0.15
@@ -2333,7 +2346,7 @@ class ButtonMap:
             return None
         name, axes = self.STICKS[self.sticks[min(self.cstick, len(self.sticks) - 1)]]
         if self.state == "scenter":
-            name, axes = "both sticks", self.STICKS[self.sticks[0]][1]
+            name, axes = ("both sticks" if len(self.sticks) > 1 else "the stick"), self.STICKS[self.sticks[0]][1]
         if any(a not in self.sv for a in axes):
             return name, 0.0, 0.0, set()
         def norm(a):
@@ -2417,7 +2430,7 @@ class ButtonMap:
             label, _, optional = self.PROMPTS[self.step]
             return ["Press %s" % label, "(wait a few seconds to skip: this one is optional)" if optional else ""]
         if self.state == "scenter":
-            return ["Let go of both sticks", "Leave them centred for a moment"]
+            return ["Let go of both sticks", "Leave them centred for a moment"] if len(self.sticks) > 1 else ["Let go of the stick", "Leave it centred for a moment"]
         if self.state == "sroll":
             return ["Roll the %s around" % self.STICKS[self.sticks[self.cstick]][0], "Push it to the edge and go all the way round, slowly"]
         if self.state == "apply":

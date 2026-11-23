@@ -6,6 +6,7 @@
 | Anbernic RG35XX H | `rg35xxh` | Allwinner H700 | ROCKNIX-H700 | MBR | 3 |
 | Anbernic RG35XX SP | `rg35xxsp` | Allwinner H700 | ROCKNIX-H700 | MBR | 3 |
 | Anbernic RG Rotate | `rg-rotate` | Unisoc T618 | ROCKNIX-T618 | GPT (`uboot` partition 3) | 4 |
+| MiniLoong Pocket 1 | `miniloong` | Rockchip RK3566 | AURKNIX-RK3566 (Specific) | MBR | 3 |
 
 The running device is stored in `/etc/rgos-device`. Offline updates check it, and the menu uses it to pick layouts and hide features.
 
@@ -37,3 +38,7 @@ For the three H700 consoles two independent choices decide whether the screen wo
 2. **Panel revision**: standard device tree, or the alternate tree (`-v2-panel` on the RG34XXSP, `-rev6-panel` on the RG35XX H and SP). A wrong choice gives a black or garbled screen, but the card still boots far enough to write `rgos-initramfs.txt`.
 
 With an unknown console, try the four combinations. The RAM type matters only for fresh images; offline updates reuse the U-Boot already on the card.
+
+## MiniLoong Pocket 1
+
+See [MINILOONG-POCKET-1.md](MINILOONG-POCKET-1.md).
