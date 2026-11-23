@@ -376,7 +376,7 @@ case "$DEVICE" in
   miniloong)
     mkdir -p "$ROOTFS/etc/rgos"
     # one analog stick (left): the hub keeps the left stick axes, retroarch-miniloong.cfg leaves the right stick unbound
-    echo '{"analog": true}' > "$ROOTFS/etc/rgos/input-$DEVICE.json"
+    echo '{"analog": true, "sticks": 1}' > "$ROOTFS/etc/rgos/input-$DEVICE.json"
     [[ -f "$HERE/config/retroarch-$DEVICE.cfg" ]] || { echo "!! $HERE/config/retroarch-$DEVICE.cfg missing"; exit 1; }
     cp "$HERE/config/retroarch-$DEVICE.cfg" "$ROOTFS/etc/rgos/retroarch-$DEVICE.cfg"
     ;;

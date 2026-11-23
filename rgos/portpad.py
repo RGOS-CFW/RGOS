@@ -68,9 +68,24 @@ def analog_enabled(conf=None, devfile=None):
     return bool(out.get("analog", False))
 
 
-def mapping_line(analog=False):
-    parts = [sdl_guid(), HUB_NAME] + ["%s:b%d" % kv for kv in BUTTONS]
-    parts += ["%s:a%d" % kv for kv in (STICKS if analog else LEFT_STICK)]
+def stick_count(conf=None, devfile=None):
+    """1 for a one-stick device (\"sticks\": 1 in input-<device>.json), else 2."""
+    if conf:
+        return 1 if _load_json(conf).get("sticks") == 1 else 2
+    out = _load_json(INPUT_CONF)
+    try:
+        with open(devfile or DEVICE_FILE) as f:
+            dev = f.read().strip()
+        out.update(_load_json(os.path.join(os.path.dirname(INPUT_CONF), "input-%s.json" % dev)))
+    except OSError:
+        pass
+    return 1 if out.get("sticks") == 1 else 2
+
+
+def mapping_line(analog=False, sticks=2):
+    buttons = [kv for kv in BUTTONS if not (sticks == 1 and kv[0] == "rightstick")]
+    parts = [sdl_guid(), HUB_NAME] + ["%s:b%d" % kv for kv in buttons]
+    parts += ["%s:a%d" % kv for kv in (STICKS if analog and sticks != 1 else LEFT_STICK)]
     parts.append("platform:Linux")
     return ",".join(parts)
 
@@ -102,10 +117,10 @@ def user_files(roms_root, port_dir=None):
     return files
 
 
-def build_db(analog=False, extra=()):
+def build_db(analog=False, extra=(), sticks=2):
     lines = ["# RG OS generated controller mappings (SDL_GameControllerDB format)",
              "# Override a mapping by putting a line with the same GUID in %s" % USER_DB_NAME,
-             mapping_line(analog)]
+             mapping_line(analog, sticks)]
     lines.extend(extra)
     return "\n".join(lines) + "\n"
 
@@ -130,7 +145,7 @@ def env_for(base_env, run_dir, roms_root, port_dir=None, conf=None):
     A mapping the user already exported in SDL_GAMECONTROLLERCONFIG is kept and wins over ours.
     """
     extra = user_lines(*user_files(roms_root, port_dir))
-    text = build_db(analog_enabled(conf), extra)
+    text = build_db(analog_enabled(conf), extra, stick_count(conf))
     cfg = "\n".join(text.splitlines()[2:])  # drop the comment header, keep mapping + user lines
     existing = (base_env.get("SDL_GAMECONTROLLERCONFIG") or "").strip()
     env = {"SDL_GAMECONTROLLERCONFIG": cfg + ("\n" + existing if existing else "")}

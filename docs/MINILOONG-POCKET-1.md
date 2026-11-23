@@ -28,6 +28,7 @@ initramfs patch. Android on the internal storage is not touched; the Pocket 1 bo
 
 - No `dtb.img`, no DDR3/DDR4 choice, no panel revision choice.
 - Menu and installer use the 720x540 layout (exact 4:3, scaled to 960x720); the boot logo is 960x720.
+- One stick: `input-miniloong.json` has `"sticks": 1`, so the input hub publishes only the left stick axes, the PortMaster/SDL mapping has no `rightx/righty/rightstick`, and the button mapper skips R3 and the right stick calibration.
 - RetroArch uses `config/retroarch-miniloong.cfg` (960x720, left stick only, R3 unbound).
 - Mini-HDMI is not available (HDMI.md covers the H700 only).
 - Offline updates may carry `miniloong.dtb` or `device_trees/miniloong.dtb`.
