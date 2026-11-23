@@ -48,7 +48,7 @@ SYSTEMS = [("gba", "GBA", "retroarch", (".gba",), "Game Boy Advance"),
            ("arcade", "ARC", "retroarch", (".zip", ".7z"), "Arcade (FinalBurn Neo)"),
            ("neogeo", "NEO", "retroarch", (".zip", ".7z"), "Neo Geo"),
            ("pico8", "P8", "retroarch", (".p8", ".p8.png"), "PICO-8"),
-           ("ports", "PORT", "native", (".sh",), "Ports")]
+           ("ports", "PORT", "native", (".sh", ".bash"), "Ports")]
 ROMS_DIR = os.path.join(ROMS_ROOT, "roms")
 RUN_DIR = os.environ.get("RGOS_RUN", "/run/rgos")
 STATE_FILE = os.environ.get("RGOS_STATE", "/var/lib/rgos/state.json")
@@ -360,6 +360,15 @@ def rom_roots():
     return roots
 
 
+def _native_binary(path):
+    """A bare ARM / ARM64 executable in roms/ports (any file name) counts as a port."""
+    try:
+        import nativebin
+        return nativebin.is_port_binary(path)
+    except Exception:
+        return False
+
+
 def scan_roms():
     games = []
     for card, root_dir in rom_roots():
@@ -371,7 +380,7 @@ def scan_roms():
                 if sid == "ports":
                     dirs[:] = []
                 for f in files:
-                    if f.lower().endswith(exts) and not f.startswith("."):
+                    if not f.startswith(".") and (f.lower().endswith(exts) or (sid == "ports" and _native_binary(os.path.join(root, f)))):
                         # "size" is not read here: a stat() per ROM made scanning a big library slow on an SD card, and only
                         # the selected game's detail panel shows it (see rom_size)
                         games.append({"title": pretty(f), "path": os.path.join(root, f), "tag": tag, "core": core,
