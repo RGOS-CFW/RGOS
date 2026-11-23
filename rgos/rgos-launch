@@ -829,6 +829,29 @@ def save_native_report(what, cmd, rc, dt, cwd, stopped=False, boot_dir=None):
         log("cannot write rgos-native.txt: %s" % e)
 
 
+def link_bios_dir(link, bios):
+    """Make <link> a symlink to the BIOS folder.
+
+    Flycast creates an empty real <data dir>/data folder itself the first time it runs, so a game started before the
+    BIOS was copied to the card left that folder behind and the BIOS was never linked afterwards ("lexists" was true).
+    An empty folder or a link that points somewhere else is replaced; a folder that holds files is the user's own
+    setup and is left alone.
+    """
+    if os.path.islink(link):
+        if os.path.realpath(link) == os.path.realpath(bios):
+            return
+        os.unlink(link)
+    elif os.path.isdir(link):
+        try:
+            os.rmdir(link)  # only succeeds when it is empty
+        except OSError:
+            log("Flycast data folder %s is not empty: BIOS folder not linked" % link)
+            return
+    elif os.path.lexists(link):
+        return
+    os.symlink(bios, link)
+
+
 def standalone_env(sid, cwd=None):
     """Environment for a standalone emulator: a native port's environment, with its settings kept on the ROMS card.
 
@@ -845,8 +868,8 @@ def standalone_env(sid, cwd=None):
         try:
             os.makedirs(data, exist_ok=True)
             link = os.path.join(data, "data")  # flycast looks for dc_boot.bin / dc_flash.bin in <data dir>/data
-            if os.path.isdir(bios) and not os.path.lexists(link):
-                os.symlink(bios, link)
+            if os.path.isdir(bios):
+                link_bios_dir(link, bios)
         except OSError as e:
             log("cannot prepare the Flycast data folder: %s" % e)
     return env
