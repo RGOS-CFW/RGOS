@@ -645,9 +645,23 @@ def kernel_hints(n=40):
     return "\n".join(keep[-n:])
 
 
+LOGS_SUBDIR = "logs"
+
+
+def logs_dir(boot_dir=None):
+    """<boot>/logs, created on demand; falls back to the boot partition root if the folder cannot be made."""
+    base = boot_dir or BOOT_DIR
+    path = os.path.join(base, LOGS_SUBDIR)
+    try:
+        os.makedirs(path, exist_ok=True)
+        return path
+    except OSError:
+        return base
+
+
 def save_report(pads, idx, drv, cmd, rc, history=(), core_path=""):
     try:
-        with open(os.path.join(BOOT_DIR, "rgos-retroarch.txt"), "w") as f:
+        with open(os.path.join(logs_dir(), "rgos-retroarch.txt"), "w") as f:
             f.write("== %s rc=%s (%s)\ncmd: %s\npads (jsN, name): %s\nhub pad: %s   joypad driver: %s\n"
                     % (time.strftime("%Y-%m-%d %H:%M:%S"), rc, rc_text(rc), " ".join(cmd), pads, idx, drv))
             if core_path:
@@ -838,14 +852,14 @@ PORT_TOOLS = ("bash", "unzip", "wget", "curl", "xxd", "pkill", "pgrep", "pidof",
 
 
 def save_native_report(what, cmd, rc, dt, cwd, stopped=False, boot_dir=None):
-    """Write rgos-native.txt on the FAT boot partition after every native port / PortMaster run.
+    """Write logs/rgos-native.txt on the FAT boot partition after every native port / PortMaster run.
 
     rgos-logs.txt is only written 8, 28 and 58 s after boot, so a port started later never showed up in any
     file on the card (and the boot-time snapshot printed "cannot open rgos-native.log" for a log that did not
     exist yet). This report is written when the port ends, so the card always carries the last run's evidence.
     """
     try:
-        path = os.path.join(boot_dir or BOOT_DIR, "rgos-native.txt")
+        path = os.path.join(logs_dir(boot_dir), "rgos-native.txt")
         missing = [t for t in PORT_TOOLS if not shutil.which(t)]
         with open(path, "w") as f:
             f.write("== %s %s rc=%s (%s) after %.1fs%s\ncmd: %s\ncwd: %s\n"
