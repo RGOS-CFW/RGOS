@@ -32,4 +32,4 @@ Plain `unittest`, standard library only: no pygame, device or root needed (`menu
 | `test_pico8.py` | PICO-8: the `pico8` system row (`.p8` / `.p8.png`), fake-08 default and retro8 alternative in the core tables, hidden until a core is installed and listed by the Core Installer, icon and SD folder, `game.p8.png` titles and artwork names drop both extensions, and the ROM scan lists carts but not plain PNGs. |
 
 `helpers.py` loads the real `menu.py` and `rgos-input` for the tests.
-| `test_saturn.py` | Sega Saturn: system row and extensions, default / compatible cores, Core Installer offer, icon, SD-card folder, BIOS rules (required only for Beetle Saturn). |
+| `test_saturn.py` | Sega Saturn: system row and extensions, default / compatible cores, Core Installer offer, icon, SD-card folder, BIOS rules (required only for Beetle Saturn), per-core option namespaces and safe defaults, BIOS/HLE selection, user overrides, and software-rendered Beetle video-driver handling. |

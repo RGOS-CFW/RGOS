@@ -33,8 +33,8 @@ DC_VIDEO_DRIVERS = ("gl",)
 # RetroArch prints this when a core asks for a desktop OpenGL context and the frontend is a GLES build. No video driver or
 # retry can fix it: the core itself has to be a GLES build (build.sh builds one).
 GL_MISMATCH = "compiled against OpenGLES"
-# N64 (mupen64plus_next, GLideN64) and Saturn (yabasanshiro) are hardware-rendered too: they get the same pinned GLES driver,
-# verbose logging (a quiet RetroArch left the Saturn failure with no log at all, only "code 1") and one retry with safe options.
+# N64 (Mupen64Plus-Next) and the hardware-rendered Saturn core (YabaSanshiro) need a GLES context.
+# Beetle Saturn is a software-rendered core, so it must keep RetroArch's normal video-driver selection.
 HW_VIDEO = {"gc": (GC_VIDEO_DRIVERS, "retroarch-gc-video.txt"), "dreamcast": (DC_VIDEO_DRIVERS, "retroarch-dc-video.txt"),
             "n64": (("gl",), "retroarch-n64-video.txt"), "saturn": (("gl",), "retroarch-saturn-video.txt")}
 # Core options per system, written to the run directory on every launch. Without them mupen64plus_next logged
@@ -45,7 +45,7 @@ N64_CORE_OPTIONS = (
     ("mupen64plus-rdp-plugin", "gliden64"),
     ("mupen64plus-rsp-plugin", "hle"),
     ("mupen64plus-43screensize", "320x240"),
-    ("mupen64plus-169screensize", "640x360"),
+    ("mupen64plus-169screensize", "320x180"),
     ("mupen64plus-aspect", "4:3"),
     ("mupen64plus-MultiSampling", "0"),
     ("mupen64plus-EnableN64DepthCompare", "False"),
@@ -63,9 +63,21 @@ N64_CORE_OPTIONS = (
 # Retry after a crash at start: interpreter instead of the ARM dynarec, nothing that touches the framebuffer.
 N64_SAFE_OPTIONS = (("mupen64plus-cpucore", "cached_interpreter"), ("mupen64plus-EnableFBEmulation", "False"))
 SATURN_BIOS = ("saturn_bios.bin", "sega_101.bin", "mpr-17933.bin", "mpr-18811-mx.ic1", "sega_100.bin")
-SATURN_CORE_OPTIONS = (("yabasanshiro_frameskip", "enabled"), ("yabasanshiro_force_hle_bios", "disabled"),
-                       ("yabasanshiro_resolution_mode", "original"), ("yabasanshiro_polygon_generation_mode", "cpu_tessellation"))
-SATURN_SAFE_OPTIONS = (("yabasanshiro_force_hle_bios", "enabled"), ("yabasanshiro_polygon_generation_mode", "triangles_using_perspective_correction"))
+# YabaSanshiro/Yabause use the optional saturn_bios.bin name. Beetle Saturn instead requires the
+# region-specific Mednafen BIOS files (sega_101.bin for Japan, mpr-17933.bin for US/Europe).
+SATURN_HLE_BIOS = ("saturn_bios.bin",)
+SATURN_CORE_OPTIONS = (
+    ("yabasanshiro_frameskip", "enabled"),
+    ("yabasanshiro_force_hle_bios", "disabled"),
+    ("yabasanshiro_sh2coretype", "dynarec"),
+    ("yabasanshiro_polygon_mode", "perspective_correction"),
+    ("yabasanshiro_resolution_mode", "original"),
+    ("yabasanshiro_rbg_resolution_mode", "original"),
+    ("yabasanshiro_rbg_use_compute_shader", "disabled"),
+)
+SATURN_SAFE_OPTIONS = (("yabasanshiro_force_hle_bios", "enabled"),)
+YABAUSE_CORE_OPTIONS = (("yabause_frameskip", "enabled"), ("yabause_numthreads", "2"))
+YABAUSE_SAFE_OPTIONS = (("yabause_force_hle_bios", "enabled"), ("yabause_numthreads", "1"))
 CORE_OPTIONS_NAME = {"gc": "dolphin-options.cfg", "n64": "n64-options.cfg", "saturn": "saturn-options.cfg"}
 OPTION_PREFIX = {"gc": "dolphin_", "n64": "mupen64plus-", "saturn": "yabasanshiro_"}
 GC_OPTIONS_NAME = "dolphin-options.cfg"
@@ -299,23 +311,41 @@ def gc_core_options(roms_root, run_dir, safe=False):
     return path
 
 
-def saturn_has_bios(roms_root):
-    return any(os.path.isfile(os.path.join(roms_root, "bios", n)) for n in SATURN_BIOS)
+def saturn_has_bios(roms_root, names=SATURN_HLE_BIOS):
+    """Check BIOS names understood by the selected Saturn core, not merely any Saturn firmware file."""
+    bios_dir = os.path.join(roms_root, "bios")
+    return any(os.path.isfile(os.path.join(bios_dir, n)) for n in names)
 
 
-def core_options(sid, roms_root, run_dir, safe=False):
-    """Core options file for the N64 and Saturn cores (same precedence as the Dolphin one); "" if not writable."""
+def core_options(sid, roms_root, run_dir, safe=False, core=None):
+    """Write per-core options; defaults < safe retry < user overrides. Returns "" if no file can be written."""
+    prefix = OPTION_PREFIX[sid]
     if sid == "n64":
         opts, safe_opts = dict(N64_CORE_OPTIONS), N64_SAFE_OPTIONS
+    elif sid == "saturn":
+        core = core or "yabasanshiro"
+        if core == "yabasanshiro":
+            opts, safe_opts = dict(SATURN_CORE_OPTIONS), SATURN_SAFE_OPTIONS
+            if not saturn_has_bios(roms_root):
+                opts["yabasanshiro_force_hle_bios"] = "enabled"
+                log("no saturn_bios.bin in %s/bios; YabaSanshiro will use its HLE BIOS" % roms_root)
+        elif core == "yabause":
+            opts, safe_opts = dict(YABAUSE_CORE_OPTIONS), YABAUSE_SAFE_OPTIONS
+            if not saturn_has_bios(roms_root):
+                opts["yabause_force_hle_bios"] = "enabled"
+                log("no saturn_bios.bin in %s/bios; Yabause will use its HLE BIOS" % roms_root)
+            prefix = "yabause_"
+        elif core == "mednafen_saturn":
+            # Beetle is software-rendered and uses required region BIOS files, not YabaSanshiro options/HLE flags.
+            opts, safe_opts, prefix = {}, {}, "beetle_saturn_"
+        else:
+            opts, safe_opts = {}, {}
     else:
-        opts, safe_opts = dict(SATURN_CORE_OPTIONS), SATURN_SAFE_OPTIONS
-        if not saturn_has_bios(roms_root):
-            safe = True  # no BIOS file in <ROMS>/bios: the core can only start with its built-in HLE BIOS
-            log("no Saturn BIOS in %s/bios; using the HLE BIOS (put saturn_bios.bin there for better compatibility)" % roms_root)
+        return ""
     if safe:
         opts.update(safe_opts)
     name = CORE_OPTIONS_NAME[sid]
-    opts.update(read_option_overrides(os.path.join(roms_root, "config", name), OPTION_PREFIX[sid]))
+    opts.update(read_option_overrides(os.path.join(roms_root, "config", name), prefix))
     path = os.path.join(run_dir, name)
     try:
         os.makedirs(run_dir, exist_ok=True)
@@ -431,7 +461,11 @@ def rc_text(rc):
     return "code %s" % rc
 
 
-def video_attempts(sid, boot_dir=None):
+def video_attempts(sid, boot_dir=None, core=None):
+    # Beetle Saturn is a software renderer (hw_render=false); pinning the GLES driver is unnecessary and can
+    # interfere with the software-rendered path. YabaSanshiro remains pinned to GLES.
+    if sid == "saturn" and core == "mednafen_saturn":
+        return [None]
     if sid not in HW_VIDEO:
         return [None]
     drivers, boot_file = HW_VIDEO[sid]
@@ -918,22 +952,23 @@ def launch_retroarch(sid, core, core_path, content):
     if not os.environ.get("RGOS_NO_HW"):
         os.makedirs("/tmp/retroarch", exist_ok=True)
     hw = not os.environ.get("RGOS_NO_HW") or os.environ.get("RGOS_SYSFS")
-    attempts = video_attempts(sid)
-    if sid in ("gc", "n64", "saturn") and len(attempts) == 1:
+    hw_video = sid in HW_VIDEO and not (sid == "saturn" and core == "mednafen_saturn")
+    attempts = video_attempts(sid, core=core)
+    if sid in ("gc", "n64", "saturn") and len(attempts) == 1 and hw_video:
         attempts = attempts + attempts  # a pinned driver still gets the safe-options retry
     history, rc, cmd = [], 0, []
     for n, video in enumerate(attempts):
         if sid == "gc":
             gc_opts = gc_core_options(ROMS_ROOT, RUN_DIR, safe=n > 0)
         elif sid in ("n64", "saturn"):
-            gc_opts = core_options(sid, ROMS_ROOT, RUN_DIR, safe=n > 0)
+            gc_opts = core_options(sid, ROMS_ROOT, RUN_DIR, safe=n > 0, core=core)
         else:
             gc_opts = None
         if gc_opts and n > 0:
             log("%s retry with safe core options" % sid)
         with open(cfg_run, "w") as f:
             f.write(run_config(sid, ROMS_ROOT, audio, idx, drv, font, video, gc_opts))
-        cmd = build_command(core_path, content, ROMS_ROOT, cfg_run, verbose=True if sid in HW_VIDEO else None)
+        cmd = build_command(core_path, content, ROMS_ROOT, cfg_run, verbose=True if hw_video else None)
         log("starting%s: %s" % (" (video_driver %s)" % video if video else "", " ".join(cmd)))
         t0 = time.monotonic()
         saved = set_governor(perf_governor(sid)) if hw else {}
@@ -952,10 +987,10 @@ def launch_retroarch(sid, core, core_path, content):
         # A clean exit (rc 0) that ran past the early-failure window is the player quitting: a stray "[ERROR]" line in the
         # log (a missing optional file, a failed save at shutdown) must not relaunch the game under them.
         failed = rc != 0 or (dt < EARLY_FAIL_S and "[ERROR]" in tail(LOG, 40))
-        if sid in HW_VIDEO and failed and gl_mismatch(tail(LOG, 60)):
+        if hw_video and failed and gl_mismatch(tail(LOG, 60)):
             log("%s core needs desktop OpenGL but RetroArch is a GLES build; retrying cannot help" % sid)
             break
-        if sid in HW_VIDEO and failed and dt < GC_RETRY_S and n + 1 < len(attempts):
+        if hw_video and failed and dt < GC_RETRY_S and n + 1 < len(attempts):
             history.append((video, rc, dt, tail(LOG, 60)))
             log("%s failed to start with video_driver %s; retrying with %s" % (sid, video, attempts[n + 1]))
             continue
