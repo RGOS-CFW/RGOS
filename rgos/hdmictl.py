@@ -109,11 +109,11 @@ def apply_extlinux(mode, path=None, name=DEFAULT_CONNECTOR):
     try:
         with open(path, newline="") as f:
             old = f.read()
+        if not re.search(r"(?im)^[ \t]*append\b", old):
+            return None  # nothing to patch: report failure rather than a silent "unchanged"
         new = patch_extlinux_text(old, mode, name)
         if new == old:
             return False
-        if "append" not in old.lower():
-            return None
         backup = path + ".pre-hdmi"
         if not os.path.exists(backup):
             shutil.copyfile(path, backup)
@@ -214,7 +214,7 @@ def main(argv):
         print(report())
     elif len(argv) == 3 and argv[1] == "set":
         ok, changed = set_mode(argv[2])
-        print("saved" + (", restart to apply" if changed else "") if ok else "failed (unknown mode or /boot not writable)")
+        print("saved" + (", restart to apply" if changed else "") if ok else "failed (unknown mode, /boot not writable, or no APPEND line in extlinux.conf)")
     elif len(argv) >= 2 and argv[1] == "boot":
         print("hdmi: %s" % boot_check())
         print(report())
