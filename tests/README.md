@@ -30,3 +30,4 @@ Plain `unittest`, standard library only: no pygame, device or root needed (`menu
 | `test_system_icons.py` | Per-system icons (RG XMB Games list): every `SYSTEMS` row has a `sys_<id>` icon, an unknown system falls back to the pad, each icon draws inside the 96 px box. |
 
 `helpers.py` loads the real `menu.py` and `rgos-input` for the tests.
+| `test_saturn.py` | Sega Saturn: system row and extensions, default / compatible cores, Core Installer offer, icon, SD-card folder, BIOS rules (required only for Beetle Saturn). |
