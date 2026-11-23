@@ -1,6 +1,6 @@
 # Core Installer
 
-*Tools > Core Installer* downloads RetroArch cores that are not installed yet, so you can add alternative emulators for your systems (gpSP or VBA-M for GBA, PicoDrive for Sega, SwanStation for PlayStation, FinalBurn Neo for Arcade, Flycast for Dreamcast and so on) without rebuilding the image.
+*Tools > Core Installer* downloads RetroArch cores that are not installed yet, so you can add alternative emulators for your systems (gpSP or VBA-M for GBA, PicoDrive for Sega, SwanStation for PlayStation, FinalBurn Neo for Arcade, Flycast for Dreamcast, ParaLLEl N64 for Nintendo 64 and so on) without rebuilding the image.
 
 It needs a network connection first: see [NETWORKING.md](NETWORKING.md).
 

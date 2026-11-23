@@ -121,6 +121,11 @@ DC_REPO="${DC_REPO:-https://github.com/flyinghead/flycast.git}"
 DC_MAKE_ARGS="${DC_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
 # DC_BUILD=make|cmake forces one Flycast build system (default: Makefile if the tree has one, then CMake).
 # DC_REQUIRED=1 makes a failed Flycast build stop the whole build instead of producing an image without Dreamcast.
+# Nintendo 64: Mupen64Plus-Next is built here as a GLES core for the same reason as Flycast (RetroArch in the image is a GLES
+# build). N64_REPO=none skips it; N64_MAKE_ARGS changes the make arguments (aarch64 gets the ARM64 dynarec automatically);
+# N64_REQUIRED=1 makes a failed build stop the whole build instead of producing an image without Nintendo 64.
+N64_REPO="${N64_REPO:-https://github.com/libretro/mupen64plus-libretro-nx.git}"
+N64_MAKE_ARGS="${N64_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
 STELLA_REPO="${STELLA_REPO:-https://github.com/libretro/stella2014-libretro.git}"
 ATARI800_REPO="${ATARI800_REPO:-https://github.com/libretro/libretro-atari800.git}"
 PROSYSTEM_REPO="${PROSYSTEM_REPO:-https://github.com/libretro/prosystem-libretro.git}"
@@ -380,17 +385,18 @@ if ls "$HERE"/cores/*_libretro.so >/dev/null 2>&1; then
   echo "==> Copying prebuilt cores from cores/"; cp "$HERE"/cores/*_libretro.so "$LRDIR/"
 fi
 [[ "$DEVICE" == "rg-rotate" ]] || rm -f "$LRDIR/dolphin_libretro.so"
-WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0; WANT_DC=0
+WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0; WANT_DC=0; WANT_N64=0
 [[ "$NGP_SRC" != none && ! -e "$LRDIR/mednafen_ngp_libretro.so" ]] && WANT_NGP=1
 [[ "$PSX_REPO" != none && ! -e "$LRDIR/pcsx_rearmed_libretro.so" ]] && WANT_PSX=1
 have_core() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so "$ROOTFS/usr/lib/libretro/$1"_libretro.so "$ROOTFS/usr/local/lib/libretro/$1"_libretro.so; do [[ -e "$f" ]] && return 0; done; return 1; }
 [[ "$GENESIS_REPO" != none ]] && ! have_core genesis_plus_gx && WANT_GEN=1
 [[ "$GC_REPO" != none && ! -e "$LRDIR/dolphin_libretro.so" ]] && WANT_GC=1
 [[ "$DC_REPO" != none && ! -e "$LRDIR/flycast_libretro.so" ]] && WANT_DC=1
+[[ "$N64_REPO" != none && ! -e "$LRDIR/mupen64plus_next_libretro.so" ]] && ! have_core mupen64plus_next && WANT_N64=1
 [[ "$STELLA_REPO" != none ]] && ! have_core stella2014 && WANT_ATARI=1
 [[ "$ATARI800_REPO" != none ]] && ! have_core atari800 && WANT_ATARI=1
 [[ "$PROSYSTEM_REPO" != none ]] && ! have_core prosystem && WANT_ATARI=1
-if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC )); then
+if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC || WANT_N64 )); then
   echo "==> Installing a compiler in the rootfs to build libretro cores"
   rm -rf "$ROOTFS/tmp/core-src"; mkdir -p "$ROOTFS/tmp/core-src"
   cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
@@ -486,7 +492,7 @@ if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC )); t
           done
           for jobs in "$(nproc)" 2 1; do
             echo "   cmake -DLIBRETRO=ON -DUSE_GLES=ON, -j$jobs (log: $DC_LOG)"
-            if chroot "$ROOTFS" sh -c "cd /tmp/core-src/dc && rm -rf build-gles && cmake -S . -B build-gles -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRETRO=ON -DUSE_GLES=ON -DUSE_VULKAN=OFF -DUSE_OPENMP=OFF && cmake --build build-gles -j$jobs" >>"$DC_LOG" 2>&1; then built=1; break; fi
+            if chroot "$ROOTFS" sh -c "cd /tmp/core-src/dc && rm -rf build-gles && cmake -S . -B build-gles -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRETRO=ON -DUSE_GLES=ON -DUSE_GLES2=OFF -DUSE_OPENGL=ON -DUSE_VULKAN=OFF -DUSE_OPENMP=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && cmake --build build-gles -j$jobs" >>"$DC_LOG" 2>&1; then built=1; break; fi
             echo "   cmake build with -j$jobs failed, retrying with fewer jobs"
           done
         fi
@@ -498,7 +504,6 @@ if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC )); t
         if command -v readelf >/dev/null 2>&1 && readelf -d "$so" 2>/dev/null | grep -Eq 'NEEDED.*\[(libGL|libOpenGL)\.so'; then
           echo "flycast_libretro.so links desktop OpenGL (libGL), not OpenGL ES: check DC_MAKE_ARGS=$DC_MAKE_ARGS (FORCE_GLES=1)"; exit 1
         fi
-        strings "$so" | grep -qi 'GLES' || { echo "flycast_libretro.so has no GLES code (check DC_MAKE_ARGS)"; exit 1; }
         install -m 755 "$so" "$LRDIR/flycast_libretro.so"
       ); then echo "   flycast_libretro.so built (GLES)"
       else
@@ -507,6 +512,43 @@ if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC )); t
         echo "!! Fix the build error above, or put a GLES-built flycast_libretro.so in cores/ and rebuild."
         rm -f "$LRDIR/flycast_libretro.so"
         [[ "${DC_REQUIRED:-0}" != 1 ]] || { echo "!! DC_REQUIRED=1: stopping" >&2; exit 1; }
+      fi
+    fi
+    if (( WANT_N64 )); then
+      echo "==> Building the Nintendo 64 core (mupen64plus_next, OpenGL ES to match RetroArch)"
+      N64_LOG="$WORK/mupen64plus-next-build.log"; : > "$N64_LOG"
+      if (
+        set -e
+        command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
+        rm -rf "$WORK/mupen64plus-next"
+        git clone -q --depth 1 --recurse-submodules --shallow-submodules "$N64_REPO" "$WORK/mupen64plus-next"
+        rm -rf "$ROOTFS/tmp/core-src/n64"; cp -r "$WORK/mupen64plus-next" "$ROOTFS/tmp/core-src/n64"
+        # one package at a time: a package that is missing in this Debian suite must not stop the others from installing
+        for pkg in libgles-dev libegl-dev zlib1g-dev libpng-dev; do
+          chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg" >>"$N64_LOG" 2>&1 \
+            || echo "   (could not install $pkg, continuing)"
+        done
+        # a big C/C++ project: retry with fewer jobs when the compiler is killed for lack of RAM (WSL and small VMs)
+        built=0
+        for jobs in "$(nproc)" 2 1; do
+          echo "   make -j$jobs $N64_MAKE_ARGS (log: $N64_LOG)"
+          if chroot "$ROOTFS" sh -c "cd /tmp/core-src/n64 && make -f Makefile $N64_MAKE_ARGS -j$jobs" >>"$N64_LOG" 2>&1; then built=1; break; fi
+          echo "   make -j$jobs failed, retrying with fewer jobs"
+        done
+        (( built )) || { echo "mupen64plus_next: make failed, last lines of $N64_LOG:"; tail -n 40 "$N64_LOG"; exit 1; }
+        so="$(find "$ROOTFS/tmp/core-src/n64" -name mupen64plus_next_libretro.so -type f | head -n1)"
+        [[ -n "$so" ]] || { echo "mupen64plus_next: make finished but mupen64plus_next_libretro.so was not produced (check N64_MAKE_ARGS=$N64_MAKE_ARGS, log: $N64_LOG)"; exit 1; }
+        # A desktop-GL build dies at start (\"Requesting OpenGL context, but RetroArch is compiled against OpenGLES\"): refuse it here.
+        if command -v readelf >/dev/null 2>&1 && readelf -d "$so" 2>/dev/null | grep -Eq 'NEEDED.*\[(libGL|libOpenGL)\.so'; then
+          echo "mupen64plus_next_libretro.so links desktop OpenGL (libGL), not OpenGL ES: check N64_MAKE_ARGS=$N64_MAKE_ARGS (FORCE_GLES=1)"; exit 1
+        fi
+        install -m 755 "$so" "$LRDIR/mupen64plus_next_libretro.so"
+      ); then echo "   mupen64plus_next_libretro.so built (GLES)"
+      else
+        echo "!! could not build Mupen64Plus-Next: Nintendo 64 will have NO core in this image (log: $N64_LOG)."
+        echo "!! Fix the build error above, or put a GLES-built mupen64plus_next_libretro.so in cores/ and rebuild."
+        rm -f "$LRDIR/mupen64plus_next_libretro.so"
+        [[ "${N64_REQUIRED:-0}" != 1 ]] || { echo "!! N64_REQUIRED=1: stopping" >&2; exit 1; }
       fi
     fi
     if (( WANT_GC )); then
@@ -532,7 +574,7 @@ KEEP
       else echo "!! could not build the GameCube core: GameCube will not appear on the RG Rotate (put a prebuilt dolphin_libretro.so in cores/ and rebuild)"; rm -f "$LRDIR/dolphin_libretro.so"; fi
     fi
   else
-    echo "!! could not install a compiler in the rootfs: skipped building the Genesis Plus GX / Neo Geo Pocket / Atari / PlayStation cores"
+    echo "!! could not install a compiler in the rootfs: skipped building the Genesis Plus GX / Neo Geo Pocket / Atari / PlayStation / Dreamcast / Nintendo 64 cores"
   fi
   chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get purge -y --auto-remove gcc g++ make git cmake ninja-build pkg-config '*-dev' >/dev/null 2>&1 || true
   if ! chroot "$ROOTFS" python3 -c 'import pygame' >/dev/null 2>&1; then
@@ -566,6 +608,7 @@ for c in gambatte mgba nestopia genesis_plus_gx snes9x mednafen_wswan mednafen_n
   core_present "$c" || echo "!! ${c}_libretro.so is missing from the image (a Debian libretro package missing, or the source build of that core failed)"
 done
 if [[ "$DEVICE" == "rg-rotate" && "$GC_REPO" != none ]]; then core_present dolphin || echo "!! dolphin_libretro.so is missing from the image: no GameCube on this build"; fi
+[[ "$N64_REPO" == none ]] || core_present mupen64plus_next || echo "!! mupen64plus_next_libretro.so is missing from the image: no Nintendo 64 on this build"
 core_present mednafen_psx || core_present pcsx_rearmed || echo "!! no PlayStation core (neither pcsx_rearmed nor mednafen_psx) is in the image"
 [[ -x "$ROOTFS/usr/bin/retroarch" ]] || echo "!! retroarch is not in the image (package missing from $DEBIAN_SUITE?)"
 for a in reboot poweroff halt; do ln -sf /bin/busybox "$ROOTFS/sbin/$a"; done

@@ -30,10 +30,13 @@ GC_VIDEO_DRIVERS = ("glcore", "gl")
 # The Debian RetroArch in the image is built against OpenGL ES: it has the drivers vulkan, gl (= GLES), sdl2 and null, and
 # NO "glcore". Pinning "glcore" only made RetroArch warn and fall back, so Dreamcast uses "gl" alone (the GLES driver).
 DC_VIDEO_DRIVERS = ("gl",)
+# Nintendo 64 (Mupen64Plus-Next, ParaLLEl N64) renders with OpenGL ES too: same single GLES driver as Dreamcast.
+N64_VIDEO_DRIVERS = ("gl",)
 # RetroArch prints this when a core asks for a desktop OpenGL context and the frontend is a GLES build. No video driver or
 # retry can fix it: the core itself has to be a GLES build (build.sh builds one).
 GL_MISMATCH = "compiled against OpenGLES"
-HW_VIDEO = {"gc": (GC_VIDEO_DRIVERS, "retroarch-gc-video.txt"), "dreamcast": (DC_VIDEO_DRIVERS, "retroarch-dc-video.txt")}
+HW_VIDEO = {"gc": (GC_VIDEO_DRIVERS, "retroarch-gc-video.txt"), "dreamcast": (DC_VIDEO_DRIVERS, "retroarch-dc-video.txt"),
+            "n64": (N64_VIDEO_DRIVERS, "retroarch-n64-video.txt")}
 GC_OPTIONS_NAME = "dolphin-options.cfg"
 # Dolphin core options for the RG Rotate (Unisoc T618: 2x Cortex-A75 + 6x Cortex-A55, Mali-G52 MP2).
 # The GPU is the weak part, so everything stays at native resolution and the cheap-but-correct paths are used:
