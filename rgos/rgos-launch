@@ -723,6 +723,7 @@ def call_native(cmd, prio=False, **kw):
 
 def launch_native(target):
     """Run a Linux port directly; no RetroArch core or emulator is involved."""
+    extra_env = {}
     target = os.path.abspath(target)
     if not os.path.isfile(target):
         show_error("RG OS: native port not found", target)
@@ -742,13 +743,39 @@ def launch_native(target):
             return 127
         cmd = [shell, fix_crlf(target)]
     else:
-        if not os.access(target, os.X_OK):
-            show_error("RG OS: native port is not executable", target + "\nMake the binary executable or provide a .sh launcher.")
-            return 126
-        cmd = [target]
+        # Any native program: ELF binary of any name, or a shebang script. Handles cards without an execute bit,
+        # ports' own lib folders and 32-bit ARM (see nativebin.py).
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import nativebin
+        except Exception as e:
+            nativebin = None
+            log("nativebin unavailable: %s" % e)
+        if nativebin is None:
+            if not os.access(target, os.X_OK):
+                show_error("RG OS: native port is not executable", target + "\nMake the binary executable or provide a .sh launcher.")
+                return 126
+            cmd = [target]
+        else:
+            pm_libs = [d for d in (os.path.join(ROMS_ROOT, "roms", "ports", "PortMaster", "libs"),) if os.path.isdir(d)]
+            pl = nativebin.plan(target, pm_libs, chmod=not os.environ.get("RGOS_NO_HW"))
+            if not pl["cmd"]:
+                show_error(pl["title"], pl["error"])
+                return 126
+            cmd = pl["cmd"]
+            if pl["note"]:
+                log(pl["note"])
+            extra_env = dict(pl["env"])
+            if not os.environ.get("RGOS_NO_HW"):
+                gone = nativebin.missing_libs(target, extra_lib_dirs=pm_libs)
+                if gone:
+                    show_error("RG OS: port is missing libraries", "%s\nPut them in a lib folder next to the port." % ", ".join(gone))
+                    return 127
     os.makedirs(RUN_DIR, exist_ok=True)
     cwd = os.path.dirname(target)
     env = native_env(cwd=cwd)
+    if extra_env.get("LD_LIBRARY_PATH"):
+        env["LD_LIBRARY_PATH"] = extra_env["LD_LIBRARY_PATH"] + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
     link_roms_alias()
     os.makedirs(os.path.dirname(NATIVE_LOG) or ".", exist_ok=True)
     log("native port starting: %s (cwd=%s)" % (" ".join(cmd), cwd))

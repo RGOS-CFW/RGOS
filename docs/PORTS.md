@@ -7,8 +7,19 @@ other emulator.
 - `.sh` and `.bash` launchers are run with Bash when their shebang requests
   Bash, otherwise with `sh`. This works on exFAT ROMS cards where executable
   permission bits may not be preserved.
-- Other files are started as native executables and must have execute
-  permission on the filesystem.
+- Any other file in `roms/ports/` that is an ARM64 (aarch64) or 32-bit ARM Linux **executable** shows up as a
+  port, whatever its name (`game`, `game.aarch64`, `Game.arm64`, `game.bin`): RG OS recognises it by its ELF
+  header. Shared libraries (`.so`), data files and x86 programs are not listed. Put the binary directly in
+  `roms/ports/` (game data can sit in a sub folder next to it).
+- ROMS cards are FAT/exFAT and usually have no execute permission. RG OS tries to set it; if the card refuses, the
+  binary is started through its dynamic loader (`ld.so game`), which only needs read access, so no `chmod` is needed.
+- The port's own libraries are found automatically: `lib/`, `libs/`, `lib64/`, `libs.aarch64/`, `lib.aarch64/`
+  (and `libs.armhf/`, `lib32/` for 32-bit programs) next to the binary, plus `PortMaster/libs`, go on
+  `LD_LIBRARY_PATH`. Before starting, missing libraries are listed by name on screen.
+- 32-bit ARM (armhf) programs need an armhf loader. The image is ARM64-only, so ship
+  `ld-linux-armhf.so.3` and the armhf libraries in `libs.armhf/` next to the port; RG OS then uses them.
+- A wrong-CPU program (x86 / x86-64) or a file that is neither an executable nor a script gets a message that says so.
+- Extension-less scripts with a `#!` line are run with their interpreter.
 - The launcher's working directory is the directory containing the selected
   port, so relative asset paths used by common port launchers continue to work.
 - PortMaster comes preinstalled: the image carries a copy that is placed in
