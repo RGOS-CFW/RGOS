@@ -47,6 +47,7 @@ SYSTEMS = [("gba", "GBA", "retroarch", (".gba",), "Game Boy Advance"),
            ("gc", "GC", "retroarch", (".gcm", ".iso", ".gcz", ".rvz", ".ciso", ".m3u", ".dol", ".elf"), "Nintendo GameCube"),
            ("arcade", "ARC", "retroarch", (".zip", ".7z"), "Arcade (FinalBurn Neo)"),
            ("neogeo", "NEO", "retroarch", (".zip", ".7z"), "Neo Geo"),
+           ("pico8", "P8", "retroarch", (".p8", ".p8.png"), "PICO-8"),
            ("ports", "PORT", "native", (".sh",), "Ports")]
 ROMS_DIR = os.path.join(ROMS_ROOT, "roms")
 RUN_DIR = os.environ.get("RGOS_RUN", "/run/rgos")
@@ -337,10 +338,16 @@ class Input:
         return out
 
 
-def pretty(name):
+def rom_stem(name):
+    """File name without its extension; a PICO-8 \"game.p8.png\" cart loses both, so its title and artwork match \"game\"."""
     base = os.path.splitext(name)[0]
+    return base[:-3] if base.lower().endswith(".p8") and name.lower().endswith(".png") else base
+
+
+def pretty(name):
+    base = rom_stem(name)
     base = re.sub(r"\s*[\(\[].*?[\)\]]", "", base).replace("_", " ").strip()
-    return base or os.path.splitext(name)[0]
+    return base or rom_stem(name)
 
 
 def rom_roots():
@@ -515,7 +522,7 @@ CORE_NAMES = {"mgba": "mGBA", "gpsp": "gpSP", "vbam": "VBA-M", "gambatte": "Gamb
               "atari800": "Atari800", "prosystem": "ProSystem", "mednafen_ngp": "Beetle NeoPop", "race": "RACE",
               "mednafen_wswan": "Beetle Cygne", "pcsx_rearmed": "PCSX ReARMed", "mednafen_psx": "Beetle PSX",
               "mednafen_psx_hw": "Beetle PSX HW", "swanstation": "SwanStation", "dolphin": "Dolphin", "flycast": "Flycast", "flycast_standalone": "Flycast (standalone)", "mupen64plus_next": "Mupen64Plus-Next",
-              "parallel_n64": "ParaLLEl N64", "fbneo": "FinalBurn Neo",
+              "parallel_n64": "ParaLLEl N64", "fbneo": "FinalBurn Neo", "fake08": "fake-08", "retro8": "retro8",
               "yabasanshiro": "YabaSanshiro", "yabause": "Yabause", "mednafen_saturn": "Beetle Saturn",
               "mednafen_gba": "Beetle GBA", "mednafen_gb": "Beetle GB"}
 
@@ -1619,6 +1626,17 @@ def icon_sys_neogeo(c, cx, cy, col, bg):
     pygame.draw.circle(c, col, (cx - 22, cy - 28), 9)
     pygame.draw.circle(c, bg, (cx - 22, cy + 8), 8, 2)
     _dots(c, bg, [(cx + 1 + i * 11, cy + 17 - i * 3) for i in range(4)], 4)
+
+
+def icon_sys_pico8(c, cx, cy, col, bg):
+    # PICO-8 fantasy console: a rounded body, a square screen and a small 4x2 palette strip under it (not the real logo)
+    pygame.draw.rect(c, col, (cx - 30, cy - 38, 60, 76), border_radius=9)
+    pygame.draw.rect(c, bg, (cx - 23, cy - 31, 46, 46), border_radius=3)
+    pygame.draw.rect(c, col, (cx - 19, cy - 27, 38, 38))
+    pygame.draw.line(c, bg, (cx - 12, cy + 4), (cx - 2, cy - 14), 3)
+    pygame.draw.line(c, bg, (cx - 2, cy - 14), (cx + 10, cy + 2), 3)
+    for i in range(4):
+        pygame.draw.rect(c, bg, (cx - 22 + i * 12, cy + 22, 9, 6))
 
 
 def icon_sys_ports(c, cx, cy, col, bg):
