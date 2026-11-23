@@ -35,6 +35,7 @@ SYSTEMS = [("gba", "GBA", "retroarch", (".gba",), "Game Boy Advance"),
            ("segapico", "PICO", "retroarch", (".pico", ".bin"), "Sega Pico"),
            ("n64", "N64", "retroarch", (".z64", ".n64", ".v64", ".u64", ".ndd"), "Nintendo 64"),
            ("dreamcast", "DC", "retroarch", (".cdi", ".gdi", ".chd", ".cue", ".m3u"), "Sega Dreamcast"),
+           ("saturn", "SAT", "retroarch", (".cue", ".chd", ".iso", ".m3u", ".ccd", ".mds"), "Sega Saturn"),
            ("atari2600", "A26", "retroarch", (".a26", ".bin"), "Atari 2600"),
            ("atari5200", "A52", "retroarch", (".a52", ".bin", ".car"), "Atari 5200"),
            ("atari7800", "A78", "retroarch", (".a78", ".bin"), "Atari 7800"),
@@ -508,6 +509,7 @@ CORE_NAMES = {"mgba": "mGBA", "gpsp": "gpSP", "vbam": "VBA-M", "gambatte": "Gamb
               "mednafen_wswan": "Beetle Cygne", "pcsx_rearmed": "PCSX ReARMed", "mednafen_psx": "Beetle PSX",
               "mednafen_psx_hw": "Beetle PSX HW", "swanstation": "SwanStation", "dolphin": "Dolphin", "flycast": "Flycast", "flycast_standalone": "Flycast (standalone)", "mupen64plus_next": "Mupen64Plus-Next",
               "parallel_n64": "ParaLLEl N64", "fbneo": "FinalBurn Neo",
+              "yabasanshiro": "YabaSanshiro", "yabause": "Yabause", "mednafen_saturn": "Beetle Saturn",
               "mednafen_gba": "Beetle GBA", "mednafen_gb": "Beetle GB"}
 
 
@@ -1548,6 +1550,18 @@ def icon_sys_n64(c, cx, cy, col, bg):
     pygame.draw.rect(c, bg, (cx - 21, cy - 18, 10, 36))
     pygame.draw.rect(c, bg, (cx + 11, cy - 18, 10, 36))
     pygame.draw.polygon(c, bg, [(cx - 21, cy - 18), (cx - 11, cy - 18), (cx + 21, cy + 18), (cx + 11, cy + 18)])
+
+
+def icon_sys_saturn(c, cx, cy, col, bg):
+    # the console's ringed planet: a ball with a tilted ring whose near half passes in front of it
+    ring = [(cx + 40 * math.cos(k * math.pi / 18), cy + 12 * math.sin(k * math.pi / 18)) for k in range(36)]
+    tilt = [(cx + (x - cx) * math.cos(-0.35) - (y - cy) * math.sin(-0.35),
+             cy + (x - cx) * math.sin(-0.35) + (y - cy) * math.cos(-0.35)) for x, y in ring]
+    pygame.draw.polygon(c, col, tilt, 4)  # whole ring; the planet then covers its far half
+    pygame.draw.circle(c, col, (cx, cy), 21)
+    near = tilt[0:19]  # k = 0..18 is the lower half (y grows downwards), i.e. the half in front
+    pygame.draw.lines(c, bg, False, near, 10)
+    pygame.draw.lines(c, col, False, near, 4)
 
 
 def icon_sys_dreamcast(c, cx, cy, col, bg):

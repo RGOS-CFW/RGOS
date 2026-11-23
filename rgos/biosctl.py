@@ -39,6 +39,11 @@ BIOS = {
         ("dc/dc_boot.bin", "Dreamcast BIOS", ("e10c53c2f8b90bab96ead2d368858623",), (), ""),
         ("dc/dc_flash.bin", "Dreamcast flash (clock and region settings)", ("",), (), ""),
     ],
+    "saturn": [
+        ("sega_101.bin", "Saturn BIOS (Japan)", ("85ec9ca47d8f6807718151cbcca8b964",), ("mednafen_saturn",), "saturn"),
+        ("mpr-17933.bin", "Saturn BIOS (USA / Europe)", ("3240872c70984b6cbfda1586cab68dbe",), ("mednafen_saturn",), "saturn"),
+        ("saturn_bios.bin", "Saturn BIOS (YabaSanshiro / Yabause; they run without it, less compatibly)", ("",), (), ""),
+    ],
     "atari5200": [
         ("5200.rom", "Atari 5200 BIOS", ("281f20ea4320404ec820fb7ec0693b38",), "*", ""),
     ],

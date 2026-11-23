@@ -51,7 +51,7 @@ def default_core(sid):
             "mastersystem": "genesis_plus_gx", "gamegear": "genesis_plus_gx",
             "sg1000": "genesis_plus_gx", "segacd": "genesis_plus_gx",
             "sega32x": "genesis_plus_gx", "segapico": "genesis_plus_gx",
-            "dreamcast": "flycast", "n64": "mupen64plus_next",
+            "dreamcast": "flycast", "saturn": "yabasanshiro", "n64": "mupen64plus_next",
             "arcade": "fbneo", "neogeo": "fbneo",
             "atari2600": "stella2014", "atari5200": "atari800", "atari7800": "prosystem",
             "ngp": "mednafen_ngp", "ngpc": "mednafen_ngp", "psx": "pcsx_rearmed", "gc": "dolphin", "ws": "mednafen_wswan", "wsc": "mednafen_wswan"}.get(sid, "")
@@ -71,6 +71,7 @@ SYSTEM_CORE_COMPATIBILITY = {
     "sega32x": ("genesis_plus_gx", "picodrive"),
     "segapico": ("genesis_plus_gx",),
     "dreamcast": ("flycast", "flycast_standalone"),
+    "saturn": ("yabasanshiro", "yabause", "mednafen_saturn"),
     "n64": ("mupen64plus_next", "parallel_n64"),
     "atari2600": ("stella2014", "stella"),
     "atari5200": ("atari800",),
