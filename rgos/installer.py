@@ -66,10 +66,10 @@ FORMAT = 1
 MARGIN = 32 << 20           # free space that must be left on ROMS after everything is unpacked
 EXIT_REBOOT = 10            # exit status of rgos-installer: installed, reboot now
 EXIT_POWEROFF = 20          # exit status of rgos-installer: the person chose "Power off" on the welcome screen (same code as menu.py's EXIT_POWER)
-DEVICES = ("rg34xxsp", "rg35xxh", "rg35xxsp", "rg-rotate")
-CANVAS = {"rg-rotate": (720, 720), "rg34xxsp": (720, 480), "rg35xxh": (720, 540), "rg35xxsp": (720, 540)}
+DEVICES = ("rg34xxsp", "rg35xxh", "rg35xxsp", "rg-rotate", "miniloong")
+CANVAS = {"rg-rotate": (720, 720), "rg34xxsp": (720, 480), "rg35xxh": (720, 540), "rg35xxsp": (720, 540), "miniloong": (720, 540)}
 DEVICE_NAMES = {"rg-rotate": "Anbernic RG Rotate", "rg34xxsp": "Anbernic RG34XXSP",
-                "rg35xxh": "Anbernic RG35XX H", "rg35xxsp": "Anbernic RG35XX SP"}
+                "rg35xxh": "Anbernic RG35XX H", "rg35xxsp": "Anbernic RG35XX SP", "miniloong": "MiniLoong Pocket 1"}
 SHARED_DIRS = ("artwork", "bios", "config", "cores", "firmware", "music", "saves", "screenshots", "splash", "states", "update")
 # NOT created here: rgos-data. rgos-session copies the boot partition's settings there only when the folder is missing.
 

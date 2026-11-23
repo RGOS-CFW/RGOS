@@ -12,6 +12,7 @@ on:
           - rg35xxh
           - rg35xxsp
           - rg-rotate
+          - miniloong
           - all
         default: rg34xxsp
       artifact:
@@ -163,7 +164,7 @@ jobs:
           fi
           bash ./build.sh "$DEVICE" image
           if [[ "$DEVICE" == "all" ]]; then
-            test -s out/rg-rotate-rgos.img && test -s out/rg34xxsp-rgos.img && test -s out/rg35xxh-rgos.img && test -s out/rg35xxsp-rgos.img
+            test -s out/rg-rotate-rgos.img && test -s out/rg34xxsp-rgos.img && test -s out/rg35xxh-rgos.img && test -s out/rg35xxsp-rgos.img && test -s out/miniloong-rgos.img
           else
             test -s "out/$DEVICE-rgos.img"
           fi
@@ -192,7 +193,7 @@ jobs:
             for f in SYSTEM rgos-initrd.cpio extlinux/extlinux.conf extlinux/extlinux.conf.stock; do
               test -s "$mnt/$f" || { echo "$img: boot partition is missing $f" >&2; rc=1; }
             done
-            if [[ "$ptable" == dos ]]; then
+            if [[ "$ptable" == dos && "$img" != *miniloong* ]]; then
               test -s "$mnt/dtb.img" || { echo "$img: boot partition is missing dtb.img" >&2; rc=1; }
             fi
             grep -q 'rdinit=/rgos-init' "$mnt/extlinux/extlinux.conf" || cmp -s "$mnt/extlinux/extlinux.conf" "$mnt/extlinux/extlinux.conf.stock" \
@@ -206,7 +207,8 @@ jobs:
             rg35xxh)   verify out/rg35xxh-rgos.img dos ;;
             rg35xxsp)  verify out/rg35xxsp-rgos.img dos ;;
             rg-rotate) verify out/rg-rotate-rgos.img gpt ;;
-            all)       verify out/rg-rotate-rgos.img gpt; verify out/rg34xxsp-rgos.img dos; verify out/rg35xxh-rgos.img dos; verify out/rg35xxsp-rgos.img dos ;;
+            miniloong) verify out/miniloong-rgos.img dos ;;
+            all)       verify out/rg-rotate-rgos.img gpt; verify out/rg34xxsp-rgos.img dos; verify out/rg35xxh-rgos.img dos; verify out/rg35xxsp-rgos.img dos; verify out/miniloong-rgos.img dos ;;
           esac
 
       - name: Verify PortMaster runtime libraries
@@ -279,7 +281,7 @@ jobs:
           fi
           bash ./build.sh "$DEVICE" installer
           if [[ "$DEVICE" == "all" ]]; then
-            for d in rg-rotate rg34xxsp rg35xxh rg35xxsp; do test -s "out/$d-rgos-installer.img"; done
+            for d in rg-rotate rg34xxsp rg35xxh rg35xxsp miniloong; do test -s "out/$d-rgos-installer.img"; done
           else
             test -s "out/$DEVICE-rgos-installer.img"
           fi
@@ -356,7 +358,7 @@ jobs:
           fi
           bash ./build.sh "$DEVICE" update
           if [[ "$DEVICE" == "all" ]]; then
-            test -s "out/rgos-update-rg-rotate-${UPDATE_ID}.tar" && test -s "out/rgos-update-rg34xxsp-${UPDATE_ID}.tar" && test -s "out/rgos-update-rg35xxh-${UPDATE_ID}.tar" && test -s "out/rgos-update-rg35xxsp-${UPDATE_ID}.tar"
+            test -s "out/rgos-update-rg-rotate-${UPDATE_ID}.tar" && test -s "out/rgos-update-rg34xxsp-${UPDATE_ID}.tar" && test -s "out/rgos-update-rg35xxh-${UPDATE_ID}.tar" && test -s "out/rgos-update-rg35xxsp-${UPDATE_ID}.tar" && test -s "out/rgos-update-miniloong-${UPDATE_ID}.tar" && test -s "out/rgos-update-rg35xxsp-${UPDATE_ID}.tar"
           else
             test -s "out/rgos-update-${DEVICE}-${UPDATE_ID}.tar"
           fi

@@ -16,7 +16,7 @@ from PIL import Image
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(HERE, "bootlogo", "rgos-logo.png")
 # native panel size of each device
-SIZES = {"rg34xxsp": (720, 480), "rg35xxh": (640, 480), "rg35xxsp": (640, 480), "rg-rotate": (720, 720)}
+SIZES = {"rg34xxsp": (720, 480), "rg35xxh": (640, 480), "rg35xxsp": (640, 480), "rg-rotate": (720, 720), "miniloong": (960, 720)}
 FEATHER = 0.16  # width of the fade at the tile edge, share of the tile size
 FILL = 0.84  # logo tile height as a share of the panel's shorter side
 

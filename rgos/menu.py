@@ -65,7 +65,7 @@ def _device():
 
 
 DEVICE_ID = os.environ.get("RGOS_DEVICE") or _device() or "rg-rotate"
-CANVAS = {"rg-rotate": (720, 720), "rg34xxsp": (720, 480), "rg35xxh": (720, 540), "rg35xxsp": (720, 540)}
+CANVAS = {"rg-rotate": (720, 720), "rg34xxsp": (720, 480), "rg35xxh": (720, 540), "rg35xxsp": (720, 540), "miniloong": (720, 540)}
 W, H = CANVAS.get(DEVICE_ID, CANVAS["rg-rotate"])
 DY = H - 480
 DX = 0
