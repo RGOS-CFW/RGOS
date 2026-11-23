@@ -110,6 +110,37 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(os.readlink(link), bios)
         self.assertNotIn("SDL_VIDEODRIVER", env)
 
+    def _env(self):
+        with mock.patch.dict(os.environ, {"RGOS_NO_HW": "1"}):
+            return self.launch.standalone_env("dreamcast", cwd=self.tmp)
+
+    def test_bios_added_after_flycast_made_its_empty_data_folder_is_still_linked(self):
+        data = os.path.join(self.launch.ROMS_ROOT, "config", "data", "flycast", "data")
+        os.makedirs(data)  # what Flycast leaves behind after a run without a BIOS
+        bios = os.path.join(self.launch.ROMS_ROOT, "bios", "dc")
+        os.makedirs(bios)
+        self._env()
+        self.assertTrue(os.path.islink(data))
+        self.assertEqual(os.readlink(data), bios)
+
+    def test_a_data_folder_with_files_is_left_alone(self):
+        data = os.path.join(self.launch.ROMS_ROOT, "config", "data", "flycast", "data")
+        os.makedirs(data)
+        open(os.path.join(data, "dc_boot.bin"), "w").close()
+        os.makedirs(os.path.join(self.launch.ROMS_ROOT, "bios", "dc"))
+        self._env()
+        self.assertFalse(os.path.islink(data))
+        self.assertTrue(os.path.exists(os.path.join(data, "dc_boot.bin")))
+
+    def test_a_link_to_a_stale_bios_folder_is_repointed(self):
+        data_dir = os.path.join(self.launch.ROMS_ROOT, "config", "data", "flycast")
+        os.makedirs(data_dir)
+        os.symlink(os.path.join(self.tmp, "gone"), os.path.join(data_dir, "data"))
+        bios = os.path.join(self.launch.ROMS_ROOT, "bios", "dc")
+        os.makedirs(bios)
+        self._env()
+        self.assertEqual(os.readlink(os.path.join(data_dir, "data")), bios)
+
     def test_launch_runs_the_executable_on_the_game_without_retroarch(self):
         exe = fake_exe(self.bin_dir)
         seen = {}
