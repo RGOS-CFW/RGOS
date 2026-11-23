@@ -199,7 +199,8 @@ def pick_partition(disk, conf):
 
 def mount_dev(dev, fstype, mountpoint, readonly=False):
     os.makedirs(mountpoint, exist_ok=True)
-    for mod in {"exfat": "exfat", "vfat": "vfat", "ntfs": "ntfs3"}.get(fstype, "").split():
+    modules = {"exfat": ("exfat",), "vfat": ("vfat",), "ntfs": ("ntfs3", "ntfs")}.get(fstype, ())
+    for mod in modules:
         sh(["modprobe", mod], 10)
     for ro in ([True] if readonly else [False, True]):
         for t in MOUNT_TYPES[fstype]:
