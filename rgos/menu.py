@@ -160,17 +160,24 @@ class ThemedClassic(rgclassic.Classic):
     def _bake_bg(self):
         # dither levels are baked once into an 8-bit surface; a theme change only swaps its palette
         lw, lh = rgclassic.LW, self.LH
-        bay = ((0, 8, 2, 10), (12, 4, 14, 6), (3, 11, 1, 9), (15, 7, 13, 5))
+        lv = rgclassic.dither_levels(lw, lh)
         self._idx = pygame.Surface((lw, lh), 0, 8)
         self._idx.set_palette([(i, i, i) for i in range(6)])
-        for y in range(lh):
-            for x in range(lw):
-                f = 1.0 - (x * 0.85 + y) / (lw * 0.85 + lh) * 1.55
-                v = max(0.0, min(1.0, f)) * 5.0
-                lv = int(v)
-                if lv < 5 and (v - lv) * 16.0 > bay[y & 3][x & 3] + 0.5:
-                    lv += 1
-                self._idx.set_at((x, y), (lv, lv, lv))
+        buf = None
+        try:                                              # bulk-write the index bytes when rows are unpadded
+            if self._idx.get_pitch() != lw:
+                raise ValueError("padded rows")
+            buf = self._idx.get_buffer()
+            buf.write(lv, 0)
+            buf = None                                    # releases the surface lock
+        except Exception:
+            buf = None
+            i = 0
+            for y in range(lh):
+                for x in range(lw):
+                    v = lv[i]
+                    i += 1
+                    self._idx.set_at((x, y), (v, v, v))
         self.bg = pygame.Surface((lw, lh))
         self._paint_bg()
 
@@ -832,11 +839,37 @@ def _classic_button(surf, rect, hl):
     return hl
 
 
+_BANDS = {}
+_ENT_TMP = {}
+
+
+def _band(w, h, col):
+    """Cached translucent strip (header / footer shade); was re-allocated and refilled every frame."""
+    k = (w, h, col)
+    b = _BANDS.get(k)
+    if b is None:
+        if len(_BANDS) > 16:
+            _BANDS.clear()
+        b = _BANDS[k] = pygame.Surface((w, h), pygame.SRCALPHA)
+        b.fill(col)
+    return b
+
+
+def _ent_tmp(w, h):
+    """Reusable cleared scratch surface for the tile entrance fade (one tile is painted and blitted at a time)."""
+    s = _ENT_TMP.get((w, h))
+    if s is None:
+        if len(_ENT_TMP) > 4:
+            _ENT_TMP.clear()
+        s = _ENT_TMP[(w, h)] = pygame.Surface((w, h), pygame.SRCALPHA)
+    s.fill((0, 0, 0, 0))
+    s.set_alpha(255)
+    return s
+
+
 def draw_classic_header(canvas, f_logo):
     rc = rgclassic
-    band = pygame.Surface((W, 64), pygame.SRCALPHA)
-    band.fill(tuple(rc.BLACK) + (110,))
-    canvas.blit(band, (0, 0))
+    canvas.blit(_band(W, 64, tuple(rc.BLACK) + (110,)), (0, 0))
     _pg_rect(canvas, rc.REDM, (0, 60, W, 2))
     _pg_rect(canvas, rc.BLACK, (0, 62, W, 2))
     rg = f_logo.render("RG", True, rc.RED)
@@ -848,9 +881,7 @@ def draw_classic_footer(canvas, font, hint):
     rc, u = rgclassic, CLASSIC_UI[1]
     ch = font.get_height() + 6
     y = H - ch - 8
-    band = pygame.Surface((W, H - y + 8), pygame.SRCALPHA)
-    band.fill(tuple(rc.BLACK) + (110,))
-    canvas.blit(band, (0, y - 8))
+    canvas.blit(_band(W, H - y + 8, tuple(rc.BLACK) + (110,)), (0, y - 8))
     _pg_rect(canvas, rc.REDM, (0, y - 8, W, 2))
     x = 16
     for seg in hint.split("   "):
@@ -3830,7 +3861,7 @@ def main():
                 if el >= 1.0 or pp_ >= 0.999:
                     paint_tile(canvas, bx, by, hid, hname, sel)
                 elif pp_ > 0.02:
-                    tmp = pygame.Surface((bw + 12, bh + 30), pygame.SRCALPHA)
+                    tmp = _ent_tmp(bw + 12, bh + 30)
                     paint_tile(tmp, 6, 14, hid, hname, sel, (bx, by, bw, bh))
                     tmp.set_alpha(int(255 * pp_))
                     canvas.blit(tmp, (bx - 6, by - 14 + int((1.0 - pp_) * 28)))

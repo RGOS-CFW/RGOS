@@ -202,6 +202,35 @@ def _out_back(p, c1=1.9):
     return 1.0 + (c1 + 1.0) * q * q * q + c1 * q * q
 
 
+_DITHER = {}
+
+
+def dither_levels(lw, lh):
+    """Row-major bytes of the ordered-dither level (0..5) of the background gradient; cached per size.
+    Shared with the themed subclass in menu.py so the per-pixel work is done once, in one tight loop."""
+    k = (lw, lh)
+    out = _DITHER.get(k)
+    if out is None:
+        if len(_DITHER) > 4:
+            _DITHER.clear()
+        bay = ((0, 8, 2, 10), (12, 4, 14, 6), (3, 11, 1, 9), (15, 7, 13, 5))
+        den = lw * 0.85 + lh
+        buf = bytearray(lw * lh)
+        i = 0
+        for y in range(lh):
+            row = bay[y & 3]
+            for x in range(lw):
+                f = 1.0 - (x * 0.85 + y) / den * 1.55
+                v = (0.0 if f < 0.0 else 1.0 if f > 1.0 else f) * 5.0
+                lv = int(v)
+                if lv < 5 and (v - lv) * 16.0 > row[x & 3] + 0.5:
+                    lv += 1
+                buf[i] = lv
+                i += 1
+        out = _DITHER[k] = bytes(buf)
+    return out
+
+
 SPRING_K, SPRING_C = 784.0, 39.0       # ~28 rad/s, damping ratio 0.7 -> ~5% overshoot
 
 
@@ -211,6 +240,7 @@ class Classic:
         self.LH = max(120, h * LW // w)
         self.s = pygame.Surface((LW, self.LH))
         self._gc, self._ic = {}, {}
+        self._sc = {}                             # whole-string surfaces (see _str_surf)
         self._rc, self._tmps = {}, {}
         self.zoom = {}                            # kept for subclasses that touch it
         self.t0 = self.last = time.monotonic()
@@ -236,16 +266,19 @@ class Classic:
     # ---- assets
     def _bake_bg(self):
         ramp = ((6, 0, 2), (24, 2, 7), (46, 4, 12), (76, 8, 18), (112, 12, 26), (150, 18, 34))
-        bay = ((0, 8, 2, 10), (12, 4, 14, 6), (3, 11, 1, 9), (15, 7, 13, 5))
+        lv = dither_levels(LW, self.LH)
         bg = pygame.Surface((LW, self.LH))
-        for y in range(self.LH):
-            for x in range(LW):
-                f = 1.0 - (x * 0.85 + y) / (LW * 0.85 + self.LH) * 1.55
-                v = max(0.0, min(1.0, f)) * 5.0
-                lv = int(v)
-                if lv < 5 and (v - lv) * 16.0 > bay[y & 3][x & 3] + 0.5:
-                    lv += 1
-                bg.set_at((x, y), ramp[lv])
+        try:                                              # fast path: translate levels to RGB in bulk, one blit
+            rgb = bytearray(len(lv) * 3)
+            for c in range(3):
+                rgb[c::3] = lv.translate(bytes(ramp[min(i, 5)][c] for i in range(256)))
+            bg.blit(pygame.image.frombuffer(bytes(rgb), (LW, self.LH), "RGB"), (0, 0))
+        except Exception:
+            i = 0
+            for y in range(self.LH):
+                for x in range(LW):
+                    bg.set_at((x, y), ramp[lv[i]])
+                    i += 1
         self.bg = bg
 
     def _glyph_surf(self, g, col):
@@ -334,18 +367,41 @@ class Classic:
     def text_w(t, sc=1):
         return len(t) * ADV * sc
 
+    def _str_surf(self, t, col, sc, bold):
+        """One pre-composed surface per (string, colour, scale, bold): a label is a single blit per frame instead of
+        a blit (and, when scaled, a transform) per character. Pixel-identical to drawing glyph by glyph."""
+        k = (t, col, sc, bold)
+        sf = self._sc.get(k)
+        if sf is None:
+            if len(self._sc) > 600:
+                self._sc.clear()
+            adv = ADV * sc
+            sf = pygame.Surface((len(t) * adv + (1 if bold else 0), 9 * sc), pygame.SRCALPHA)
+            gl = {}
+            for i, ch in enumerate(t):
+                g = _glyph(ch)
+                if g == 0:                                # space: nothing to draw
+                    continue
+                gs = gl.get(g)
+                if gs is None:
+                    gs = self._glyph_surf(g, col)
+                    if sc != 1:
+                        gs = pygame.transform.scale(gs, (5 * sc, 9 * sc))
+                    gl[g] = gs
+                sf.blit(gs, (i * adv, 0))
+                if bold:
+                    sf.blit(gs, (i * adv + 1, 0))
+            self._sc[k] = sf
+        return sf
+
     def text(self, t, x, y, col=None, sc=1, align=0, bold=False):
+        if not t:
+            return
         if col is None:
             col = WHITE
-        w = self.text_w(t, sc)
+        w = len(t) * ADV * sc
         x -= (w // 2 if align == 1 else w if align == 2 else 0)
-        for i, ch in enumerate(t):
-            gs = self._glyph_surf(_glyph(ch), col)
-            if sc != 1:
-                gs = pygame.transform.scale(gs, (5 * sc, 9 * sc))
-            self.s.blit(gs, (x + i * ADV * sc, y))
-            if bold:
-                self.s.blit(gs, (x + i * ADV * sc + 1, y))
+        self.s.blit(self._str_surf(t, col, sc, bold), (x, y))
 
     def glyph(self, g, x, y, col):
         self.s.blit(self._glyph_surf(g, col), (x, y))
