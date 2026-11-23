@@ -126,6 +126,11 @@ DC_MAKE_ARGS="${DC_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
 # N64_REQUIRED=1 makes a failed build stop the whole build instead of producing an image without Nintendo 64.
 N64_REPO="${N64_REPO:-https://github.com/libretro/mupen64plus-libretro-nx.git}"
 N64_MAKE_ARGS="${N64_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
+# Standalone Flycast (Dreamcast, started by RG OS itself instead of RetroArch): built from DC_REPO as an OpenGL ES program
+# and installed as /usr/local/bin/flycast. DC_STANDALONE=0 skips it; DC_SA_CMAKE_ARGS adds CMake arguments;
+# DC_SA_REQUIRED=1 makes a failed build stop the whole build.
+DC_STANDALONE="${DC_STANDALONE:-1}"
+DC_SA_CMAKE_ARGS="${DC_SA_CMAKE_ARGS:-}"
 STELLA_REPO="${STELLA_REPO:-https://github.com/libretro/stella2014-libretro.git}"
 ATARI800_REPO="${ATARI800_REPO:-https://github.com/libretro/libretro-atari800.git}"
 PROSYSTEM_REPO="${PROSYSTEM_REPO:-https://github.com/libretro/prosystem-libretro.git}"
@@ -385,18 +390,19 @@ if ls "$HERE"/cores/*_libretro.so >/dev/null 2>&1; then
   echo "==> Copying prebuilt cores from cores/"; cp "$HERE"/cores/*_libretro.so "$LRDIR/"
 fi
 [[ "$DEVICE" == "rg-rotate" ]] || rm -f "$LRDIR/dolphin_libretro.so"
-WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0; WANT_DC=0; WANT_N64=0
+WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0; WANT_DC=0; WANT_N64=0; WANT_DCSA=0
 [[ "$NGP_SRC" != none && ! -e "$LRDIR/mednafen_ngp_libretro.so" ]] && WANT_NGP=1
 [[ "$PSX_REPO" != none && ! -e "$LRDIR/pcsx_rearmed_libretro.so" ]] && WANT_PSX=1
 have_core() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so "$ROOTFS/usr/lib/libretro/$1"_libretro.so "$ROOTFS/usr/local/lib/libretro/$1"_libretro.so; do [[ -e "$f" ]] && return 0; done; return 1; }
 [[ "$GENESIS_REPO" != none ]] && ! have_core genesis_plus_gx && WANT_GEN=1
 [[ "$GC_REPO" != none && ! -e "$LRDIR/dolphin_libretro.so" ]] && WANT_GC=1
 [[ "$DC_REPO" != none && ! -e "$LRDIR/flycast_libretro.so" ]] && WANT_DC=1
+[[ "$DC_REPO" != none && "$DC_STANDALONE" == 1 && ! -x "$ROOTFS/usr/local/bin/flycast" && ! -x "$ROOTFS/usr/bin/flycast" ]] && WANT_DCSA=1
 [[ "$N64_REPO" != none && ! -e "$LRDIR/mupen64plus_next_libretro.so" ]] && ! have_core mupen64plus_next && WANT_N64=1
 [[ "$STELLA_REPO" != none ]] && ! have_core stella2014 && WANT_ATARI=1
 [[ "$ATARI800_REPO" != none ]] && ! have_core atari800 && WANT_ATARI=1
 [[ "$PROSYSTEM_REPO" != none ]] && ! have_core prosystem && WANT_ATARI=1
-if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC || WANT_N64 )); then
+if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC || WANT_N64 || WANT_DCSA )); then
   echo "==> Installing a compiler in the rootfs to build libretro cores"
   rm -rf "$ROOTFS/tmp/core-src"; mkdir -p "$ROOTFS/tmp/core-src"
   cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
@@ -514,6 +520,48 @@ if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC || WA
         [[ "${DC_REQUIRED:-0}" != 1 ]] || { echo "!! DC_REQUIRED=1: stopping" >&2; exit 1; }
       fi
     fi
+    if (( WANT_DCSA )); then
+      echo "==> Building the standalone Dreamcast emulator (flycast, OpenGL ES; started by RG OS, no RetroArch)"
+      DCSA_LOG="$WORK/flycast-standalone-build.log"; : > "$DCSA_LOG"
+      if (
+        set -e
+        command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
+        rm -rf "$WORK/flycast-sa"
+        git clone -q --depth 1 --recurse-submodules --shallow-submodules "$DC_REPO" "$WORK/flycast-sa"
+        rm -rf "$ROOTFS/tmp/core-src/dcsa"; cp -r "$WORK/flycast-sa" "$ROOTFS/tmp/core-src/dcsa"
+        # one package at a time: a package that is missing in this Debian suite must not stop the others from installing
+        for pkg in cmake ninja-build pkg-config libsdl2-dev libgles-dev libegl-dev libgbm-dev libdrm-dev zlib1g-dev libcurl4-openssl-dev libzip-dev libasound2-dev libpulse-dev; do
+          chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg" >>"$DCSA_LOG" 2>&1 \
+            || echo "   (could not install $pkg, continuing)"
+        done
+        # a very large C++ project: retry with fewer jobs when the compiler is killed for lack of RAM (WSL and small VMs)
+        built=0
+        for jobs in "$(nproc)" 2 1; do
+          echo "   cmake (standalone, GLES), -j$jobs (log: $DCSA_LOG)"
+          if chroot "$ROOTFS" sh -c "cd /tmp/core-src/dcsa && rm -rf build-sa && cmake -S . -B build-sa -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_GLES=ON -DUSE_GLES2=OFF -DUSE_OPENGL=ON -DUSE_VULKAN=OFF -DUSE_HOST_SDL=ON -DUSE_OPENMP=OFF -DUSE_DISCORD=OFF $DC_SA_CMAKE_ARGS && cmake --build build-sa -j$jobs" >>"$DCSA_LOG" 2>&1; then built=1; break; fi
+          echo "   cmake build with -j$jobs failed, retrying with fewer jobs"
+        done
+        (( built )) || { echo "flycast (standalone): build failed, last lines of $DCSA_LOG:"; tail -n 40 "$DCSA_LOG"; exit 1; }
+        exe="$(find "$ROOTFS/tmp/core-src/dcsa/build-sa" -maxdepth 1 -name flycast -type f -perm -u+x | head -n1)"
+        [[ -n "$exe" ]] || { echo "flycast (standalone): build finished but no flycast executable was produced (log: $DCSA_LOG)"; exit 1; }
+        # a desktop-GL build cannot get a context on this GLES-only stack: refuse it here
+        if command -v readelf >/dev/null 2>&1 && readelf -d "$exe" 2>/dev/null | grep -Eq 'NEEDED.*\[(libGL|libOpenGL)\.so'; then
+          echo "standalone flycast links desktop OpenGL (libGL), not OpenGL ES: check DC_SA_CMAKE_ARGS (-DUSE_GLES=ON)"; exit 1
+        fi
+        install -m 755 "$exe" "$ROOTFS/usr/local/bin/flycast"
+        # the purge below removes every *-dev package and what only they needed: keep the runtime libraries the binary links
+        cat > "$ROOTFS/tmp/core-src/keep-flycast-libs.sh" <<'KEEP'
+ldd /usr/local/bin/flycast | awk '/=>/ {print $3}' | xargs -r dpkg -S 2>/dev/null | cut -d: -f1 | sort -u | xargs -r apt-mark manual
+KEEP
+        chroot "$ROOTFS" sh /tmp/core-src/keep-flycast-libs.sh
+      ); then echo "   standalone flycast built (GLES), installed as /usr/local/bin/flycast"
+      else
+        echo "!! could not build the standalone Flycast: only the libretro Flycast will be offered for Dreamcast (log: $DCSA_LOG)."
+        echo "!! Fix the build error above, or put a GLES-built flycast executable in cores/standalone/ on the ROMS card."
+        rm -f "$ROOTFS/usr/local/bin/flycast"
+        [[ "${DC_SA_REQUIRED:-0}" != 1 ]] || { echo "!! DC_SA_REQUIRED=1: stopping" >&2; exit 1; }
+      fi
+    fi
     if (( WANT_N64 )); then
       echo "==> Building the Nintendo 64 core (mupen64plus_next, OpenGL ES to match RetroArch)"
       N64_LOG="$WORK/mupen64plus-next-build.log"; : > "$N64_LOG"
@@ -608,6 +656,7 @@ for c in gambatte mgba nestopia genesis_plus_gx snes9x mednafen_wswan mednafen_n
   core_present "$c" || echo "!! ${c}_libretro.so is missing from the image (a Debian libretro package missing, or the source build of that core failed)"
 done
 if [[ "$DEVICE" == "rg-rotate" && "$GC_REPO" != none ]]; then core_present dolphin || echo "!! dolphin_libretro.so is missing from the image: no GameCube on this build"; fi
+[[ "$DC_REPO" == none || "$DC_STANDALONE" != 1 || -x "$ROOTFS/usr/local/bin/flycast" || -x "$ROOTFS/usr/bin/flycast" ]] || echo "!! standalone flycast is missing from the image: Dreamcast will only offer the libretro Flycast core"
 [[ "$N64_REPO" == none ]] || core_present mupen64plus_next || echo "!! mupen64plus_next_libretro.so is missing from the image: no Nintendo 64 on this build"
 core_present mednafen_psx || core_present pcsx_rearmed || echo "!! no PlayStation core (neither pcsx_rearmed nor mednafen_psx) is in the image"
 [[ -x "$ROOTFS/usr/bin/retroarch" ]] || echo "!! retroarch is not in the image (package missing from $DEBIAN_SUITE?)"

@@ -497,7 +497,7 @@ def save_favorites(paths):
         return False
 
 
-from cores import installed_cores, default_core, SYSTEM_CORE_COMPATIBILITY, compatible_cores  # noqa: E402,F401
+from cores import installed_cores, default_core, SYSTEM_CORE_COMPATIBILITY, compatible_cores, STANDALONE  # noqa: E402,F401
 
 
 CORE_NAMES = {"mgba": "mGBA", "gpsp": "gpSP", "vbam": "VBA-M", "gambatte": "Gambatte", "sameboy": "SameBoy", "gearboy": "Gearboy",
@@ -506,7 +506,7 @@ CORE_NAMES = {"mgba": "mGBA", "gpsp": "gpSP", "vbam": "VBA-M", "gambatte": "Gamb
               "genesis_plus_gx": "Genesis Plus GX", "picodrive": "PicoDrive", "stella2014": "Stella 2014", "stella": "Stella",
               "atari800": "Atari800", "prosystem": "ProSystem", "mednafen_ngp": "Beetle NeoPop", "race": "RACE",
               "mednafen_wswan": "Beetle Cygne", "pcsx_rearmed": "PCSX ReARMed", "mednafen_psx": "Beetle PSX",
-              "mednafen_psx_hw": "Beetle PSX HW", "swanstation": "SwanStation", "dolphin": "Dolphin", "flycast": "Flycast", "mupen64plus_next": "Mupen64Plus-Next",
+              "mednafen_psx_hw": "Beetle PSX HW", "swanstation": "SwanStation", "dolphin": "Dolphin", "flycast": "Flycast", "flycast_standalone": "Flycast (standalone)", "mupen64plus_next": "Mupen64Plus-Next",
               "parallel_n64": "ParaLLEl N64", "fbneo": "FinalBurn Neo",
               "mednafen_gba": "Beetle GBA", "mednafen_gb": "Beetle GB"}
 
@@ -518,11 +518,19 @@ def core_label(sid, state):
     return CORE_NAMES.get(core) or core.replace("_", " ") or "RetroArch"
 
 
+def runner_label(sid, state):
+    """What runs a system's games: RetroArch plus the chosen core, or the standalone emulator's own name."""
+    core = state.get("emulators", {}).get(sid)
+    if core not in SYSTEM_CORE_COMPATIBILITY.get(sid, ()):
+        core = default_core(sid)
+    return core_label(sid, state) if core in STANDALONE else "RetroArch + " + core_label(sid, state)
+
+
 def game_runner_text(g, state):
     """What runs a game, for the details panel: a native port, or RetroArch plus the chosen core."""
     if g.get("core") == "native":
         return "Native port"
-    return "RetroArch + " + core_label(g["sid"], state)
+    return runner_label(g["sid"], state)
 
 
 def bios_dirs():
@@ -2799,7 +2807,7 @@ def main():
         return {"theme": ("Theme", "%s   (%d of %d)   A opens the list" % (THEMES[theme_index(theme_id)][1], theme_index(theme_id) + 1, len(THEMES))),
                 "launcher": ("Launcher", "%s   (%d of %d)   A opens the list" % (LAUNCHERS[launcher_index(launcher_id)][1], launcher_index(launcher_id) + 1, len(LAUNCHERS))),
                 "splash": ("Startup splash", spl + "   (plays once at power on)   X previews"),
-                "emulators": ("Emulators", "Choose the RetroArch core used for each system"),
+                "emulators": ("Emulators", "Choose the emulator (RetroArch core) used for each system"),
                 "bios": ("Missing BIOS check", (bios_summary_text(bios_cache[1]) + "   A opens it") if bios_cache else "Find missing emulator BIOS files and where they go"),
                 "artwork": ("Game artwork", art_text()),
                 "bmap": ("Map buttons", "Teach RG OS which physical button is A, B, D-pad, ... (if buttons are wrong)"),
@@ -4351,7 +4359,7 @@ def main():
                     canvas.blit(f_row.render(line, True, TEXT), (px + 15, top_y + 148 + DY // 2 + i * 26))
                 canvas.blit(f_small.render("%d %s%s" % (cnt, "port" if sid == "ports" else "game", "" if cnt == 1 else "s"), True, DIM),
                             (px + 15, top_y + 300 + DY))
-                canvas.blit(f_small.render("Native Linux games" if score == "native" else "RetroArch + " + core_label(sid, state), True, DIM), (px + 15, top_y + 322 + DY))
+                canvas.blit(f_small.render("Native Linux games" if score == "native" else runner_label(sid, state), True, DIM), (px + 15, top_y + 322 + DY))
             if not os.path.isdir(ROMS_DIR):
                 canvas.blit(f_small.render("ROMS partition not found.", True, ACCENT), (list_x + 18, H - 52))
             hint = "A Open   B Back   X Rescan   START+SELECT Power off"

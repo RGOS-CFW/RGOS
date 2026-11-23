@@ -65,6 +65,7 @@ own Debian copyright file.
 | PCSX ReARMed (PlayStation) | built from `libretro/pcsx_rearmed` | GPL-2.0-or-later |
 | Genesis Plus GX (Mega Drive, Master System, Game Gear, SG-1000, Sega CD) | Debian `libretro-genesisplusgx` or built from `libretro/Genesis-Plus-GX` | **Genesis Plus GX license: non-commercial only.** Not an open-source license. Contains code under other terms (see the upstream `LICENSE.txt`). |
 | Flycast (`flycast`, Dreamcast; not bundled, downloaded on request by the Core Installer) | `libretro/flycast` from the libretro buildbot | GPL-2.0-only |
+| Flycast standalone (`flycast`, Dreamcast; built from `flyinghead/flycast`, started by RG OS without RetroArch) | built from `flyinghead/flycast` | GPL-2.0-only |
 | Mupen64Plus-Next (`mupen64plus_next`, Nintendo 64) | built from `libretro/mupen64plus-libretro-nx` | GPL-3.0 |
 | Dolphin libretro (GameCube, RG Rotate only) | built from `libretro/dolphin` | GPL-2.0-or-later |
 
