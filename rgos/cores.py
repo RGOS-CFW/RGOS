@@ -7,6 +7,30 @@ def user_core_dir():
     return os.path.join(os.environ.get("RGOS_ROMS", "/media/roms"), "cores")
 
 
+# Standalone emulators: not libretro cores but programs RG OS starts itself. They appear in the Emulators list under a
+# pseudo-core name and count as "installed" when their executable is found. {pseudo-core: executable name}
+STANDALONE = {"flycast_standalone": "flycast"}
+
+
+def standalone_dirs():
+    env = os.environ.get("RGOS_STANDALONE_DIRS")
+    if env:
+        return env.split(":")
+    return ["/usr/local/bin", "/usr/bin", "/opt/flycast", os.path.join(user_core_dir(), "standalone")]
+
+
+def standalone_path(core, dirs=None):
+    """Full path of a standalone emulator's executable, or "" when it is not installed (or is not a standalone name)."""
+    exe = STANDALONE.get(core)
+    if not exe:
+        return ""
+    for d in (standalone_dirs() if dirs is None else dirs):
+        p = os.path.join(d, exe)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return ""
+
+
 def installed_cores():
     dirs = ("/usr/lib/aarch64-linux-gnu/libretro", "/usr/lib/libretro",
             "/usr/lib/aarch64-linux-gnu/retroarch/cores", "/usr/local/lib/libretro", user_core_dir())
@@ -18,6 +42,7 @@ def installed_cores():
                     found.add(filename[:-len("_libretro.so")])
         except OSError:
             pass
+    found.update(name for name in STANDALONE if standalone_path(name))
     return sorted(found)
 
 
@@ -45,7 +70,7 @@ SYSTEM_CORE_COMPATIBILITY = {
     "segacd": ("genesis_plus_gx", "picodrive"),
     "sega32x": ("genesis_plus_gx", "picodrive"),
     "segapico": ("genesis_plus_gx",),
-    "dreamcast": ("flycast",),
+    "dreamcast": ("flycast", "flycast_standalone"),
     "n64": ("mupen64plus_next", "parallel_n64"),
     "atari2600": ("stella2014", "stella"),
     "atari5200": ("atari800",),
