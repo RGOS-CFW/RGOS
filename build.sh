@@ -265,13 +265,38 @@ if [[ -n "$MODDIR" ]]; then
   mkdir -p "$ROOTFS/lib/modules"; cp -a "$MODDIR" "$ROOTFS/lib/modules/$KVER"
   chroot "$ROOTFS" depmod -a "$KVER" || true
 fi
-FWDIR=""; FWBEST=0
+FWDIR=""; FWBEST=0; FWOTHER=()
 for c in $(find "$WORK/system" -maxdepth 9 -type d -path '*lib/firmware' 2>/dev/null) ${MODDIR:+"$(dirname "$(dirname "$MODDIR")")/firmware"}; do
   [[ -d "$c" ]] || continue
-  n=$(find "$c" -type f 2>/dev/null | wc -l); (( n > FWBEST )) && { FWBEST=$n; FWDIR="$c"; }
+  n=$(find "$c" -type f 2>/dev/null | wc -l)
+  (( n > 0 )) && FWOTHER+=("$c")
+  (( n > FWBEST )) && { FWBEST=$n; FWDIR="$c"; }
 done
 echo "==> Firmware directory: ${FWDIR:-NONE FOUND} ($FWBEST files)"
 [[ -n "$FWDIR" ]] && { mkdir -p "$ROOTFS/lib/firmware"; cp -a "$FWDIR"/. "$ROOTFS/lib/firmware/"; }
+# The stock SYSTEM can carry firmware in more than one directory (the Bluetooth blobs are not always in the biggest one):
+# merge the others in without overwriting anything already copied.
+for c in "${FWOTHER[@]}"; do
+  [[ "$c" == "$FWDIR" ]] && continue
+  echo "==> Merging extra firmware directory: $c"
+  mkdir -p "$ROOTFS/lib/firmware"; cp -an "$c"/. "$ROOTFS/lib/firmware/" || true
+done
+# The kernel's btrtl driver (Realtek RTL8821CS on the H700 handhelds) asks for rtl_bt/<chip>_fw.bin and rtl_bt/<chip>_config.bin;
+# Realtek's vendor layout is rtlbt/<chip>_fw and rtlbt/<chip>_config, which the kernel never looks at. Alias them.
+if [[ -d "$ROOTFS/lib/firmware/rtlbt" ]]; then
+  for f in "$ROOTFS"/lib/firmware/rtlbt/rtl*_fw "$ROOTFS"/lib/firmware/rtlbt/rtl*_config; do
+    [[ -f "$f" ]] || continue
+    t="$ROOTFS/lib/firmware/rtl_bt/$(basename "$f").bin"
+    [[ -e "$t" ]] || { mkdir -p "$(dirname "$t")"; cp "$f" "$t"; echo "==> Bluetooth firmware alias: rtlbt/$(basename "$f") -> rtl_bt/$(basename "$t")"; }
+  done
+fi
+case "$DEVICE" in
+  rg34xxsp|rg35xxh|rg35xxsp)
+    for f in rtl8821cs_fw rtl8821cs_config; do
+      ls "$ROOTFS"/lib/firmware/rtl_bt/$f.bin* >/dev/null 2>&1 \
+        || echo "!! Bluetooth firmware rtl_bt/$f.bin is not in the image: the H700's RTL8821CS adapter cannot initialise without it (install firmware-realtek / linux-firmware into the rootfs, or drop the file into /lib/firmware/rtl_bt)"
+    done ;;
+esac
 mkdir -p "$ROOTFS/system/etc"; ln -sfn /lib/firmware "$ROOTFS/system/etc/firmware"
 mkdir -p "$ROOTFS/etc/rgos/audio"
 AST="$(find "$WORK/system" -name asound.state -type f 2>/dev/null | head -1)"

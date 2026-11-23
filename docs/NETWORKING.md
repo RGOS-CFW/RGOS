@@ -12,7 +12,7 @@ Many handhelds have no battery-backed clock. HTTPS downloads (artwork, PortMaste
 
 ## Bluetooth
 
-*Settings > Bluetooth* turns the adapter on or off and opens the device list, where you can pair controllers, keyboards and headsets. If it says no adapter was found, check `rgos-logs.txt` ([LOGS.md](LOGS.md)).
+*Settings > Bluetooth* turns the adapter on or off and opens the device list, where you can pair controllers, keyboards and headsets. If it says no adapter was found, opening the screen again (after a minute) retries the whole bring-up, and `rgos-logs.txt` ([LOGS.md](LOGS.md)) has a `rgos-bt:` section that says why; see *No Bluetooth adapter found* in [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ## SSH and file transfer
 

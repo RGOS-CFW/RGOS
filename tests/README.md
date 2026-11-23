@@ -18,7 +18,7 @@ Plain `unittest`, standard library only: no pygame, device or root needed (`menu
 | `test_overlay.py` | `rgos-overlay` (the system-wide volume bar): volume/theme file parsing, mapping the bar rectangle onto a rotated framebuffer, and the draw / re-cover / restore logic when a program repaints underneath it or flips pages. |
 | `test_gamemenu.py` | In-game menu (`gamemenu.py`): items per game kind, the confirm step for Restart / Exit, Menu tap vs hold vs hotkey combo, pad event translation, pause / resume / restart / exit / save / load for RetroArch (network commands) and native ports (signals), the open -> use -> close order (pixels restored before the game resumes), layout bounds at several screen sizes, and the `ingame` flag / restart request written by `rgos-launch`. |
 | `test_dhcp.py` | `rgos-wifi-dhcp`: lease script order (routes flushed before the address is added, so the default route sticks) and resolv.conf. |
-| `test_btctl.py` | `btctl`: the saved Bluetooth on/off setting is applied at boot (off stays off). |
+| `test_btctl.py` | `btctl`: the saved Bluetooth on/off setting is applied at boot (off stays off); adapter bring-up retries, serdev re-probe and diagnostics. |
 | `test_splash.py` | `splash.read_conf`: a malformed splash.json falls back to the defaults instead of raising. |
 | `test_keymap.py` | `rgos-input` `load_keymap`: a non-object keymap is ignored and one bad button-map entry keeps the good ones. |
 | `test_sshctl.py` | `sshctl.read_password`: a UTF-8 BOM / CRLF in `ssh-password.txt` is not part of the root password. |

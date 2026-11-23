@@ -81,6 +81,19 @@ Power on shows three things in turn: U-Boot's `bootlogo.bmp`, then (until now) a
 * U-Boot's own logo (the very first picture) is drawn by the bootloader from `bootlogo.bmp` on the FAT partition and is not controlled by RG OS: it must be an uncompressed 24-bit BMP at the panel's size ([SD-CARD-LAYOUT.md](SD-CARD-LAYOUT.md)).
 * An existing card needs the new `SYSTEM` and `rgos-initrd.cpio` (an offline update carries both); patch an old `extlinux.conf` with `python3 initramfs/patch-extlinux.py <extlinux.conf> /rgos-initrd.cpio` to get the quiet arguments.
 
+## No Bluetooth adapter found (RG34XXSP / RG35XX H / RG35XX SP)
+
+The H700 consoles have a Realtek RTL8821CS whose Bluetooth half sits on a UART. The kernel only creates `hci0` when all three of these are true, and the `rgos-bt:` lines in `rgos-logs.txt` (or `python3 /opt/rgos/btctl.py diag` over SSH) show which one fails:
+
+| `rgos-bt:` line | Meaning | Fix |
+|---|---|---|
+| `device-tree Bluetooth nodes: NONE` | the device tree on the card has no Bluetooth node under the UART | use the ROCKNIX device tree for your panel revision (see [DEVICES.md](DEVICES.md)); RG OS cannot add the node itself |
+| `modprobe failed: hci_uart ...` or `btrtl ...` | the stock kernel has no such module (or `/lib/modules` does not match `uname -r`) | rebuild against the matching ROCKNIX release |
+| `/lib/firmware Bluetooth files: NONE` or no `rtl8821cs_fw.bin` / `rtl8821cs_config.bin` in `rtl_bt/` | the Realtek firmware did not come across from the stock image | rebuild with the current `build.sh` (it now merges every firmware directory from the stock SYSTEM, aliases `rtlbt/` to `rtl_bt/`, and prints `!! Bluetooth firmware ... is not in the image` when it is still missing) |
+| `serdev devices: serial0-0->unbound` | the device exists but no driver took it | RG OS re-probes it automatically; if it stays unbound, read the `dmesg` lines printed under it |
+
+The adapter is now looked for three times at boot (about 70 s in total) and again each time *Settings > Bluetooth* is opened with no adapter present, so one slow firmware download no longer leaves Bluetooth dead until the next reboot.
+
 ## Mini-HDMI output
 
 For H700 handheld HDMI setup, boot-time behavior, supported resolutions and troubleshooting, see [HDMI.md](HDMI.md). HDMI must be connected before power-on; live hot-plug switching is not supported.

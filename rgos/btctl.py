@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-import glob, json, os, re, select, subprocess, sys, tarfile, threading, time, uuid
+import fcntl, glob, json, os, re, select, subprocess, sys, tarfile, threading, time, uuid
 
 CONF = os.environ.get("RGOS_BT_CONF", "/var/lib/rgos/bt.json")
 PAIRINGS = os.environ.get("RGOS_BT_PAIRINGS", "/var/lib/rgos/bluetooth.tar.gz")
 STATE_DIR = "/var/lib/bluetooth"
 SYSBT = "/sys/class/bluetooth"
+SYSSERIAL = "/sys/bus/serial"
+LOCK = os.environ.get("RGOS_BT_LOCK", "/run/rgos-bt-start.lock")
+KEY_MODULES = ("bluetooth", "hci_uart", "btrtl", "btbcm", "btusb")  # a failed modprobe of one of these explains a missing adapter
 BLUETOOTHD = ["/usr/libexec/bluetooth/bluetoothd", "/usr/lib/bluetooth/bluetoothd", "/usr/sbin/bluetoothd"]
 MODULES = ["bluetooth", "rfcomm", "bnep", "hidp", "uhid", "hid-generic", "hid-sony", "hid-playstation", "hid-nintendo",
            "btrtl", "btbcm", "btintel", "btmtk", "btqca", "hci_uart", "btusb"]
@@ -90,18 +93,126 @@ def adapter():
         return None
 
 
-def start():
-    log("start")
+def load_modules():
+    failed = []
     for m in module_names():
-        run(["modprobe", m], timeout=20)
-    run(["rfkill", "unblock", "bluetooth"])
-    for _ in range(30):
+        rc, out = run(["modprobe", m], timeout=20)
+        if rc != 0 and m in KEY_MODULES:
+            failed.append("%s: %s" % (m, out.strip().replace("\n", " ")[:100]))
+    return failed
+
+
+def reprobe_serdev():
+    """The RTL8821CS on the H700 handhelds hangs off a UART as a serdev device. If it was created before
+    hci_uart existed (or its probe was deferred and then lost), nothing binds it: ask the bus to try again."""
+    try:
+        devs = [d for d in os.listdir(SYSSERIAL + "/devices") if "-" in d]
+    except OSError:
+        return []
+    kicked = []
+    for d in devs:
+        if os.path.exists("%s/devices/%s/driver" % (SYSSERIAL, d)):
+            continue
+        try:
+            with open(SYSSERIAL + "/drivers_probe", "w") as f:
+                f.write(d)
+            kicked.append(d)
+        except OSError:
+            pass
+    return kicked
+
+
+def _read(path, n=200):
+    try:
+        with open(path, "rb") as f:
+            return f.read(n).replace(b"\0", b" ").decode("utf-8", "replace").strip()
+    except OSError:
+        return ""
+
+
+def diag(tag):
+    """Everything needed to tell 'no node in the device tree' from 'driver missing' from 'firmware missing'."""
+    log("---- diagnostics (%s)" % tag)
+    log("kernel %s" % run(["uname", "-r"])[1].strip())
+    nodes = []
+    for root, _d, files in os.walk("/proc/device-tree"):
+        if "compatible" in files:
+            comp = _read(os.path.join(root, "compatible"))
+            if re.search(r"bluetooth|-bt\b|rtl8\w*-bt|brcm,bcm\d+-bt|hci", comp, re.I):
+                nodes.append("%s [%s] status=%s" % (root[len("/proc/device-tree"):] or "/", comp,
+                                                    _read(os.path.join(root, "status")) or "okay"))
+    log("device-tree Bluetooth nodes: %s" % (" | ".join(nodes) or "NONE (the device tree has no Bluetooth node: the kernel cannot create an adapter)"))
+    try:
+        sdev = sorted(os.listdir(SYSSERIAL + "/devices"))
+    except OSError:
+        sdev = []
+    log("serdev devices: %s" % (" ".join("%s->%s" % (d, os.path.basename(os.path.realpath("%s/devices/%s/driver" % (SYSSERIAL, d))) if os.path.exists("%s/devices/%s/driver" % (SYSSERIAL, d)) else "unbound") for d in sdev) or "(none)"))
+    fw = []
+    for pat in ("rtl_bt/*", "rtlbt/*", "*/rtl*_fw*", "brcm/*.hcd", "qca/*", "mediatek/*bt*"):
+        fw += [os.path.relpath(x, "/lib/firmware") for x in glob.glob("/lib/firmware/" + pat)]
+    log("/lib/firmware Bluetooth files: %s" % (" ".join(sorted(dict.fromkeys(fw)))[:500] or "NONE"))
+    log("firmware_class.path = %r" % _read("/sys/module/firmware_class/parameters/path"))
+    rc, out = run(["lsmod"], timeout=6)
+    log("lsmod (bluetooth): %s" % (" | ".join(l.split()[0] for l in out.splitlines()[1:] if re.match(r"(bluetooth|hci|bt|rfcomm|bnep|hidp|uhid)", l)) or "(none)"))
+    rc, out = run(["dmesg"], timeout=6)
+    hits = [l for l in out.splitlines() if re.search(r"bluetooth|hci\d|btrtl|rtl8\d+|hci_uart|serdev|\bh5\b|bt_|rfkill", l, re.I)]
+    log("dmesg (%d matching lines, last 30):" % len(hits))
+    for l in hits[-30:]:
+        log("  " + l[:200])
+
+
+def _wait_adapter(seconds):
+    for _ in range(int(seconds)):
         if adapter():
-            break
+            return True
         time.sleep(1)
-    if not adapter():
+    return bool(adapter())
+
+
+def find_adapter(attempts=3):
+    """Load the drivers and wait for hci0. Retried, because the adapter can appear late (firmware download over
+    a slow UART, deferred probes) and a single 30 s window used to leave Bluetooth dead until the next reboot."""
+    for n in range(1, attempts + 1):
+        failed = load_modules()
+        if failed:
+            log("modprobe failed: %s" % "; ".join(failed))
+        kicked = reprobe_serdev()
+        if kicked:
+            log("re-probed serdev devices: %s" % " ".join(kicked))
+        run(["rfkill", "unblock", "bluetooth"])
+        if _wait_adapter(30 if n == 1 else 20):
+            if n > 1:
+                log("adapter appeared on attempt %d" % n)
+            return True
+        if n == 1:
+            diag("no adapter after attempt 1")
+        log("no adapter after attempt %d of %d" % (n, attempts))
+    return False
+
+
+def start():
+    try:
+        os.makedirs(os.path.dirname(LOCK), exist_ok=True)
+        lk = open(LOCK, "w")
+        fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log("start: another start is already running")
+        return 0
+    except OSError:
+        lk = None
+    try:
+        return _start()
+    finally:
+        if lk:
+            lk.close()
+
+
+def _start():
+    log("start")
+    if not find_adapter():
         rc, out = run(["rfkill", "list"])
-        log("no Bluetooth adapter in %s after 30 s (kernel/driver does not provide one?). rfkill: %s" % (SYSBT, out.strip().replace("\n", " | ")))
+        log("no Bluetooth adapter in %s (kernel/driver/firmware does not provide one; see diagnostics above). rfkill: %s" % (SYSBT, out.strip().replace("\n", " | ")))
+        diag("giving up")
         return 1
     log("adapter %s" % adapter())
     restore_pairings()
@@ -256,6 +367,7 @@ def forget(mac):
 class Manager:
     def __init__(self):
         self.rows, self.on, self.busy, self.msg, self.msg_until, self.scanning = [], None, False, "", 0.0, False
+        self.last_retry = 0.0
 
     def _bg(self, fn):
         if self.busy:
@@ -276,6 +388,13 @@ class Manager:
 
     def _refresh(self):
         self.on = powered()
+        if self.on is None and time.time() - self.last_retry > 60:
+            # no adapter / bluetoothd yet: the boot-time attempt may have lost a race, so try the whole bring-up again
+            self.last_retry = time.time()
+            self.say("Looking for the Bluetooth adapter...", 90)
+            start()
+            self.msg_until = 0.0
+            self.on = powered()
         self.rows = devices() if self.on is not None else []
 
     def refresh(self):
@@ -317,6 +436,8 @@ if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "start":
         sys.exit(start())
+    elif cmd == "diag":
+        diag("manual")
     elif cmd == "list":
         for d in devices():
             print(d["mac"], "paired" if d["paired"] else "-", "connected" if d["connected"] else "-", d["name"])
@@ -327,4 +448,4 @@ if __name__ == "__main__":
     elif cmd in ("on", "off"):
         set_enabled(cmd == "on")
     else:
-        print("usage: btctl.py start | list | scan | pair <mac> | on | off", file=sys.stderr); sys.exit(2)
+        print("usage: btctl.py start | diag | list | scan | pair <mac> | on | off", file=sys.stderr); sys.exit(2)
