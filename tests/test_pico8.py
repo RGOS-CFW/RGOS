@@ -29,6 +29,15 @@ class Pico8Tests(unittest.TestCase):
         self.assertEqual(menu.CORE_NAMES["fake08"], "fake-08")
         self.assertEqual(menu.CORE_NAMES["retro8"], "retro8")
 
+    def test_launch_fallback_keeps_pico8_usable_if_core_table_import_fails(self):
+        launch = load_launch()
+        self.assertEqual(launch.FALLBACK_DEFAULT["pico8"], "fake08")
+        self.assertEqual(launch.FALLBACK_COMPAT["pico8"], ("fake08", "retro8"))
+        with mock.patch.object(launch, "core_file", lambda core: "/cores/%s_libretro.so" % core):
+            self.assertEqual(launch.pick_core("pico8", {}, lambda sid: launch.FALLBACK_DEFAULT.get(sid, ""),
+                                              lambda sid, cores=None: list(launch.FALLBACK_COMPAT.get(sid, ()))),
+                             "fake08")
+
     def test_hidden_until_a_core_is_installed_and_offered_by_the_installer(self):
         systems = [(s[0], s[1], s[4]) for s in menu.ALL_SYSTEMS if s[2] == "retroarch"]
         self.assertIn("pico8", coreinstall.uncovered(systems, cores.SYSTEM_CORE_COMPATIBILITY, ["mgba"]))
@@ -48,7 +57,10 @@ class Pico8Tests(unittest.TestCase):
         self.assertEqual(menu.pretty("photo.png"), "photo")
         self.assertEqual(artwork.stem_of("/r/pico8/celeste.p8.png"), "celeste")
         self.assertEqual(artwork.stem_of("/r/pico8/celeste.p8"), "celeste")
-        self.assertEqual(load_launch().game_title("/r/pico8/celeste.p8.png"), "celeste")
+        launch = load_launch()
+        self.assertEqual(launch.game_title("/r/pico8/celeste.p8.png"), "celeste")
+        self.assertEqual(launch.game_title("/r/pico8/Celeste.P8.PNG"), "Celeste")
+        self.assertEqual(launch.game_title("/r/pico8/celeste.p8"), "celeste")
 
     def test_scan_lists_p8_and_p8_png_but_not_plain_png(self):
         root = tempfile.mkdtemp()

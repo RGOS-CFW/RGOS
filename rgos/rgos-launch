@@ -115,8 +115,8 @@ GC_RUN_SETTINGS = (
     ("audio_latency", "96"),
 )
 
-FALLBACK_DEFAULT = {"gba": "mgba", "gb": "gambatte", "gbc": "gambatte", "nes": "nestopia"}
-FALLBACK_COMPAT = {"gba": ("mgba",), "gb": ("gambatte", "mgba"), "gbc": ("gambatte", "mgba"), "nes": ("nestopia", "fceumm")}
+FALLBACK_DEFAULT = {"gba": "mgba", "gb": "gambatte", "gbc": "gambatte", "nes": "nestopia", "pico8": "fake08"}
+FALLBACK_COMPAT = {"gba": ("mgba",), "gb": ("gambatte", "mgba"), "gbc": ("gambatte", "mgba"), "nes": ("nestopia", "fceumm"), "pico8": ("fake08", "retro8")}
 
 
 def log(msg):
@@ -643,7 +643,12 @@ def consume_restart():
 
 
 def game_title(path):
-    return os.path.splitext(os.path.basename(path or ""))[0]
+    """Return a clean display title; PICO-8 PNG carts use a double extension (.p8.png)."""
+    name = os.path.basename(path or "")
+    title = os.path.splitext(name)[0]
+    if title.lower().endswith(".p8") and name.lower().endswith(".png"):
+        title = title[:-3]
+    return title
 
 
 def ra_verbose():
