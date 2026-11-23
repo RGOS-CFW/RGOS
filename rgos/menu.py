@@ -33,6 +33,7 @@ SYSTEMS = [("gba", "GBA", "retroarch", (".gba",), "Game Boy Advance"),
            ("segacd", "CD", "retroarch", (".cue", ".chd", ".iso", ".m3u", ".ccd"), "Sega CD / Mega-CD"),
            ("sega32x", "32X", "retroarch", (".32x", ".md", ".gen", ".smd", ".bin"), "Sega 32X"),
            ("segapico", "PICO", "retroarch", (".pico", ".bin"), "Sega Pico"),
+           ("n64", "N64", "retroarch", (".z64", ".n64", ".v64", ".u64", ".ndd"), "Nintendo 64"),
            ("dreamcast", "DC", "retroarch", (".cdi", ".gdi", ".chd", ".cue", ".m3u"), "Sega Dreamcast"),
            ("atari2600", "A26", "retroarch", (".a26", ".bin"), "Atari 2600"),
            ("atari5200", "A52", "retroarch", (".a52", ".bin", ".car"), "Atari 5200"),
@@ -505,7 +506,8 @@ CORE_NAMES = {"mgba": "mGBA", "gpsp": "gpSP", "vbam": "VBA-M", "gambatte": "Gamb
               "genesis_plus_gx": "Genesis Plus GX", "picodrive": "PicoDrive", "stella2014": "Stella 2014", "stella": "Stella",
               "atari800": "Atari800", "prosystem": "ProSystem", "mednafen_ngp": "Beetle NeoPop", "race": "RACE",
               "mednafen_wswan": "Beetle Cygne", "pcsx_rearmed": "PCSX ReARMed", "mednafen_psx": "Beetle PSX",
-              "mednafen_psx_hw": "Beetle PSX HW", "swanstation": "SwanStation", "dolphin": "Dolphin", "flycast": "Flycast", "fbneo": "FinalBurn Neo",
+              "mednafen_psx_hw": "Beetle PSX HW", "swanstation": "SwanStation", "dolphin": "Dolphin", "flycast": "Flycast", "mupen64plus_next": "Mupen64Plus-Next",
+              "parallel_n64": "ParaLLEl N64", "fbneo": "FinalBurn Neo",
               "mednafen_gba": "Beetle GBA", "mednafen_gb": "Beetle GB"}
 
 
@@ -1530,6 +1532,14 @@ def icon_sys_gc(c, cx, cy, col, bg):
     pygame.draw.line(c, bg, (cx, cy), (cx, cy + 34), 3)
     pygame.draw.circle(c, bg, (cx, cy - 16), 6)
     pygame.draw.circle(c, col, (cx, cy - 16), 2)
+
+
+def icon_sys_n64(c, cx, cy, col, bg):
+    # the console's "N" logo: two uprights joined by a diagonal, on a rounded tile
+    pygame.draw.rect(c, col, (cx - 36, cy - 30, 72, 60), border_radius=14)
+    pygame.draw.rect(c, bg, (cx - 21, cy - 18, 10, 36))
+    pygame.draw.rect(c, bg, (cx + 11, cy - 18, 10, 36))
+    pygame.draw.polygon(c, bg, [(cx - 21, cy - 18), (cx - 11, cy - 18), (cx + 21, cy + 18), (cx + 11, cy + 18)])
 
 
 def icon_sys_dreamcast(c, cx, cy, col, bg):
