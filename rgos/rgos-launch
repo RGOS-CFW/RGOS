@@ -45,7 +45,7 @@ N64_CORE_OPTIONS = (
     ("mupen64plus-rdp-plugin", "gliden64"),
     ("mupen64plus-rsp-plugin", "hle"),
     ("mupen64plus-43screensize", "320x240"),
-    ("mupen64plus-169screensize", "320x180"),
+    ("mupen64plus-169screensize", "640x360"),
     ("mupen64plus-aspect", "4:3"),
     ("mupen64plus-MultiSampling", "0"),
     ("mupen64plus-EnableN64DepthCompare", "False"),

@@ -49,6 +49,21 @@ class N64Tests(unittest.TestCase):
         self.assertEqual(launch.video_attempts("n64", d), ["vulkan"])
         self.assertIn("n64", launch.HEAVY_SYSTEMS)
 
+    def test_n64_core_options_use_supported_render_resolutions_and_safe_retry(self):
+        launch = load_launch()
+        d = tempfile.mkdtemp(prefix="rgos-n64-options-")
+        path = launch.core_options("n64", d, d)
+        with open(path) as f:
+            defaults = f.read()
+        self.assertIn('mupen64plus-43screensize = "320x240"', defaults)
+        self.assertIn('mupen64plus-169screensize = "640x360"', defaults)
+        self.assertNotIn('mupen64plus-169screensize = "320x180"', defaults)
+        safe_path = launch.core_options("n64", d, d, safe=True)
+        with open(safe_path) as f:
+            safe = f.read()
+        self.assertIn('mupen64plus-cpucore = "cached_interpreter"', safe)
+        self.assertIn('mupen64plus-EnableFBEmulation = "False"', safe)
+
     def test_scan_lists_roms_in_any_byte_order(self):
         root = tempfile.mkdtemp()
         os.makedirs(os.path.join(root, "roms", "n64"))
