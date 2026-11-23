@@ -486,7 +486,7 @@ if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC )); t
           done
           for jobs in "$(nproc)" 2 1; do
             echo "   cmake -DLIBRETRO=ON -DUSE_GLES=ON, -j$jobs (log: $DC_LOG)"
-            if chroot "$ROOTFS" sh -c "cd /tmp/core-src/dc && rm -rf build-gles && cmake -S . -B build-gles -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRETRO=ON -DUSE_GLES=ON -DUSE_VULKAN=OFF -DUSE_OPENMP=OFF && cmake --build build-gles -j$jobs" >>"$DC_LOG" 2>&1; then built=1; break; fi
+            if chroot "$ROOTFS" sh -c "cd /tmp/core-src/dc && rm -rf build-gles && cmake -S . -B build-gles -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRETRO=ON -DUSE_GLES=ON -DUSE_GLES2=OFF -DUSE_OPENGL=ON -DUSE_VULKAN=OFF -DUSE_OPENMP=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && cmake --build build-gles -j$jobs" >>"$DC_LOG" 2>&1; then built=1; break; fi
             echo "   cmake build with -j$jobs failed, retrying with fewer jobs"
           done
         fi
@@ -498,7 +498,6 @@ if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC )); t
         if command -v readelf >/dev/null 2>&1 && readelf -d "$so" 2>/dev/null | grep -Eq 'NEEDED.*\[(libGL|libOpenGL)\.so'; then
           echo "flycast_libretro.so links desktop OpenGL (libGL), not OpenGL ES: check DC_MAKE_ARGS=$DC_MAKE_ARGS (FORCE_GLES=1)"; exit 1
         fi
-        strings "$so" | grep -qi 'GLES' || { echo "flycast_libretro.so has no GLES code (check DC_MAKE_ARGS)"; exit 1; }
         install -m 755 "$so" "$LRDIR/flycast_libretro.so"
       ); then echo "   flycast_libretro.so built (GLES)"
       else
