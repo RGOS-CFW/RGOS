@@ -17,6 +17,7 @@ Older cards may still carry the stock `ROCKNIX` label on partition 1.
       roms/ports/           native ports and PortMaster
       bios/                 emulator BIOS files (see BIOS.md)
       cores/                RetroArch cores downloaded by Tools > Core Installer (see CORE-INSTALLER.md)
+      cores/standalone/     your own standalone emulator executables (a GLES `flycast` for Dreamcast, see SYSTEMS.md)
       saves/<system>/       in-game saves
       states/<system>/      save states
       screenshots/          RetroArch screenshots
@@ -24,6 +25,7 @@ Older cards may still carry the stock `ROCKNIX` label on partition 1.
       music/                your launcher music (searched recursively)
       update/               offline update .tar files (see UPDATES.md)
       config/retroarch.cfg  your own RetroArch overrides, appended last
+      config/flycast/       settings of the standalone Flycast (Dreamcast), see SYSTEMS.md
       rgos-data/            RG OS data, e.g. steamgriddb-key.txt
       favorites.txt         your favourites list
 
