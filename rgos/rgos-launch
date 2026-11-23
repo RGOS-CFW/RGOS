@@ -30,13 +30,44 @@ GC_VIDEO_DRIVERS = ("glcore", "gl")
 # The Debian RetroArch in the image is built against OpenGL ES: it has the drivers vulkan, gl (= GLES), sdl2 and null, and
 # NO "glcore". Pinning "glcore" only made RetroArch warn and fall back, so Dreamcast uses "gl" alone (the GLES driver).
 DC_VIDEO_DRIVERS = ("gl",)
-# Nintendo 64 (Mupen64Plus-Next, ParaLLEl N64) renders with OpenGL ES too: same single GLES driver as Dreamcast.
-N64_VIDEO_DRIVERS = ("gl",)
 # RetroArch prints this when a core asks for a desktop OpenGL context and the frontend is a GLES build. No video driver or
 # retry can fix it: the core itself has to be a GLES build (build.sh builds one).
 GL_MISMATCH = "compiled against OpenGLES"
+# N64 (mupen64plus_next, GLideN64) and Saturn (yabasanshiro) are hardware-rendered too: they get the same pinned GLES driver,
+# verbose logging (a quiet RetroArch left the Saturn failure with no log at all, only "code 1") and one retry with safe options.
 HW_VIDEO = {"gc": (GC_VIDEO_DRIVERS, "retroarch-gc-video.txt"), "dreamcast": (DC_VIDEO_DRIVERS, "retroarch-dc-video.txt"),
-            "n64": (N64_VIDEO_DRIVERS, "retroarch-n64-video.txt")}
+            "n64": (("gl",), "retroarch-n64-video.txt"), "saturn": (("gl",), "retroarch-saturn-video.txt")}
+# Core options per system, written to the run directory on every launch. Without them mupen64plus_next logged
+# "GET_VARIABLE ... Invalid value" for its GLideN64 options and then segfaulted in the GL driver right after the dynarec started.
+# Everything is the cheap, GLES-safe path for the Mali-G31: GLideN64, HLE RSP, 320x240, no MSAA, no shader cache, no threaded GL.
+N64_CORE_OPTIONS = (
+    ("mupen64plus-cpucore", "dynamic_recompiler"),
+    ("mupen64plus-rdp-plugin", "gliden64"),
+    ("mupen64plus-rsp-plugin", "hle"),
+    ("mupen64plus-43screensize", "320x240"),
+    ("mupen64plus-169screensize", "320x180"),
+    ("mupen64plus-aspect", "4:3"),
+    ("mupen64plus-MultiSampling", "0"),
+    ("mupen64plus-EnableN64DepthCompare", "False"),
+    ("mupen64plus-EnableShadersStorage", "False"),
+    ("mupen64plus-ThreadedRenderer", "False"),
+    ("mupen64plus-EnableFBEmulation", "False"),
+    ("mupen64plus-EnableCopyColorToRDRAM", "Off"),
+    ("mupen64plus-EnableCopyDepthToRDRAM", "Off"),
+    ("mupen64plus-EnableLODEmulation", "False"),
+    ("mupen64plus-BilinearMode", "standard"),
+    ("mupen64plus-EnableHWLighting", "False"),
+    ("mupen64plus-txFilterMode", "None"),
+    ("mupen64plus-txHiresEnable", "False"),
+)
+# Retry after a crash at start: interpreter instead of the ARM dynarec, nothing that touches the framebuffer.
+N64_SAFE_OPTIONS = (("mupen64plus-cpucore", "cached_interpreter"), ("mupen64plus-EnableFBEmulation", "False"))
+SATURN_BIOS = ("saturn_bios.bin", "sega_101.bin", "mpr-17933.bin", "mpr-18811-mx.ic1", "sega_100.bin")
+SATURN_CORE_OPTIONS = (("yabasanshiro_frameskip", "enabled"), ("yabasanshiro_force_hle_bios", "disabled"),
+                       ("yabasanshiro_resolution_mode", "original"), ("yabasanshiro_polygon_generation_mode", "cpu_tessellation"))
+SATURN_SAFE_OPTIONS = (("yabasanshiro_force_hle_bios", "enabled"), ("yabasanshiro_polygon_generation_mode", "triangles_using_perspective_correction"))
+CORE_OPTIONS_NAME = {"gc": "dolphin-options.cfg", "n64": "n64-options.cfg", "saturn": "saturn-options.cfg"}
+OPTION_PREFIX = {"gc": "dolphin_", "n64": "mupen64plus-", "saturn": "yabasanshiro_"}
 GC_OPTIONS_NAME = "dolphin-options.cfg"
 # Dolphin core options for the RG Rotate (Unisoc T618: 2x Cortex-A75 + 6x Cortex-A55, Mali-G52 MP2).
 # The GPU is the weak part, so everything stays at native resolution and the cheap-but-correct paths are used:
@@ -94,18 +125,7 @@ def system_of(path):
     return ""
 
 
-# Standalone emulators (programs, not libretro cores): pseudo-core name -> executable name. Same table as cores.STANDALONE.
-STANDALONE_BINS = {"flycast_standalone": "flycast"}
-STANDALONE_DIRS = os.environ.get("RGOS_STANDALONE_DIRS", "/usr/local/bin:/usr/bin:/opt/flycast:" + os.path.join(ROMS_ROOT, "cores", "standalone")).split(":")
-
-
 def core_file(core, dirs=None):
-    if core in STANDALONE_BINS:
-        for d in (STANDALONE_DIRS if dirs is None else dirs):
-            p = os.path.join(d, STANDALONE_BINS[core])
-            if os.path.isfile(p) and os.access(p, os.X_OK):
-                return p
-        return ""
     for d in (CORE_DIRS if dirs is None else dirs):
         p = os.path.join(d, core + "_libretro.so")
         if os.path.isfile(p):
@@ -229,13 +249,13 @@ def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, fo
     return "\n".join(lines) + "\n"
 
 
-def read_option_overrides(path):
-    """key = "value" lines of the user's own option file; anything that is not a dolphin_* option is ignored."""
+def read_option_overrides(path, prefix="dolphin_"):
+    """key = "value" lines of the user's own option file; anything that does not start with prefix is ignored."""
     out = {}
     try:
         with open(path, errors="replace") as f:
             for line in f:
-                m = re.fullmatch(r'\s*(dolphin_[a-z0-9_]+)\s*=\s*"?([^"\r\n]*?)"?\s*', line)
+                m = re.fullmatch(r'\s*(%s[A-Za-z0-9_-]+)\s*=\s*"?([^"\r\n]*?)"?\s*' % re.escape(prefix), line)
                 if m:
                     out[m.group(1)] = m.group(2)
     except OSError:
@@ -262,6 +282,34 @@ def gc_core_options(roms_root, run_dir, safe=False):
             f.write("".join('%s = "%s"\n' % kv for kv in sorted(opts.items())))
     except OSError as e:
         log("cannot write Dolphin core options %s: %s" % (path, e))
+        return ""
+    return path
+
+
+def saturn_has_bios(roms_root):
+    return any(os.path.isfile(os.path.join(roms_root, "bios", n)) for n in SATURN_BIOS)
+
+
+def core_options(sid, roms_root, run_dir, safe=False):
+    """Core options file for the N64 and Saturn cores (same precedence as the Dolphin one); "" if not writable."""
+    if sid == "n64":
+        opts, safe_opts = dict(N64_CORE_OPTIONS), N64_SAFE_OPTIONS
+    else:
+        opts, safe_opts = dict(SATURN_CORE_OPTIONS), SATURN_SAFE_OPTIONS
+        if not saturn_has_bios(roms_root):
+            safe = True  # no BIOS file in <ROMS>/bios: the core can only start with its built-in HLE BIOS
+            log("no Saturn BIOS in %s/bios; using the HLE BIOS (put saturn_bios.bin there for better compatibility)" % roms_root)
+    if safe:
+        opts.update(safe_opts)
+    name = CORE_OPTIONS_NAME[sid]
+    opts.update(read_option_overrides(os.path.join(roms_root, "config", name), OPTION_PREFIX[sid]))
+    path = os.path.join(run_dir, name)
+    try:
+        os.makedirs(run_dir, exist_ok=True)
+        with open(path, "w") as f:
+            f.write("".join('%s = "%s"\n' % kv for kv in sorted(opts.items())))
+    except OSError as e:
+        log("cannot write core options %s: %s" % (path, e))
         return ""
     return path
 
@@ -548,9 +596,7 @@ def consume_restart():
 
 
 def game_title(path):
-    name = os.path.basename(path or "")
-    stem = os.path.splitext(name)[0]
-    return stem[:-3] if stem.lower().endswith(".p8") and name.lower().endswith(".png") else stem
+    return os.path.splitext(os.path.basename(path or ""))[0]
 
 
 def ra_verbose():
@@ -595,7 +641,7 @@ def kernel_hints(n=40):
         out = subprocess.run(["dmesg"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
-    keep = [l for l in out.splitlines() if re.search(r"segfault|out of memory|oom|killed process|panfrost|mali|drm.*(error|fail)|retroarch|dolphin", l, re.I)]
+    keep = [l for l in out.splitlines() if re.search(r"segfault|out of memory|oom|killed process|panfrost|mali|drm.*(error|fail)|retroarch|dolphin|mupen|yaba", l, re.I)]
     return "\n".join(keep[-n:])
 
 
@@ -723,7 +769,6 @@ def call_native(cmd, prio=False, **kw):
 
 def launch_native(target):
     """Run a Linux port directly; no RetroArch core or emulator is involved."""
-    extra_env = {}
     target = os.path.abspath(target)
     if not os.path.isfile(target):
         show_error("RG OS: native port not found", target)
@@ -743,39 +788,13 @@ def launch_native(target):
             return 127
         cmd = [shell, fix_crlf(target)]
     else:
-        # Any native program: ELF binary of any name, or a shebang script. Handles cards without an execute bit,
-        # ports' own lib folders and 32-bit ARM (see nativebin.py).
-        try:
-            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-            import nativebin
-        except Exception as e:
-            nativebin = None
-            log("nativebin unavailable: %s" % e)
-        if nativebin is None:
-            if not os.access(target, os.X_OK):
-                show_error("RG OS: native port is not executable", target + "\nMake the binary executable or provide a .sh launcher.")
-                return 126
-            cmd = [target]
-        else:
-            pm_libs = [d for d in (os.path.join(ROMS_ROOT, "roms", "ports", "PortMaster", "libs"),) if os.path.isdir(d)]
-            pl = nativebin.plan(target, pm_libs, chmod=not os.environ.get("RGOS_NO_HW"))
-            if not pl["cmd"]:
-                show_error(pl["title"], pl["error"])
-                return 126
-            cmd = pl["cmd"]
-            if pl["note"]:
-                log(pl["note"])
-            extra_env = dict(pl["env"])
-            if not os.environ.get("RGOS_NO_HW"):
-                gone = nativebin.missing_libs(target, extra_lib_dirs=pm_libs)
-                if gone:
-                    show_error("RG OS: port is missing libraries", "%s\nPut them in a lib folder next to the port." % ", ".join(gone))
-                    return 127
+        if not os.access(target, os.X_OK):
+            show_error("RG OS: native port is not executable", target + "\nMake the binary executable or provide a .sh launcher.")
+            return 126
+        cmd = [target]
     os.makedirs(RUN_DIR, exist_ok=True)
     cwd = os.path.dirname(target)
     env = native_env(cwd=cwd)
-    if extra_env.get("LD_LIBRARY_PATH"):
-        env["LD_LIBRARY_PATH"] = extra_env["LD_LIBRARY_PATH"] + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
     link_roms_alias()
     os.makedirs(os.path.dirname(NATIVE_LOG) or ".", exist_ok=True)
     log("native port starting: %s (cwd=%s)" % (" ".join(cmd), cwd))
@@ -858,98 +877,6 @@ def save_native_report(what, cmd, rc, dt, cwd, stopped=False, boot_dir=None):
         log("cannot write rgos-native.txt: %s" % e)
 
 
-def link_bios_dir(link, bios):
-    """Make <link> a symlink to the BIOS folder.
-
-    Flycast creates an empty real <data dir>/data folder itself the first time it runs, so a game started before the
-    BIOS was copied to the card left that folder behind and the BIOS was never linked afterwards ("lexists" was true).
-    An empty folder or a link that points somewhere else is replaced; a folder that holds files is the user's own
-    setup and is left alone.
-    """
-    if os.path.islink(link):
-        if os.path.realpath(link) == os.path.realpath(bios):
-            return
-        os.unlink(link)
-    elif os.path.isdir(link):
-        try:
-            os.rmdir(link)  # only succeeds when it is empty
-        except OSError:
-            log("Flycast data folder %s is not empty: BIOS folder not linked" % link)
-            return
-    elif os.path.lexists(link):
-        return
-    os.symlink(bios, link)
-
-
-def standalone_env(sid, cwd=None):
-    """Environment for a standalone emulator: a native port's environment, with its settings kept on the ROMS card.
-
-    XDG_CONFIG_HOME / XDG_DATA_HOME point into <ROMS>/config, so the emulator's config and data survive updates (the
-    system image is read-only). The BIOS folder is linked into the emulator's data folder when there is one for it.
-    """
-    env = native_env(cwd=cwd)
-    conf = os.path.join(ROMS_ROOT, "config")
-    env["XDG_CONFIG_HOME"] = conf
-    env["XDG_DATA_HOME"] = os.path.join(conf, "data")
-    if sid == "dreamcast":
-        data = os.path.join(env["XDG_DATA_HOME"], "flycast")
-        bios = os.path.join(ROMS_ROOT, "bios", "dc")
-        try:
-            os.makedirs(data, exist_ok=True)
-            link = os.path.join(data, "data")  # flycast looks for dc_boot.bin / dc_flash.bin in <data dir>/data
-            if os.path.isdir(bios):
-                link_bios_dir(link, bios)
-        except OSError as e:
-            log("cannot prepare the Flycast data folder: %s" % e)
-    return env
-
-
-def launch_standalone(sid, core, path, content):
-    """Run a standalone emulator (Flycast for Dreamcast) on one game; no RetroArch is involved.
-
-    Same supervision as a native port: Select+Start hold stops it, output goes to rgos-native.log, an early failure is shown.
-    """
-    cwd = os.path.dirname(os.path.abspath(content)) or "/"
-    os.makedirs(RUN_DIR, exist_ok=True)
-    env = standalone_env(sid, cwd=cwd)
-    cmd = [path, os.path.abspath(content)]
-    os.makedirs(os.path.dirname(NATIVE_LOG) or ".", exist_ok=True)
-    log("standalone emulator starting: %s (cwd=%s)" % (" ".join(cmd), cwd))
-    hw = not os.environ.get("RGOS_NO_HW") or os.environ.get("RGOS_SYSFS")
-    saved = set_governor(perf_governor(sid)) if hw else {}
-    consume_restart()
-    set_game_flag(True, kind="native", title=game_title(content) or core)
-    started = time.monotonic()
-    try:
-        trim_log(NATIVE_LOG)
-        with open(NATIVE_LOG, "a") as out:
-            out.write("\n[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), " ".join(cmd)))
-            out.flush()
-            while True:
-                rc, stopped = call_native(cmd, prio=not os.environ.get("RGOS_NO_HW"), cwd=cwd, env=env,
-                                          stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
-                if not consume_restart():
-                    break
-                log("standalone emulator restarted from the in-game menu")
-                started = time.monotonic()
-    except OSError as e:
-        log("standalone emulator failed: %s" % e)
-        show_error("RG OS: %s failed to start" % core, str(e))
-        return 127
-    finally:
-        set_game_flag(False)
-        restore_governor(saved)
-    dt = time.monotonic() - started
-    log("%s exited rc=%s after %.1fs" % (core, rc, dt))
-    save_native_report(core, cmd, rc, dt, cwd, stopped)
-    if stopped:
-        log("%s was stopped by the Select+Start hold" % core)
-        return 0
-    if rc != 0 and dt < EARLY_FAIL_S:
-        show_error("RG OS: %s exited with an error (%s)" % (core, rc_text(rc)), "%s\nLog: %s" % (tail(NATIVE_LOG, 8), NATIVE_LOG))
-    return rc
-
-
 def launch_retroarch(sid, core, core_path, content):
     os.makedirs(RUN_DIR, exist_ok=True)
     make_dirs(sid, ROMS_ROOT)
@@ -965,13 +892,18 @@ def launch_retroarch(sid, core, core_path, content):
         os.makedirs("/tmp/retroarch", exist_ok=True)
     hw = not os.environ.get("RGOS_NO_HW") or os.environ.get("RGOS_SYSFS")
     attempts = video_attempts(sid)
-    if sid == "gc" and len(attempts) == 1:
+    if sid in ("gc", "n64", "saturn") and len(attempts) == 1:
         attempts = attempts + attempts  # a pinned driver still gets the safe-options retry
     history, rc, cmd = [], 0, []
     for n, video in enumerate(attempts):
-        gc_opts = gc_core_options(ROMS_ROOT, RUN_DIR, safe=n > 0) if sid == "gc" else None
+        if sid == "gc":
+            gc_opts = gc_core_options(ROMS_ROOT, RUN_DIR, safe=n > 0)
+        elif sid in ("n64", "saturn"):
+            gc_opts = core_options(sid, ROMS_ROOT, RUN_DIR, safe=n > 0)
+        else:
+            gc_opts = None
         if gc_opts and n > 0:
-            log("GameCube retry: Dolphin fastmem off, cached interpreter")
+            log("%s retry with safe core options" % sid)
         with open(cfg_run, "w") as f:
             f.write(run_config(sid, ROMS_ROOT, audio, idx, drv, font, video, gc_opts))
         cmd = build_command(core_path, content, ROMS_ROOT, cfg_run, verbose=True if sid in HW_VIDEO else None)
@@ -1141,9 +1073,6 @@ def main(argv):
         if not ok:
             show_error("RG OS: Dolphin data folder is not usable", why)
             return 0
-    if core in STANDALONE_BINS:
-        launch_standalone(sid, core, path, target)
-        return 0
     launch_retroarch(sid, core, path, target)
     return 0
 
