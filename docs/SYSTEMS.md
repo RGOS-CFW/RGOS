@@ -36,7 +36,7 @@ Files that start with `.` are ignored.
 
 ## Which cores ship in the image
 
-`build.sh` installs these Debian libretro packages: gambatte, mgba, snes9x, nestopia and beetle-wswan. It also builds, best effort, the PlayStation core (pcsx_rearmed), Genesis Plus GX, the Neo Geo Pocket core the three Atari cores (stella2014 for the 2600, atari800 for the 5200, prosystem for the 7800), Flycast and Mupen64Plus-Next from source, plus Dolphin on the RG Rotate. A failed source build is reported with a `!!` line and the image is built without that core.
+`build.sh` installs these Debian libretro packages: gambatte, mgba, snes9x, nestopia and beetle-wswan. It also builds, best effort, the PlayStation core (pcsx_rearmed), Genesis Plus GX, the Neo Geo Pocket core the three Atari cores (stella2014 for the 2600, atari800 for the 5200, prosystem for the 7800), Flycast, Mupen64Plus-Next and YabaSanshiro (Saturn) from source, plus Dolphin on the RG Rotate. A failed source build is reported with a `!!` line and the image is built without that core.
 
 Systems that the build does not provide a core for (for example Arcade/Neo Geo with FinalBurn Neo) only appear when you supply the core yourself: put a prebuilt aarch64 `<name>_libretro.so` in `cores/` before building, or install a Debian package with `EXTRA_PKGS` ([BUILDING.md](BUILDING.md)). The menu lists a system only when a compatible core is present.
 
@@ -48,7 +48,7 @@ Put ROMs in `roms/n64/` as `.z64`, `.n64` or `.v64` (any byte order works), or `
 
 ## Saturn
 
-Put discs in `roms/saturn/` (`.cue` with its `.bin` tracks next to it, `.chd`, `.iso`, `.mds`, or `.m3u` for multi-disc games). RG OS ships no Saturn core: install one from *Tools > Core Installer* (YabaSanshiro is the default and the best fit for ARM handhelds; Yabause and Beetle Saturn are alternatives) or drop a `<name>_libretro.so` into `cores/` on the ROMS card. The Saturn menu entry appears once a compatible core is present. The CPU and GPU clocks are pinned to `performance` while a game runs. BIOS files are listed in [BIOS.md](BIOS.md).
+Put discs in `roms/saturn/` (`.cue` with its `.bin` tracks next to it, `.chd`, `.iso`, `.mds`, or `.m3u` for multi-disc games). The image has exactly one Saturn core pre-installed, YabaSanshiro (the best fit for ARM handhelds), built by `build.sh` from `SATURN_REPO` (`SATURN_REPO=none` skips it, `SATURN_MAKE_DIR` / `SATURN_MAKE_ARGS` change the build, `SATURN_REQUIRED=1` stops the build when it fails). The alternatives, Yabause and Beetle Saturn, are not in the image: install them from *Tools > Core Installer*, or drop a `<name>_libretro.so` into `cores/` on the ROMS card, then pick one in *Settings > Emulators*. If the YabaSanshiro build fails, the image has no Saturn core and the Saturn menu entry stays hidden until you install one. The CPU and GPU clocks are pinned to `performance` while a game runs. BIOS files are listed in [BIOS.md](BIOS.md).
 
 ## Dreamcast
 
