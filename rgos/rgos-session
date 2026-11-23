@@ -89,6 +89,8 @@ fi
 if ! mountpoint -q /boot; then for d in /dev/mmcblk*p1; do [ -b "$d" ] && mount -t vfat "$d" /boot 2>/dev/null && break; done; fi
 python3 /opt/rgos/rgos-update boot 2>>/var/log/rgos-update.log
 [ $? -eq 10 ] && { sync; reboot -f; sleep 60; }
+# Restore the saved HDMI resolution cap after an update replaces extlinux.conf. The change applies next boot.
+python3 /opt/rgos/hdmictl.py boot >>/var/log/rgos-hdmi.log 2>&1
 fixperms
 # first-boot installer: an installer image carries /boot/rgos-payload; until /boot/rgos-installed.json exists the installer partitions the
 # card, unpacks PortMaster / the cores / the folder tree and asks for a reboot (it exits 0 when there is nothing to do). It opens on an

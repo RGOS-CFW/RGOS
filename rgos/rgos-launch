@@ -170,6 +170,14 @@ def alsa_device():
         return "default"
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import hdmictl
+        hdmi_audio = hdmictl.audio_device()
+        if hdmi_audio:
+            return hdmi_audio
+    except Exception as e:
+        log("HDMI audio detection unavailable (%s); using built-in audio" % e)
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import hwctl
         card = hwctl.audio_card()
         try:
@@ -225,6 +233,11 @@ def osd_font():
 def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, font="", video_driver=None, core_options=None):
     q = lambda p: '"%s"' % p
     lines = ['audio_device = %s' % q(audio_device)]
+    try:
+        import hdmictl
+        lines.extend(hdmictl.retroarch_lines())
+    except Exception as e:
+        log("HDMI RetroArch settings unavailable (%s)" % e)
     if font:
         lines.append('video_font_path = %s' % q(font))
     if joy_driver:

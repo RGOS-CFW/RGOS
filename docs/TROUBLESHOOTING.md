@@ -80,3 +80,7 @@ Power on shows three things in turn: U-Boot's `bootlogo.bmp`, then (until now) a
 * If the logo appears with red and blue swapped, the framebuffer is RGB-ordered rather than the usual BGR-ordered XRGB8888; tell the maintainers, and use `RGOS_INITRD` / the stock extlinux file as a stopgap.
 * U-Boot's own logo (the very first picture) is drawn by the bootloader from `bootlogo.bmp` on the FAT partition and is not controlled by RG OS: it must be an uncompressed 24-bit BMP at the panel's size ([SD-CARD-LAYOUT.md](SD-CARD-LAYOUT.md)).
 * An existing card needs the new `SYSTEM` and `rgos-initrd.cpio` (an offline update carries both); patch an old `extlinux.conf` with `python3 initramfs/patch-extlinux.py <extlinux.conf> /rgos-initrd.cpio` to get the quiet arguments.
+
+## Mini-HDMI output
+
+For H700 handheld HDMI setup, boot-time behavior, supported resolutions and troubleshooting, see [HDMI.md](HDMI.md). HDMI must be connected before power-on; live hot-plug switching is not supported.

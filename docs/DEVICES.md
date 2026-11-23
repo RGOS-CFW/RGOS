@@ -24,6 +24,7 @@ The running device is stored in `/etc/rgos-device`. Offline updates check it, an
 Notes:
 
 - The RG35XX SP's screen is 640x480, so it uses the same 720x540 menu layout and startup video as the RG35XX H.
+- Mini-HDMI output is supported on all three H700 models (RG34XXSP, RG35XX H and RG35XX SP); see [HDMI.md](HDMI.md).
 - The RG35XX SP has its own RetroArch config (`config/retroarch-rg35xxsp.cfg`) and input profile: the stick axes and L3/R3 are unbound, and fast-forward and rewind move to **Menu + Up** and **Menu + Down**. See [CONTROLS.md](CONTROLS.md).
 - Because the H700 image is MBR, there is no `uboot` partition and no SPL to flash on those consoles.
 - The Rotate boots Android from internal storage when the card's U-Boot cannot start Linux. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

@@ -15,6 +15,7 @@ RG OS is a Debian-based emulation distribution for Anbernic handhelds (RG34XXSP,
 | Learn the buttons and hotkeys | [CONTROLS.md](CONTROLS.md) |
 | Change the theme, launcher, splash or music | [LAUNCHERS-AND-THEMES.md](LAUNCHERS-AND-THEMES.md) and [SETTINGS.md](SETTINGS.md) |
 | Use Wi-Fi, Bluetooth or SSH / SFTP | [NETWORKING.md](NETWORKING.md) |
+| Connect a TV or monitor over mini-HDMI on an H700 handheld | [HDMI.md](HDMI.md) |
 | Flash the SPL on an RG Rotate | [RG-ROTATE-SPL.md](RG-ROTATE-SPL.md) |
 | Fix something that does not work | [TROUBLESHOOTING.md](TROUBLESHOOTING.md), [LOGS.md](LOGS.md), [FAQ.md](FAQ.md) |
 
@@ -25,6 +26,7 @@ RG OS is a Debian-based emulation distribution for Anbernic handhelds (RG34XXSP,
 - [PORTS.md](PORTS.md): native Linux ports and PortMaster
 - [CORE-INSTALLER.md](CORE-INSTALLER.md): download more RetroArch cores
 - [NES.md](NES.md), [GAMECUBE.md](GAMECUBE.md): system-specific notes
+- [HDMI.md](HDMI.md): H700 mini-HDMI setup, resolution, audio and troubleshooting
 - [UPDATES.md](UPDATES.md): offline `.tar` updates
 - [BUILDING.md](BUILDING.md): every build option in one place
 - [BUILD-WORKFLOW.md](BUILD-WORKFLOW.md): building in GitHub Actions

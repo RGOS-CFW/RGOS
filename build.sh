@@ -295,7 +295,7 @@ HERE_RGOS="$HERE/rgos"
 mkdir -p "$ROOTFS/opt/rgos" "$ROOTFS/etc/rgos" "$ROOTFS/var/lib/rgos" "$ROOTFS/var/log" "$ROOTFS/media/roms" "$ROOTFS/boot"
 mkdir -p "$ROOTFS/flash" "$ROOTFS/storage" "$ROOTFS/run" "$ROOTFS/tmp" "$ROOTFS/root"
 find "$HERE_RGOS" -maxdepth 1 -type f -exec cp {} "$ROOTFS/opt/rgos/" \;
-chmod 755 "$ROOTFS"/opt/rgos/rgos-* "$ROOTFS/opt/rgos/menu.py" "$ROOTFS/opt/rgos/wifictl.py" "$ROOTFS/opt/rgos/btctl.py" "$ROOTFS/opt/rgos/sshctl.py"
+chmod 755 "$ROOTFS"/opt/rgos/rgos-* "$ROOTFS/opt/rgos/menu.py" "$ROOTFS/opt/rgos/wifictl.py" "$ROOTFS/opt/rgos/btctl.py" "$ROOTFS/opt/rgos/sshctl.py" "$ROOTFS/opt/rgos/hdmictl.py"
 for f in usr/sbin/dropbear usr/bin/dropbearkey usr/lib/openssh/sftp-server usr/bin/bluetoothctl usr/bin/dbus-daemon sbin/mkfs.ext4 sbin/mkfs.exfat sbin/mkfs.vfat usr/sbin/sgdisk sbin/sfdisk usr/sbin/partx sbin/wpa_supplicant; do
   [[ -e "$ROOTFS/$f" || -e "$ROOTFS/usr/$f" ]] || echo "!! $f is missing from the image"
 done

@@ -27,3 +27,7 @@ Browse, copy, cut, paste, rename and delete files on the SD cards. Pasting into 
 ## Power
 
 *Power Off* in the home screen, or hold Select + Start from the launcher.
+
+## HDMI (H700 handhelds)
+
+Mini-HDMI output is available on the RG34XXSP, RG35XX H and RG35XX SP. Connect the display before powering on. The default output cap is 720p; change it over SSH with `python3 /opt/rgos/hdmictl.py set 720p` (or `480p`, `1080p`, `auto`), then reboot. See [HDMI.md](HDMI.md) for details.
