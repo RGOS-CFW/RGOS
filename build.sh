@@ -126,6 +126,13 @@ DC_MAKE_ARGS="${DC_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
 # N64_REQUIRED=1 makes a failed build stop the whole build instead of producing an image without Nintendo 64.
 N64_REPO="${N64_REPO:-https://github.com/libretro/mupen64plus-libretro-nx.git}"
 N64_MAKE_ARGS="${N64_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
+# Sega Saturn: exactly one core is pre-installed, YabaSanshiro (the one built for ARM handhelds). The other Saturn cores
+# (Yabause, Beetle Saturn) are not built into the image: they are offered by Tools > Core Installer.
+# SATURN_REPO=none skips it; SATURN_MAKE_DIR is the folder of the core's libretro Makefile inside the repo;
+# SATURN_MAKE_ARGS changes the make arguments; SATURN_REQUIRED=1 makes a failed build stop the whole build.
+SATURN_REPO="${SATURN_REPO:-https://github.com/libretro/yabasanshiro.git}"
+SATURN_MAKE_DIR="${SATURN_MAKE_DIR:-yabause/src/libretro}"
+SATURN_MAKE_ARGS="${SATURN_MAKE_ARGS:-platform=unix}"
 # Standalone Flycast (Dreamcast, started by RG OS itself instead of RetroArch): built from DC_REPO as an OpenGL ES program
 # and installed as /usr/local/bin/flycast. DC_STANDALONE=0 skips it; DC_SA_CMAKE_ARGS adds CMake arguments;
 # DC_SA_REQUIRED=1 makes a failed build stop the whole build.
@@ -390,7 +397,7 @@ if ls "$HERE"/cores/*_libretro.so >/dev/null 2>&1; then
   echo "==> Copying prebuilt cores from cores/"; cp "$HERE"/cores/*_libretro.so "$LRDIR/"
 fi
 [[ "$DEVICE" == "rg-rotate" ]] || rm -f "$LRDIR/dolphin_libretro.so"
-WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0; WANT_DC=0; WANT_N64=0; WANT_DCSA=0
+WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0; WANT_DC=0; WANT_N64=0; WANT_DCSA=0; WANT_SATURN=0
 [[ "$NGP_SRC" != none && ! -e "$LRDIR/mednafen_ngp_libretro.so" ]] && WANT_NGP=1
 [[ "$PSX_REPO" != none && ! -e "$LRDIR/pcsx_rearmed_libretro.so" ]] && WANT_PSX=1
 have_core() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so "$ROOTFS/usr/lib/libretro/$1"_libretro.so "$ROOTFS/usr/local/lib/libretro/$1"_libretro.so; do [[ -e "$f" ]] && return 0; done; return 1; }
@@ -399,10 +406,11 @@ have_core() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so "$
 [[ "$DC_REPO" != none && ! -e "$LRDIR/flycast_libretro.so" ]] && WANT_DC=1
 [[ "$DC_REPO" != none && "$DC_STANDALONE" == 1 && ! -x "$ROOTFS/usr/local/bin/flycast" && ! -x "$ROOTFS/usr/bin/flycast" ]] && WANT_DCSA=1
 [[ "$N64_REPO" != none && ! -e "$LRDIR/mupen64plus_next_libretro.so" ]] && ! have_core mupen64plus_next && WANT_N64=1
+[[ "$SATURN_REPO" != none && ! -e "$LRDIR/yabasanshiro_libretro.so" ]] && ! have_core yabasanshiro && WANT_SATURN=1
 [[ "$STELLA_REPO" != none ]] && ! have_core stella2014 && WANT_ATARI=1
 [[ "$ATARI800_REPO" != none ]] && ! have_core atari800 && WANT_ATARI=1
 [[ "$PROSYSTEM_REPO" != none ]] && ! have_core prosystem && WANT_ATARI=1
-if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC || WANT_N64 || WANT_DCSA )); then
+if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC || WANT_N64 || WANT_DCSA || WANT_SATURN )); then
   echo "==> Installing a compiler in the rootfs to build libretro cores"
   rm -rf "$ROOTFS/tmp/core-src"; mkdir -p "$ROOTFS/tmp/core-src"
   cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
@@ -599,6 +607,41 @@ KEEP
         [[ "${N64_REQUIRED:-0}" != 1 ]] || { echo "!! N64_REQUIRED=1: stopping" >&2; exit 1; }
       fi
     fi
+    if (( WANT_SATURN )); then
+      echo "==> Building the Sega Saturn core (yabasanshiro, the only pre-installed Saturn core)"
+      SATURN_LOG="$WORK/yabasanshiro-build.log"; : > "$SATURN_LOG"
+      if (
+        set -e
+        command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
+        rm -rf "$WORK/yabasanshiro"
+        git clone -q --depth 1 --recurse-submodules --shallow-submodules "$SATURN_REPO" "$WORK/yabasanshiro"
+        rm -rf "$ROOTFS/tmp/core-src/saturn"; cp -r "$WORK/yabasanshiro" "$ROOTFS/tmp/core-src/saturn"
+        for pkg in libgles-dev libegl-dev zlib1g-dev libpng-dev; do
+          chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg" >>"$SATURN_LOG" 2>&1 \
+            || echo "   (could not install $pkg, continuing)"
+        done
+        built=0
+        for jobs in "$(nproc)" 2 1; do
+          echo "   make -j$jobs $SATURN_MAKE_ARGS (log: $SATURN_LOG)"
+          if chroot "$ROOTFS" sh -c "cd /tmp/core-src/saturn/$SATURN_MAKE_DIR && make -f Makefile $SATURN_MAKE_ARGS -j$jobs" >>"$SATURN_LOG" 2>&1; then built=1; break; fi
+          echo "   make -j$jobs failed, retrying with fewer jobs"
+        done
+        (( built )) || { echo "yabasanshiro: make failed, last lines of $SATURN_LOG:"; tail -n 40 "$SATURN_LOG"; exit 1; }
+        so="$(find "$ROOTFS/tmp/core-src/saturn" -name yabasanshiro_libretro.so -type f | head -n1)"
+        [[ -n "$so" ]] || { echo "yabasanshiro: make finished but yabasanshiro_libretro.so was not produced (check SATURN_MAKE_DIR=$SATURN_MAKE_DIR SATURN_MAKE_ARGS=$SATURN_MAKE_ARGS, log: $SATURN_LOG)"; exit 1; }
+        # RetroArch in the image is a GLES build: a core that links desktop OpenGL dies at start, so refuse it here.
+        if command -v readelf >/dev/null 2>&1 && readelf -d "$so" 2>/dev/null | grep -Eq 'NEEDED.*\[(libGL|libOpenGL)\.so'; then
+          echo "yabasanshiro_libretro.so links desktop OpenGL (libGL), not OpenGL ES: check SATURN_MAKE_ARGS=$SATURN_MAKE_ARGS"; exit 1
+        fi
+        install -m 755 "$so" "$LRDIR/yabasanshiro_libretro.so"
+      ); then echo "   yabasanshiro_libretro.so built"
+      else
+        echo "!! could not build YabaSanshiro: Sega Saturn will have NO pre-installed core in this image (log: $SATURN_LOG)."
+        echo "!! Install a Saturn core from Tools > Core Installer on the device, or put a yabasanshiro_libretro.so in cores/ and rebuild."
+        rm -f "$LRDIR/yabasanshiro_libretro.so"
+        [[ "${SATURN_REQUIRED:-0}" != 1 ]] || { echo "!! SATURN_REQUIRED=1: stopping" >&2; exit 1; }
+      fi
+    fi
     if (( WANT_GC )); then
       echo "==> Building the GameCube core (Dolphin libretro, GameCube only in the menu; RG Rotate)"
       if chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git ca-certificates cmake ninja-build pkg-config \
@@ -658,6 +701,7 @@ done
 if [[ "$DEVICE" == "rg-rotate" && "$GC_REPO" != none ]]; then core_present dolphin || echo "!! dolphin_libretro.so is missing from the image: no GameCube on this build"; fi
 [[ "$DC_REPO" == none || "$DC_STANDALONE" != 1 || -x "$ROOTFS/usr/local/bin/flycast" || -x "$ROOTFS/usr/bin/flycast" ]] || echo "!! standalone flycast is missing from the image: Dreamcast will only offer the libretro Flycast core"
 [[ "$N64_REPO" == none ]] || core_present mupen64plus_next || echo "!! mupen64plus_next_libretro.so is missing from the image: no Nintendo 64 on this build"
+[[ "$SATURN_REPO" == none ]] || core_present yabasanshiro || echo "!! yabasanshiro_libretro.so is missing from the image: Sega Saturn needs a core from Tools > Core Installer"
 core_present mednafen_psx || core_present pcsx_rearmed || echo "!! no PlayStation core (neither pcsx_rearmed nor mednafen_psx) is in the image"
 [[ -x "$ROOTFS/usr/bin/retroarch" ]] || echo "!! retroarch is not in the image (package missing from $DEBIAN_SUITE?)"
 for a in reboot poweroff halt; do ln -sf /bin/busybox "$ROOTFS/sbin/$a"; done

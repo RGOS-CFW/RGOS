@@ -67,6 +67,7 @@ own Debian copyright file.
 | Flycast (`flycast`, Dreamcast; not bundled, downloaded on request by the Core Installer) | `libretro/flycast` from the libretro buildbot | GPL-2.0-only |
 | Flycast standalone (`flycast`, Dreamcast; built from `flyinghead/flycast`, started by RG OS without RetroArch) | built from `flyinghead/flycast` | GPL-2.0-only |
 | Mupen64Plus-Next (`mupen64plus_next`, Nintendo 64) | built from `libretro/mupen64plus-libretro-nx` | GPL-3.0 |
+| YabaSanshiro (`yabasanshiro`, Sega Saturn) | built from `libretro/yabasanshiro` | GPL-2.0-or-later |
 | Dolphin libretro (GameCube, RG Rotate only) | built from `libretro/dolphin` | GPL-2.0-or-later |
 
 Non-commercial cores (Snes9x, Genesis Plus GX) mean that **an RG OS image
