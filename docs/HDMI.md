@@ -36,6 +36,8 @@ python3 /opt/rgos/hdmictl.py set 720p
 
 Replace `720p` with `480p`, `1080p` or `auto`. A successful change to the boot configuration requires a restart. The tool updates the `APPEND` lines in `/boot/extlinux/extlinux.conf`, keeps a one-time backup named `extlinux.conf.pre-hdmi`, and stores the selected mode in `/var/lib/rgos/display.json`. The saved choice is reapplied during startup in case an OS update replaces the boot configuration.
 
+If `extlinux.conf` is missing or has no `APPEND` line, the tool reports a failure and saves nothing, rather than claiming the mode was applied.
+
 To inspect or reapply the saved setting:
 
 ```sh
