@@ -10,6 +10,9 @@ LOG = os.environ.get("RGOS_RA_LOG", "/var/log/rgos-retroarch.log")
 NATIVE_LOG = os.environ.get("RGOS_NATIVE_LOG", "/var/log/rgos-native.log")
 LAUNCH_LOG = os.environ.get("RGOS_LAUNCH_LOG", "/var/log/rgos-launch.log")
 CORE_DIRS = os.environ.get("RGOS_CORE_DIRS", "/usr/lib/libretro:/usr/lib/aarch64-linux-gnu/libretro:/usr/local/lib/libretro:" + os.path.join(ROMS_ROOT, "cores")).split(":")
+# Standalone emulators are executables, not *_libretro.so files. Keep their lookup separate.
+STANDALONE = {"flycast_standalone": "flycast"}
+STANDALONE_DIRS = os.environ.get("RGOS_STANDALONE_DIRS", "/usr/local/bin:/usr/bin:/opt/flycast:" + os.path.join(ROMS_ROOT, "cores", "standalone")).split(":")
 TTY = os.environ.get("RGOS_TTY", "/dev/tty1")
 SYS_INPUT = os.environ.get("RGOS_SYS_INPUT", "/sys/class/input")
 BOOT_DIR = os.environ.get("RGOS_BOOT_DIR", "/boot")
@@ -137,7 +140,21 @@ def system_of(path):
     return ""
 
 
+def standalone_file(core, dirs=None):
+    """Resolve a standalone emulator executable; never treat it as a libretro shared object."""
+    exe = STANDALONE.get(core)
+    if not exe:
+        return ""
+    for d in (STANDALONE_DIRS if dirs is None else dirs):
+        path = os.path.join(d, exe)
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return ""
+
+
 def core_file(core, dirs=None):
+    if core in STANDALONE:
+        return standalone_file(core)
     for d in (CORE_DIRS if dirs is None else dirs):
         p = os.path.join(d, core + "_libretro.so")
         if os.path.isfile(p):
@@ -760,6 +777,88 @@ def native_env(base=None, cwd=None):
     return env
 
 
+def standalone_env(sid, base=None, cwd=None):
+    """Environment for a standalone emulator, with persistent Flycast settings and the ROM-card BIOS.
+
+    Flycast stores its config/data under XDG paths. Keeping those on the ROM card makes settings survive
+    OS updates, while the BIOS link lets the standalone build use the same BIOS files as RetroArch.
+    """
+    env = native_env(base, cwd)
+    config_home = os.path.join(ROMS_ROOT, "config")
+    data_home = os.path.join(config_home, "data")
+    env["XDG_CONFIG_HOME"] = config_home
+    env["XDG_DATA_HOME"] = data_home
+    bios = os.path.join(ROMS_ROOT, "bios", "dc")
+    if os.path.isdir(bios):
+        link = os.path.join(data_home, "flycast", "data")
+        try:
+            os.makedirs(os.path.dirname(link), exist_ok=True)
+            if os.path.islink(link):
+                try:
+                    if os.path.realpath(link) == os.path.realpath(bios):
+                        return env
+                except OSError:
+                    pass
+                os.unlink(link)
+            elif os.path.isdir(link):
+                # Never discard user-supplied Flycast data. An empty directory is safe to replace.
+                if os.listdir(link):
+                    return env
+                os.rmdir(link)
+            elif os.path.lexists(link):
+                os.unlink(link)
+            os.symlink(bios, link)
+        except OSError as e:
+            log("cannot link Flycast BIOS data %s -> %s: %s" % (link, bios, e))
+    return env
+
+
+def launch_standalone(sid, core, executable, content):
+    """Run a standalone emulator directly, preserving the normal in-game controls and cleanup."""
+    if not executable or not os.path.isfile(executable) or not os.access(executable, os.X_OK):
+        show_error("RG OS: %s is not installed" % core, "Install the standalone emulator executable and try again.")
+        return 127
+    content = os.path.abspath(content)
+    cwd = os.path.dirname(content) or "."
+    cmd = [executable, content]
+    os.makedirs(RUN_DIR, exist_ok=True)
+    env = standalone_env(sid, cwd=cwd)
+    hw = not os.environ.get("RGOS_NO_HW") or os.environ.get("RGOS_SYSFS")
+    saved = set_governor(perf_governor(sid)) if hw else {}
+    consume_restart()
+    set_game_flag(True, kind="native", title=game_title(content))
+    started = time.monotonic()
+    rc, stopped = 127, False
+    try:
+        trim_log(NATIVE_LOG)
+        os.makedirs(os.path.dirname(NATIVE_LOG) or ".", exist_ok=True)
+        with open(NATIVE_LOG, "a") as out:
+            out.write("\n[%s] standalone %s: %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), core, " ".join(cmd)))
+            out.flush()
+            while True:
+                rc, stopped = call_native(cmd, prio=not os.environ.get("RGOS_NO_HW"), cwd=cwd, env=env,
+                                          stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
+                if not consume_restart():
+                    break
+                log("standalone emulator restarted from the in-game menu")
+                started = time.monotonic()
+    except OSError as e:
+        log("standalone emulator failed: %s" % e)
+        show_error("RG OS: %s failed to start" % core, str(e))
+        return 127
+    finally:
+        set_game_flag(False)
+        restore_governor(saved)
+    dt = time.monotonic() - started
+    save_native_report(core, cmd, rc, dt, cwd, stopped)
+    if stopped:
+        return 0
+    if rc != 0 and dt < EARLY_FAIL_S:
+        show_error("RG OS: %s exited with an error (%s)" % (core, rc_text(rc)),
+                   "%s\nLog: %s" % (tail(NATIVE_LOG, 8), NATIVE_LOG))
+    return rc
+
+
 def link_roms_alias():
     """PortMaster-style launchers look for /roms/ports; point /roms at the ROMS partition's roms folder."""
     src = os.path.join(ROMS_ROOT, "roms")
@@ -1134,6 +1233,9 @@ def main(argv):
     if gone:
         show_error("RG OS: %s cannot load, libraries missing" % core, "%s\nRebuild the image (see docs/GAMECUBE.md) or install them." % ", ".join(gone))
         save_report([], None, "", [RA_BIN, "-L", path, target], 127, (), path)
+        return 0
+    if core in STANDALONE:
+        launch_standalone(sid, core, path, target)
         return 0
     if core == "dolphin":
         ok, why = ensure_dolphin_sys(ROMS_ROOT)
