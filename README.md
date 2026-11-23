@@ -2,13 +2,14 @@
 
 RG OS is an open source Linux emulation distribution for retro handhelds built on top of Debian using the ROCKNIX kernel and Device Trees.
 
-| Device | Argument | SoC | Base image | Partition table |
-|---|---|---|---|---|
-| Anbernic RG34XXSP | `rg34xxsp` | Allwinner H700 | ROCKNIX-H700 (DDR4) | MBR |
-| Anbernic RG35XX H | `rg35xxh` | Allwinner H700 | ROCKNIX-H700 (DDR4) | MBR |
-| Anbernic RG35XX SP | `rg35xxsp` | Allwinner H700 | ROCKNIX-H700 (DDR4) | MBR |
-| Anbernic RG Rotate | `rg-rotate` | Unisoc T618 | ROCKNIX-T618 | GPT (`uboot` partition) |
-| MiniLoong Pocket 1 | `miniloong` | Rockchip RK3566 | AURKNIX-RK3566 (Specific) | MBR |
+# Guides
+| I want to… | Guide |
+|---|---|
+| Install RG OS | [Flash to an SD card](https://rgos-cfw.github.io/docs/install-guide.html) |
+| Check my device | [Supported devices](https://rgos-cfw.github.io/docs/devices.html) |
+| Check supported systems| [Supported systems](https://rgos-cfw.github.io/docs/systems.html) |
+| Update my device | [How to update](https://rgos-cfw.github.io/docs/updates.html) |
+| Add games | [How to add games](https://rgos-cfw.github.io/docs/add-games.html) |
 
 # Join the Discord!
 By joining our [Discord Server](https://discord.gg/PmQeRvpGa), you can help grow our community as well as chat with us, get support and much more.
