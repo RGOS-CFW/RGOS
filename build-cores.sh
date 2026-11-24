@@ -20,7 +20,7 @@ DC_MAKE_ARGS="${DC_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
 DC_SA_CMAKE_ARGS="${DC_SA_CMAKE_ARGS:-}"
 N64_REPO="${N64_REPO:-https://github.com/libretro/mupen64plus-libretro-nx.git}"
 N64_MAKE_ARGS="${N64_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
-SATURN_REPO="${SATURN_REPO:-https://github.com/libretro/yabasanshiro.git}"
+SATURN_REPO="${SATURN_REPO:-https://github.com/libretro/yabause.git}"; SATURN_BRANCH="${SATURN_BRANCH:-yabasanshiro}"   # the port is the "yabasanshiro" branch of libretro/yabause
 SATURN_MAKE_DIR="${SATURN_MAKE_DIR:-yabause/src/libretro}"; SATURN_MAKE_ARGS="${SATURN_MAKE_ARGS:-platform=unix}"
 PICO8_REPO="${PICO8_REPO:-https://github.com/jtothebell/fake-08.git}"; PICO8_ALT_REPO="${PICO8_ALT_REPO:-https://github.com/libretro/retro8.git}"
 PICO8_MAKE_DIR="${PICO8_MAKE_DIR:-platform/libretro}"; PICO8_MAKE_ARGS="${PICO8_MAKE_ARGS:-platform=unix}"
@@ -106,7 +106,7 @@ cp -L /etc/resolv.conf "$B/etc/resolv.conf"; mounts
 mkdir -p "$B/tmp/core-src"
 
 # helpers -----------------------------------------------------------------------------------------------------------------
-fetch() { rm -rf "$SRC/$1"; git clone -q --depth 1 --recurse-submodules --shallow-submodules "$2" "$SRC/$1"; rm -rf "$B/tmp/core-src/$1"; cp -r "$SRC/$1" "$B/tmp/core-src/$1"; }
+fetch() { rm -rf "$SRC/$1"; git clone -q --depth 1 ${3:+--branch "$3"} --recurse-submodules --shallow-submodules "$2" "$SRC/$1"; rm -rf "$B/tmp/core-src/$1"; cp -r "$SRC/$1" "$B/tmp/core-src/$1"; }
 # run a build command in the chroot, retrying with fewer jobs (big C++ projects get OOM-killed in small VMs); $1=log, $2=command with @J@ for the job count
 retry() { local log="$1" cmd="$2" j; for j in "$(nproc)" 2 1; do echo "   -j$j (log: $log)"; cx sh -c "${cmd//@J@/$j}" >>"$log" 2>&1 && return 0; echo "   -j$j failed, retrying with fewer jobs"; done; tail -n 40 "$log"; return 1; }
 no_desktop_gl() { readelf -d "$1" 2>/dev/null | grep -Eq 'NEEDED.*\[(libGL|libOpenGL)\.so' && { echo "$(basename "$1") links desktop OpenGL (libGL), not OpenGL ES"; return 1; } || return 0; }
@@ -140,7 +140,7 @@ build_n64() { local log="$LOGS/n64.log"; : > "$log"; apt_in libgles-dev libegl-d
   retry "$log" "cd /tmp/core-src/n64 && make -f Makefile $N64_MAKE_ARGS -j@J@"
   local so; so="$(find_so n64 mupen64plus_next_libretro.so)"; [[ -n "$so" ]] || { echo "mupen64plus_next_libretro.so was not produced"; return 1; }
   no_desktop_gl "$so"; take "$so" mupen64plus_next_libretro.so; }
-build_saturn() { local log="$LOGS/saturn.log"; : > "$log"; apt_in libgles-dev libegl-dev zlib1g-dev libpng-dev; fetch saturn "$SATURN_REPO"
+build_saturn() { local log="$LOGS/saturn.log"; : > "$log"; apt_in libgles-dev libegl-dev zlib1g-dev libpng-dev; fetch saturn "$SATURN_REPO" "$SATURN_BRANCH"
   retry "$log" "cd /tmp/core-src/saturn/$SATURN_MAKE_DIR && make -f Makefile $SATURN_MAKE_ARGS -j@J@"
   local so; so="$(find_so saturn yabasanshiro_libretro.so)"; [[ -n "$so" ]] || { echo "yabasanshiro_libretro.so was not produced"; return 1; }
   no_desktop_gl "$so"; take "$so" yabasanshiro_libretro.so; }
@@ -175,7 +175,7 @@ core_repo() { case "$1" in
 esac; }
 core_cfg() { case "$1" in   # everything besides the source that changes the result
   flycast) echo "$DC_MAKE_ARGS" ;; flycast-standalone) echo "$DC_SA_CMAKE_ARGS" ;; n64) echo "$N64_MAKE_ARGS" ;;
-  saturn) echo "$SATURN_MAKE_DIR $SATURN_MAKE_ARGS" ;; fake08) echo "$PICO8_MAKE_DIR $PICO8_MAKE_ARGS" ;; mame) echo "$MAME_MAKE_ARGS" ;;
+  saturn) echo "$SATURN_BRANCH $SATURN_MAKE_DIR $SATURN_MAKE_ARGS" ;; fake08) echo "$PICO8_MAKE_DIR $PICO8_MAKE_ARGS" ;; mame) echo "$MAME_MAKE_ARGS" ;;
 esac; }
 core_outputs() { case "$1" in
   ngp) echo mednafen_ngp_libretro.so ;; genesis) echo genesis_plus_gx_libretro.so ;; stella2014) echo stella2014_libretro.so ;;
@@ -185,9 +185,9 @@ core_outputs() { case "$1" in
   retro8) echo retro8_libretro.so ;; dolphin) echo "dolphin_libretro.so dolphin-Sys" ;; mame) echo mame_libretro.so ;;
 esac; }
 # current upstream revision: the HEAD commit of the git repo (what the shallow clone would get); for ngp, a hash of its source tarball
-core_rev() { local r; r="$(core_repo "$1")"
+core_rev() { local r; r="$(core_repo "$1")"; local ref=HEAD; [[ "$1" == saturn && -n "$SATURN_BRANCH" ]] && ref="refs/heads/$SATURN_BRANCH"
   if [[ "$1" == ngp ]]; then wget -q -O - "$r" 2>/dev/null | sha256sum | cut -d' ' -f1 | grep -v '^e3b0c44298fc1c14' || true
-  else timeout 60 git ls-remote "$r" HEAD 2>/dev/null | cut -f1 | head -n1 || true; fi; }
+  else timeout 60 git ls-remote "$r" "$ref" 2>/dev/null | cut -f1 | head -n1 || true; fi; }
 outputs_present() { local o; for o in $(core_outputs "$1"); do [[ -e "$OUTC/$o" ]] || return 1; done; }
 sig_of() { printf '%s\n' "$(core_repo "$1")" "$(core_cfg "$1")" "$DEBIAN_SUITE" "$2"; }
 # returns 0 = up to date (skip). Sets NEWREV/NEWSIG for stamp_write.

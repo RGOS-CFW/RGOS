@@ -141,9 +141,10 @@ N64_REPO="${N64_REPO:-https://github.com/libretro/mupen64plus-libretro-nx.git}"
 N64_MAKE_ARGS="${N64_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
 # Sega Saturn: exactly one core is pre-installed, YabaSanshiro (the one built for ARM handhelds). The other Saturn cores
 # (Yabause, Beetle Saturn) are not built into the image: they are offered by Tools > Core Installer.
-# SATURN_REPO=none skips it; SATURN_MAKE_DIR is the folder of the core's libretro Makefile inside the repo;
+# SATURN_REPO=none skips it; SATURN_BRANCH is the branch to clone (empty = the default branch); SATURN_MAKE_DIR is the folder of the core's libretro Makefile inside the repo;
 # SATURN_MAKE_ARGS changes the make arguments; SATURN_REQUIRED=1 makes a failed build stop the whole build.
-SATURN_REPO="${SATURN_REPO:-https://github.com/libretro/yabasanshiro.git}"
+SATURN_REPO="${SATURN_REPO:-https://github.com/libretro/yabause.git}"   # the libretro YabaSanshiro port lives on the "yabasanshiro" branch of libretro/yabause
+SATURN_BRANCH="${SATURN_BRANCH:-yabasanshiro}"
 SATURN_MAKE_DIR="${SATURN_MAKE_DIR:-yabause/src/libretro}"
 SATURN_MAKE_ARGS="${SATURN_MAKE_ARGS:-platform=unix}"
 # PICO-8 (fantasy console, `roms/pico8/`, .p8 and .p8.png carts): fake-08 (default) and retro8 are built as libretro cores; either
@@ -740,7 +741,7 @@ KEEP
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/yabasanshiro"
-        git clone -q --depth 1 --recurse-submodules --shallow-submodules "$SATURN_REPO" "$WORK/yabasanshiro"
+        git clone -q --depth 1 ${SATURN_BRANCH:+--branch "$SATURN_BRANCH"} --recurse-submodules --shallow-submodules "$SATURN_REPO" "$WORK/yabasanshiro"
         rm -rf "$ROOTFS/tmp/core-src/saturn"; cp -r "$WORK/yabasanshiro" "$ROOTFS/tmp/core-src/saturn"
         for pkg in libgles-dev libegl-dev zlib1g-dev libpng-dev; do
           chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg" >>"$SATURN_LOG" 2>&1 \
