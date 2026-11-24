@@ -3,6 +3,9 @@
 #   sudo ./build-cores.sh              build every core
 #   sudo ./build-cores.sh flycast      build one (several allowed: sudo ./build-cores.sh n64 psx)
 #   sudo ./build-cores.sh --list       list the names      |  --clean: wipe work/cores and work/cores-src
+#   sudo ./build-cores.sh --force [core...]   rebuild even if the core has no upstream update (also: FORCE=1)
+# A core is only rebuilt when its upstream source changed (new commit), its build settings changed (repo/make args/Debian suite)
+# or its output is missing. Otherwise it is skipped. State is kept in work/cores/.stamps/<core>.
 # Output: work/cores/*_libretro.so, work/cores/bin/flycast (standalone), work/cores/dolphin-Sys/, work/cores/deps/<name>.txt
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,18 +34,19 @@ MAME_MAKE_ARGS="${MAME_MAKE_ARGS:-SUBTARGET=mame PTR64=1 NOWERROR=1}"
 ALL=(ngp genesis stella2014 atari800 prosystem mame2003_plus psx flycast flycast-standalone n64 saturn fake08 retro8 dolphin)
 EXTRA=(mame)   # only built when named explicitly
 usage() { cat <<U
-usage: sudo ./build-cores.sh [--list | --clean | <core>...]
+usage: sudo ./build-cores.sh [--list | --clean | --force] [<core>...]
 cores: ${ALL[*]}  (+ ${EXTRA[*]}, explicit only)
 aliases: gen=genesis dc/dreamcast=flycast dcsa/flycast-sa=flycast-standalone mupen/n64=n64 yaba/yabasanshiro/saturn=saturn
          pico8=fake08+retro8 atari=stella2014+atari800+prosystem gc/gamecube=dolphin
 no argument builds everything (dolphin included: GameCube is only used by the rg-rotate build).
 U
 }
-want=()
+want=(); FORCE="${FORCE:-0}"
 for a in "$@"; do
   a="$(printf '%s' "$a" | tr 'A-Z_' 'a-z-')"; a="${a%_libretro.so}"; a="${a%-libretro.so}"
   case "$a" in
     -h|--help|help) usage; exit 0 ;;
+    --force|-f) FORCE=1 ;;
     --list) printf '%s\n' "${ALL[@]}"; exit 0 ;;
     --clean) rm -rf "$OUTC" "$SRC" "$LOGS"; echo "cleaned work/cores, work/cores-src, work/cores-logs"; exit 0 ;;
     all) want+=("${ALL[@]}") ;;
@@ -75,7 +79,8 @@ if [[ $EUID -ne 0 ]]; then
 fi
 need=(debootstrap git wget tar); [[ "$(uname -m)" == aarch64 ]] || need+=(qemu-aarch64-static)
 for t in "${need[@]}"; do command -v "$t" >/dev/null || { echo "Missing tool: $t"; echo "apt install debootstrap qemu-user-static binfmt-support git wget"; exit 1; }; done
-mkdir -p "$OUTC/bin" "$OUTC/deps" "$SRC" "$LOGS"
+STAMPS="$OUTC/.stamps"
+mkdir -p "$OUTC/bin" "$OUTC/deps" "$STAMPS" "$SRC" "$LOGS"
 
 mounts() { mountpoint -q "$B/proc" || { mount -t proc proc "$B/proc"; mount --bind /dev "$B/dev"; mount -t sysfs sys "$B/sys" 2>/dev/null || true; }; }
 unmounts() { set +e; for m in sys dev proc; do mountpoint -q "$B/$m" && umount -l "$B/$m"; done; }
@@ -160,13 +165,51 @@ build_dolphin() { local log="$LOGS/dolphin.log"; : > "$log"
   local so; so="$(find_so dolphin dolphin_libretro.so)"; [[ -n "$so" ]] || { echo "dolphin_libretro.so was not produced"; return 1; }
   take "$so" dolphin_libretro.so; rm -rf "$OUTC/dolphin-Sys"; cp -r "$B/tmp/core-src/dolphin/Data/Sys" "$OUTC/dolphin-Sys"; }
 
+# update check ------------------------------------------------------------------------------------------------------------
+# A core is skipped when its stamp (upstream revision + build settings) matches and its output files are still there.
+core_repo() { case "$1" in
+  ngp) echo "$NGP_SRC" ;; genesis) echo "$GENESIS_REPO" ;; stella2014) echo "$STELLA_REPO" ;; atari800) echo "$ATARI800_REPO" ;;
+  prosystem) echo "$PROSYSTEM_REPO" ;; mame2003_plus) echo "$MAME2003_REPO" ;; psx) echo "$PSX_REPO" ;;
+  flycast|flycast-standalone) echo "$DC_REPO" ;; n64) echo "$N64_REPO" ;; saturn) echo "$SATURN_REPO" ;;
+  fake08) echo "$PICO8_REPO" ;; retro8) echo "$PICO8_ALT_REPO" ;; dolphin) echo "$GC_REPO" ;; mame) echo "$MAME_REPO" ;;
+esac; }
+core_cfg() { case "$1" in   # everything besides the source that changes the result
+  flycast) echo "$DC_MAKE_ARGS" ;; flycast-standalone) echo "$DC_SA_CMAKE_ARGS" ;; n64) echo "$N64_MAKE_ARGS" ;;
+  saturn) echo "$SATURN_MAKE_DIR $SATURN_MAKE_ARGS" ;; fake08) echo "$PICO8_MAKE_DIR $PICO8_MAKE_ARGS" ;; mame) echo "$MAME_MAKE_ARGS" ;;
+esac; }
+core_outputs() { case "$1" in
+  ngp) echo mednafen_ngp_libretro.so ;; genesis) echo genesis_plus_gx_libretro.so ;; stella2014) echo stella2014_libretro.so ;;
+  atari800) echo atari800_libretro.so ;; prosystem) echo prosystem_libretro.so ;; mame2003_plus) echo mame2003_plus_libretro.so ;;
+  psx) echo pcsx_rearmed_libretro.so ;; flycast) echo flycast_libretro.so ;; flycast-standalone) echo bin/flycast ;;
+  n64) echo mupen64plus_next_libretro.so ;; saturn) echo yabasanshiro_libretro.so ;; fake08) echo fake08_libretro.so ;;
+  retro8) echo retro8_libretro.so ;; dolphin) echo "dolphin_libretro.so dolphin-Sys" ;; mame) echo mame_libretro.so ;;
+esac; }
+# current upstream revision: the HEAD commit of the git repo (what the shallow clone would get); for ngp, a hash of its source tarball
+core_rev() { local r; r="$(core_repo "$1")"
+  if [[ "$1" == ngp ]]; then wget -q -O - "$r" 2>/dev/null | sha256sum | cut -d' ' -f1 | grep -v '^e3b0c44298fc1c14' || true
+  else timeout 60 git ls-remote "$r" HEAD 2>/dev/null | cut -f1 | head -n1 || true; fi; }
+outputs_present() { local o; for o in $(core_outputs "$1"); do [[ -e "$OUTC/$o" ]] || return 1; done; }
+sig_of() { printf '%s\n' "$(core_repo "$1")" "$(core_cfg "$1")" "$DEBIAN_SUITE" "$2"; }
+# returns 0 = up to date (skip). Sets NEWREV/NEWSIG for stamp_write.
+up_to_date() { local c="$1"; NEWREV="$(core_rev "$c")"
+  if [[ -z "$NEWREV" ]]; then
+    if outputs_present "$c"; then echo "   could not check upstream for $c (offline?); keeping the existing build"; NEWSIG=""; return 0; fi
+    NEWSIG=""; return 1
+  fi
+  NEWSIG="$(sig_of "$c" "$NEWREV")"
+  outputs_present "$c" && [[ -f "$STAMPS/$c" ]] && [[ "$(cat "$STAMPS/$c")" == "$NEWSIG" ]]; }
+stamp_write() { [[ -n "${NEWSIG:-}" ]] && printf '%s\n' "$NEWSIG" > "$STAMPS/$1" || true; }
+
 # main --------------------------------------------------------------------------------------------------------------------
-ok=(); failed=()
+ok=(); failed=(); skipped=()
 for c in "${want[@]}"; do
+  if [[ "$FORCE" != 1 ]] && up_to_date "$c"; then echo "==> $c is up to date, not rebuilding (use --force to rebuild)"; skipped+=("$c"); continue; fi
+  if [[ "$FORCE" == 1 ]]; then NEWREV="$(core_rev "$c")"; NEWSIG=""; [[ -z "$NEWREV" ]] || NEWSIG="$(sig_of "$c" "$NEWREV")"; fi
   echo; echo "==> Building $c"
-  if ( set -e; "build_${c//-/_}" ); then echo "   $c OK"; ok+=("$c"); else echo "!! $c FAILED (logs in $LOGS)"; failed+=("$c"); fi
+  rm -f "$STAMPS/$c"
+  if ( set -e; "build_${c//-/_}" ); then stamp_write "$c"; echo "   $c OK"; ok+=("$c"); else echo "!! $c FAILED (logs in $LOGS)"; failed+=("$c"); fi
   rm -rf "$B/tmp/core-src/${c}" "$B/tmp/core-src/flycast-sa"
 done
-echo; echo "Built: ${ok[*]:-none}"; echo "Cores in $OUTC: $(ls "$OUTC" | grep -E '_libretro\.so$|^bin$|^dolphin-Sys$' | tr '\n' ' ')"
+echo; echo "Built: ${ok[*]:-none}   |   Up to date (skipped): ${skipped[*]:-none}"; echo "Cores in $OUTC: $(ls "$OUTC" | grep -E '_libretro\.so$|^bin$|^dolphin-Sys$' | tr '\n' ' ')"
 (( ${#failed[@]} == 0 )) || { echo "!! FAILED: ${failed[*]}" >&2; exit 1; }
 echo "Now run: sudo ./build.sh <device>   (it uses work/cores automatically)"
