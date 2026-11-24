@@ -263,7 +263,7 @@ class GameCubeLaunchTests(unittest.TestCase):
         self.assertEqual(len(seen), 2)
         self.assertIn('video_driver = "glcore"', seen[0])
         self.assertIn('video_driver = "gl"', seen[1])
-        report = open(os.path.join(d, "rgos-retroarch.txt")).read()
+        report = open(os.path.join(d, "logs", "rgos-retroarch.txt")).read()
         self.assertIn("earlier attempt 1", report)
         self.assertIn("SIGSEGV", report)
 

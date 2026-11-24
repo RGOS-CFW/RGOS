@@ -29,7 +29,7 @@ class DeviceWiringTests(unittest.TestCase):
         self.assertEqual(menu.CANVAS["rg35xxsp"], menu.CANVAS["rg35xxh"])
 
     def test_every_device_is_in_the_workflow_readme_and_update_docs(self):
-        wf, readme, upd = read(".github", "workflows", "build-rgos.yml"), read("README.md"), read("rgos", "rgos-update")
+        wf, readme, upd = read(".github", "workflows", "build-rgos.yml"), read("docs", "DEVICES.md"), read("rgos", "rgos-update")
         for dev in build_devices():
             self.assertIn("- %s" % dev, wf, dev)
             self.assertIn("`%s`" % dev, readme, dev)

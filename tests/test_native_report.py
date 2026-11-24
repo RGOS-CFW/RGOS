@@ -20,7 +20,7 @@ class NativeReportTests(unittest.TestCase):
         self.launch.LAUNCH_LOG = os.path.join(self.tmp, "launch.log")
 
     def report(self):
-        with open(os.path.join(self.boot, "rgos-native.txt")) as f:
+        with open(os.path.join(self.boot, "logs", "rgos-native.txt")) as f:
             return f.read()
 
     def test_report_lands_on_the_boot_partition_with_the_native_log(self):
