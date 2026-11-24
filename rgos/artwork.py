@@ -522,22 +522,6 @@ def find_game(key, title, override_id=None):
     return None
 
 
-def best_grid(key, game_id, shape):
-    """URL of the best-scored still image for game_id, or None."""
-    base = "/grids/game/%d?types=static&mimes=image/png,image/jpeg&nsfw=false&humor=false&epilepsy=false" % game_id
-    dims = SHAPES.get(shape, "")
-    tries = [base + "&dimensions=" + dims] if dims else []
-    tries.append(base)
-    for path in tries:
-        grids = api_get(path, key)
-        grids = [g for g in (grids or []) if isinstance(g, dict) and _cdn_ok(str(g.get("url", "")))]
-        if grids:
-            grids.sort(key=lambda g: (g.get("score") or 0), reverse=True)
-            return str(grids[0]["url"])
-        time.sleep(0.1)
-    return None
-
-
 def best_grid_info(key, game_id, shape):
     """The best-scored still image for game_id as SteamGridDB's dict (url, author, style, ...), or None."""
     base = "/grids/game/%d?types=static&mimes=image/png,image/jpeg&nsfw=false&humor=false&epilepsy=false" % game_id

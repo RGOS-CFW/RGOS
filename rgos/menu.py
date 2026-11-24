@@ -137,7 +137,8 @@ apply_theme(DEFAULT_THEME)
 
 
 def _mix(a, b, t):
-    return tuple(int(a[i] + (b[i] - a[i]) * t + 0.5) for i in range(3))
+    """Blend colour a toward b by t, clamped and truncating (uimotion.mix mirrors this)."""
+    return tuple(max(0, min(255, int(a[i] + (b[i] - a[i]) * t))) for i in range(3))
 
 
 def _lum(c):
@@ -673,11 +674,6 @@ def wrap(font, text, width):
     if cur:
         lines.append(cur)
     return lines[:4]
-
-
-def _mix(c, t, k):
-    return tuple(max(0, min(255, int(c[i] + (t[i] - c[i]) * k))) for i in range(3))
-
 
 class CFont:
     def __init__(self, font):
