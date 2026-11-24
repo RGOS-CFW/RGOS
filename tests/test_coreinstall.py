@@ -9,10 +9,15 @@ import zipfile
 
 from tests import helpers
 
+os.environ["RGOS_ARCH"] = "aarch64"   # these tests describe the handhelds; the x86_64 (Steam Deck) rules are in test_steamdeck.py
+
 menu = helpers.load_menu()
 sys.path.insert(0, helpers.RGOS)
 import coreinstall
+import importlib
 import cores
+
+coreinstall = importlib.reload(coreinstall)   # an earlier test module may have imported it with the real machine's rules
 
 MACHINE = coreinstall.ELF_MACHINE.get(platform.machine().lower(), 183)
 
