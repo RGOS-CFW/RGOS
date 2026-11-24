@@ -87,7 +87,6 @@ EV_FF, FF_RUMBLE = 0x15, 0x50
 UI_SET_ABSBIT = _IOW("U", 103, 4)
 UI_ABS_SETUP = _IOW("U", 4, 28)
 ANALOG_AXES = (0x00, 0x01, 0x03, 0x04)
-ACTIVE_AXES = ANALOG_AXES                    # narrowed to the left stick by "sticks": 1 in input-<device>.json (one-stick devices)
 LEFT_STICK_AXES = (0x00, 0x01)               # always present, so DPAD to joystick can drive them on any device
 ABS_X, ABS_Y = 0x00, 0x01
 ASTICK = 32767
@@ -284,7 +283,7 @@ def load_sticks():
             c, lo, hi = (float(x) for x in v)
         except (TypeError, ValueError):
             continue
-        if code in ACTIVE_AXES and lo < c < hi and min(c - lo, hi - c) >= 4:
+        if code in ANALOG_AXES and lo < c < hi and min(c - lo, hi - c) >= 4:
             cal[code] = (c, lo, hi)
     return cal
 
@@ -351,7 +350,7 @@ class Translator:
 
 
     def stick(self, code, value, rng):
-        if not self.analog or code not in ACTIVE_AXES:
+        if not self.analog or code not in ANALOG_AXES:
             return []
         cal = self.stick_cal.get(code)
         if cal:
@@ -754,7 +753,7 @@ class KeyProbe:
         if not self.on:
             return
         ax = {}
-        for c in ACTIVE_AXES:
+        for c in ANALOG_AXES:
             for x in srcs.values():
                 info = x.absinfo(c)
                 if info:
@@ -784,9 +783,6 @@ def run():
     legacy = spec == [RAW_NAME]
     translator = Translator(load_keymap(iconf), legacy=legacy, auto_map=bool(iconf.get("auto_map_buttons", True)))
     translator.analog = bool(iconf.get("analog", False))
-    global ACTIVE_AXES
-    if iconf.get("sticks") == 1:
-        ACTIVE_AXES = LEFT_STICK_AXES   # one physical stick: no right-stick axes are calibrated, published or probed
     if translator.analog:
         translator.stick_cal = load_sticks()
     if os.path.exists(SWAPAB):
@@ -796,8 +792,8 @@ def run():
         os.unlink(MAP_REPORT)
     except OSError:
         pass
-    log("hub config: sources %s, legacy codes %s, keymap entries %d, auto-map %s, analog sticks %s (%d axes calibrated, axes %s)" %
-        (spec, legacy, len(translator.keymap), translator.auto_map, translator.analog, len(translator.stick_cal), list(ACTIVE_AXES)))
+    log("hub config: sources %s, legacy codes %s, keymap entries %d, auto-map %s, analog sticks %s (%d axes calibrated)" %
+        (spec, legacy, len(translator.keymap), translator.auto_map, translator.analog, len(translator.stick_cal)))
 
     srcs = {}
     while not STOP and not srcs:
@@ -838,11 +834,21 @@ def run():
         except Exception as e:
             log("vibration feedback unavailable:", e)
     buzz = Buzzer(buzz_motor)
+    sleeper = pwr = None
+    try:
+        import suspend
+        pwr = suspend.PowerKeys()
+        pwr.scan()
+        sleeper = suspend.SleepManager(hwc, power_keys=pwr)
+        log("power key: %d device(s), suspend mode %s (real suspend %s)" % (len(pwr.fds), sleeper.mode, sleeper.real_suspend_ok()))
+    except Exception as e:
+        log("power-key suspend unavailable:", e)
+        sleeper = pwr = None
     djoy = DpadJoy(feedback=buzz.play)
     ufd, tries = None, 0
     while not STOP and ufd is None:
         try:
-            ufd = make_uinput(codes, ff=motor is not None, axes=ACTIVE_AXES if translator.analog else LEFT_STICK_AXES)
+            ufd = make_uinput(codes, ff=motor is not None, axes=ANALOG_AXES if translator.analog else LEFT_STICK_AXES)
         except OSError as e:
             tries += 1
             if tries == 1:
@@ -867,7 +873,7 @@ def run():
 
     probe_keys = KeyProbe()
     if translator.analog:
-        probe_keys.skip_axes = ACTIVE_AXES
+        probe_keys.skip_axes = ANALOG_AXES
     last_status, next_scan = 0.0, time.time() + 3.0
     try:
         while not STOP:
@@ -891,6 +897,8 @@ def run():
                     if added:
                         write_rules([x.name for x in srcs.values()])
                         udev_refresh()
+                if pwr is not None:
+                    pwr.scan()
             wait = 0.25
             if translator.analog:
                 probe_keys.sticks(srcs)
@@ -899,7 +907,18 @@ def run():
             if ff is not None:
                 wait = min(wait, ff.next_deadline())
             wait = min(wait, buzz.next_deadline(), djoy.next_deadline(time.monotonic()))
-            r, _, _ = select.select([x.fd for x in srcs.values()] + ([ufd] if ff is not None else []), [], [], wait)
+            r, _, _ = select.select([x.fd for x in srcs.values()] + ([ufd] if ff is not None else []) + (list(pwr.fds) if pwr else []), [], [], wait)
+            if pwr is not None and pwr.poll(r):
+                was_asleep = sleeper.asleep
+                if not was_asleep:
+                    rel = b"".join(EVFMT.pack(0, 0, EV_KEY, c, 0) for c in CANON_KEYS) + EVFMT.pack(0, 0, EV_SYN, 0, 0)
+                    try:
+                        os.write(ufd, rel)
+                    except OSError:
+                        pass
+                log("power key:", sleeper.toggle())
+                if sleeper.asleep != was_asleep or not sleeper.asleep:
+                    continue
             if ff is not None:
                 if ufd in r:
                     ff.service()
@@ -947,6 +966,8 @@ def run():
                 for t, c, v in extra:
                     out += EVFMT.pack(0, 0, t, c, v)
                 out += EVFMT.pack(0, 0, EV_SYN, 0, 0)
+            if sleeper is not None and sleeper.asleep:
+                out = bytearray()   # asleep: swallow every pad event until the next power press
             if out:
                 try:
                     os.write(ufd, bytes(out))
@@ -960,6 +981,10 @@ def run():
         return 0
     finally:
         try:
+            if sleeper is not None and sleeper.asleep:
+                sleeper.wake()
+            if pwr is not None:
+                pwr.close()
             buzz.close()
             if ff is not None:
                 ff.close()
