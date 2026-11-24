@@ -132,6 +132,9 @@ GC_REPO="${GC_REPO:-https://github.com/libretro/dolphin.git}"
 # OpenGL context, but RetroArch is compiled against OpenGLES"), so Flycast is built here as a GLES core. DC_REPO=none skips it.
 DC_REPO="${DC_REPO:-https://github.com/flyinghead/flycast.git}"
 DC_MAKE_ARGS="${DC_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
+# Compiler flags for every Flycast build (a Dreamcast emulator is CPU-bound on these SoCs: Cortex-A53/A55 class). -O3 plus
+# scheduling for an in-order/A55 core; override with DC_OPT="..." (e.g. add -flto, needs plenty of RAM when linking).
+DC_OPT="${DC_OPT:--O3 -mtune=cortex-a55 -fno-plt -fomit-frame-pointer}"
 # DC_BUILD=make|cmake forces one Flycast build system (default: Makefile if the tree has one, then CMake).
 # DC_REQUIRED=1 makes a failed Flycast build stop the whole build instead of producing an image without Dreamcast.
 # Nintendo 64: Mupen64Plus-Next is built here as a GLES core for the same reason as Flycast (RetroArch in the image is a GLES
@@ -620,7 +623,7 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
         if [[ "${DC_BUILD:-auto}" != cmake && -f "$ROOTFS/tmp/core-src/dc/Makefile" ]]; then
           for jobs in "$(nproc)" 2 1; do
             echo "   make -j$jobs $DC_MAKE_ARGS (log: $DC_LOG)"
-            if chroot "$ROOTFS" sh -c "cd /tmp/core-src/dc && make -f Makefile $DC_MAKE_ARGS -j$jobs" >>"$DC_LOG" 2>&1; then built=1; break; fi
+            if chroot "$ROOTFS" sh -c "export CFLAGS='$DC_OPT' CXXFLAGS='$DC_OPT'; cd /tmp/core-src/dc && make -f Makefile $DC_MAKE_ARGS -j$jobs" >>"$DC_LOG" 2>&1; then built=1; break; fi
             echo "   make -j$jobs failed, retrying with fewer jobs"
           done
         else
@@ -633,7 +636,7 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
           done
           for jobs in "$(nproc)" 2 1; do
             echo "   cmake -DLIBRETRO=ON -DUSE_GLES=ON, -j$jobs (log: $DC_LOG)"
-            if chroot "$ROOTFS" sh -c "cd /tmp/core-src/dc && rm -rf build-gles && cmake -S . -B build-gles -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRETRO=ON -DUSE_GLES=ON -DUSE_GLES2=OFF -DUSE_OPENGL=ON -DUSE_VULKAN=OFF -DUSE_OPENMP=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && cmake --build build-gles -j$jobs" >>"$DC_LOG" 2>&1; then built=1; break; fi
+            if chroot "$ROOTFS" sh -c "export CFLAGS='$DC_OPT' CXXFLAGS='$DC_OPT'; cd /tmp/core-src/dc && rm -rf build-gles && cmake -S . -B build-gles -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRETRO=ON -DUSE_GLES=ON -DUSE_GLES2=OFF -DUSE_OPENGL=ON -DUSE_VULKAN=OFF -DUSE_OPENMP=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && cmake --build build-gles -j$jobs" >>"$DC_LOG" 2>&1; then built=1; break; fi
             echo "   cmake build with -j$jobs failed, retrying with fewer jobs"
           done
         fi
@@ -673,7 +676,7 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
         built=0
         for jobs in "$(nproc)" 2 1; do
           echo "   cmake (standalone, GLES), -j$jobs (log: $DCSA_LOG)"
-          if chroot "$ROOTFS" sh -c "cd /tmp/core-src/dcsa && rm -rf build-sa && cmake -S . -B build-sa -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_GLES=ON -DUSE_GLES2=OFF -DUSE_OPENGL=ON -DUSE_VULKAN=OFF -DUSE_HOST_SDL=ON -DUSE_OPENMP=OFF -DUSE_DISCORD=OFF $DC_SA_CMAKE_ARGS && cmake --build build-sa -j$jobs" >>"$DCSA_LOG" 2>&1; then built=1; break; fi
+          if chroot "$ROOTFS" sh -c "export CFLAGS='$DC_OPT' CXXFLAGS='$DC_OPT'; cd /tmp/core-src/dcsa && rm -rf build-sa && cmake -S . -B build-sa -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_GLES=ON -DUSE_GLES2=OFF -DUSE_OPENGL=ON -DUSE_VULKAN=OFF -DUSE_HOST_SDL=ON -DUSE_OPENMP=OFF -DUSE_DISCORD=OFF $DC_SA_CMAKE_ARGS && cmake --build build-sa -j$jobs" >>"$DCSA_LOG" 2>&1; then built=1; break; fi
           echo "   cmake build with -j$jobs failed, retrying with fewer jobs"
         done
         (( built )) || { echo "flycast (standalone): build failed, last lines of $DCSA_LOG:"; tail -n 40 "$DCSA_LOG"; exit 1; }

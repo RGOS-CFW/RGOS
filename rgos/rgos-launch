@@ -81,8 +81,44 @@ SATURN_CORE_OPTIONS = (
 SATURN_SAFE_OPTIONS = (("yabasanshiro_force_hle_bios", "enabled"),)
 YABAUSE_CORE_OPTIONS = (("yabause_frameskip", "enabled"), ("yabause_numthreads", "2"))
 YABAUSE_SAFE_OPTIONS = (("yabause_force_hle_bios", "enabled"), ("yabause_numthreads", "1"))
-CORE_OPTIONS_NAME = {"gc": "dolphin-options.cfg", "n64": "n64-options.cfg", "saturn": "saturn-options.cfg"}
-OPTION_PREFIX = {"gc": "dolphin_", "n64": "mupen64plus-", "saturn": "yabasanshiro_"}
+# Dreamcast (Flycast libretro core; its options still use the old "reicast_" prefix). Tuned for the weak GLES GPUs
+# (Mali-G31 / Cortex-A53 class): native 640x480, threaded rendering so the emulated CPU and the GL thread overlap,
+# fast per-strip alpha sorting, no mipmaps / anisotropic / PVR2 filtering, GD-ROM fast loading, DSP off (the DSP JIT is
+# the main audio cost; a few games lose reverb-type effects) and the HLE BIOS only when no real BIOS is on the card.
+# Users can override any line in <ROMS>/config/flycast-options.cfg (lines must start with reicast_).
+DC_CORE_OPTIONS = (
+    ("reicast_internal_resolution", "640x480"),
+    ("reicast_threaded_rendering", "enabled"),
+    ("reicast_synchronous_rendering", "disabled"),
+    ("reicast_alpha_sorting", "per-strip (fast, least accurate)"),
+    ("reicast_mipmapping", "disabled"),
+    ("reicast_anisotropic_filtering", "off"),
+    ("reicast_pvr2_filtering", "disabled"),
+    ("reicast_texupscale", "1x"),
+    ("reicast_delay_frame_swapping", "disabled"),
+    ("reicast_enable_rttb", "disabled"),
+    ("reicast_widescreen_cheats", "disabled"),
+    ("reicast_gdrom_fast_loading", "enabled"),
+    ("reicast_enable_dsp", "disabled"),
+    ("reicast_per_content_vmus", "VMU A1"),
+    ("reicast_frame_skipping", "disabled"),
+    # Skips only frames the emulator is already too late for; this is the biggest single win when a game dips under 60.
+    ("reicast_auto_skip_frame", "some"),
+)
+# Retry after a crash at start: the one thing that can break a GLES driver is the threaded renderer.
+DC_SAFE_OPTIONS = (("reicast_threaded_rendering", "disabled"), ("reicast_synchronous_rendering", "enabled"),
+                   ("reicast_auto_skip_frame", "disabled"))
+DC_BIOS_FILES = ("dc/dc_boot.bin", "dc_boot.bin")
+# Same reasoning as GC_RUN_SETTINGS: Dreamcast often lands just under 60 fps, where plain vsync snaps to 30.
+DC_RUN_SETTINGS = (
+    ("video_adaptive_vsync", "true"),
+    ("video_max_swapchain_images", "3"),
+    ("video_hard_sync", "false"),
+    ("audio_latency", "96"),
+)
+CORE_OPTIONS_NAME = {"gc": "dolphin-options.cfg", "n64": "n64-options.cfg", "saturn": "saturn-options.cfg",
+                     "dreamcast": "flycast-options.cfg"}
+OPTION_PREFIX = {"gc": "dolphin_", "n64": "mupen64plus-", "saturn": "yabasanshiro_", "dreamcast": "reicast_"}
 GC_OPTIONS_NAME = "dolphin-options.cfg"
 # Dolphin core options for the RG Rotate (Unisoc T618: 2x Cortex-A75 + 6x Cortex-A55, Mali-G52 MP2).
 # The GPU is the weak part, so everything stays at native resolution and the cheap-but-correct paths are used:
@@ -275,6 +311,8 @@ def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, fo
         lines.append('video_driver = %s' % q(video_driver))
     if sid == "gc":
         lines += ['%s = %s' % (k, q(v)) for k, v in GC_RUN_SETTINGS]
+    elif sid == "dreamcast":
+        lines += ['%s = %s' % (k, q(v)) for k, v in DC_RUN_SETTINGS]
     if core_options:
         lines.append('core_options_path = %s' % q(core_options))
     if joy_index is not None:
@@ -337,7 +375,12 @@ def saturn_has_bios(roms_root, names=SATURN_HLE_BIOS):
 def core_options(sid, roms_root, run_dir, safe=False, core=None):
     """Write per-core options; defaults < safe retry < user overrides. Returns "" if no file can be written."""
     prefix = OPTION_PREFIX[sid]
-    if sid == "n64":
+    if sid == "dreamcast":
+        opts, safe_opts = dict(DC_CORE_OPTIONS), DC_SAFE_OPTIONS
+        if not any(os.path.isfile(os.path.join(roms_root, "bios", n)) for n in DC_BIOS_FILES):
+            opts["reicast_hle_bios"] = "enabled"
+            log("no dc_boot.bin in %s/bios; Flycast will use its HLE BIOS" % roms_root)
+    elif sid == "n64":
         opts, safe_opts = dict(N64_CORE_OPTIONS), N64_SAFE_OPTIONS
     elif sid == "saturn":
         core = core or "yabasanshiro"
@@ -1058,13 +1101,13 @@ def launch_retroarch(sid, core, core_path, content):
     hw = not os.environ.get("RGOS_NO_HW") or os.environ.get("RGOS_SYSFS")
     hw_video = sid in HW_VIDEO and not (sid == "saturn" and core == "mednafen_saturn")
     attempts = video_attempts(sid, core=core)
-    if sid in ("gc", "n64", "saturn") and len(attempts) == 1 and hw_video:
+    if sid in ("gc", "n64", "saturn", "dreamcast") and len(attempts) == 1 and hw_video:
         attempts = attempts + attempts  # a pinned driver still gets the safe-options retry
     history, rc, cmd = [], 0, []
     for n, video in enumerate(attempts):
         if sid == "gc":
             gc_opts = gc_core_options(ROMS_ROOT, RUN_DIR, safe=n > 0)
-        elif sid in ("n64", "saturn"):
+        elif sid in ("n64", "saturn", "dreamcast"):
             gc_opts = core_options(sid, ROMS_ROOT, RUN_DIR, safe=n > 0, core=core)
         else:
             gc_opts = None

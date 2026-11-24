@@ -17,6 +17,7 @@ PSX_REPO="${PSX_REPO:-https://github.com/libretro/pcsx_rearmed.git}"
 GC_REPO="${GC_REPO:-https://github.com/libretro/dolphin.git}"
 DC_REPO="${DC_REPO:-https://github.com/flyinghead/flycast.git}"
 DC_MAKE_ARGS="${DC_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
+DC_OPT="${DC_OPT:--O3 -mtune=cortex-a55 -fno-plt -fomit-frame-pointer}"
 DC_SA_CMAKE_ARGS="${DC_SA_CMAKE_ARGS:-}"
 N64_REPO="${N64_REPO:-https://github.com/libretro/mupen64plus-libretro-nx.git}"
 N64_MAKE_ARGS="${N64_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
@@ -146,14 +147,14 @@ build_saturn() { local log="$LOGS/saturn.log"; : > "$log"; apt_in libgles-dev li
   no_desktop_gl "$so"; take "$so" yabasanshiro_libretro.so; }
 build_flycast() { local log="$LOGS/flycast.log"; : > "$log"
   apt_in libgles-dev libegl-dev zlib1g-dev libcurl4-openssl-dev pkg-config libzip-dev libasound2-dev; fetch flycast "$DC_REPO"; local ok=0
-  if [[ -f "$B/tmp/core-src/flycast/Makefile" ]] && retry "$log" "cd /tmp/core-src/flycast && make -f Makefile $DC_MAKE_ARGS -j@J@"; then ok=1; fi
-  (( ok )) || retry "$log" "cd /tmp/core-src/flycast && rm -rf build-gles && cmake -S . -B build-gles -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRETRO=ON -DUSE_GLES=ON -DUSE_GLES2=OFF -DUSE_OPENGL=ON -DUSE_VULKAN=OFF -DUSE_OPENMP=OFF && cmake --build build-gles -j@J@"
+  if [[ -f "$B/tmp/core-src/flycast/Makefile" ]] && retry "$log" "export CFLAGS='$DC_OPT' CXXFLAGS='$DC_OPT'; cd /tmp/core-src/flycast && make -f Makefile $DC_MAKE_ARGS -j@J@"; then ok=1; fi
+  (( ok )) || retry "$log" "export CFLAGS='$DC_OPT' CXXFLAGS='$DC_OPT'; cd /tmp/core-src/flycast && rm -rf build-gles && cmake -S . -B build-gles -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRETRO=ON -DUSE_GLES=ON -DUSE_GLES2=OFF -DUSE_OPENGL=ON -DUSE_VULKAN=OFF -DUSE_OPENMP=OFF && cmake --build build-gles -j@J@"
   local so; so="$(find_so flycast flycast_libretro.so)"; [[ -n "$so" ]] || { echo "flycast_libretro.so was not produced"; return 1; }
   no_desktop_gl "$so"; take "$so" flycast_libretro.so; }
 build_flycast_standalone() { local log="$LOGS/flycast-standalone.log"; : > "$log"
   apt_in cmake ninja-build pkg-config libsdl2-dev libgles-dev libegl-dev libgbm-dev libdrm-dev zlib1g-dev libcurl4-openssl-dev libzip-dev libasound2-dev libpulse-dev
   fetch flycast-sa "$DC_REPO"
-  retry "$log" "cd /tmp/core-src/flycast-sa && rm -rf build-sa && cmake -S . -B build-sa -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_GLES=ON -DUSE_GLES2=OFF -DUSE_OPENGL=ON -DUSE_VULKAN=OFF -DUSE_HOST_SDL=ON -DUSE_OPENMP=OFF -DUSE_DISCORD=OFF $DC_SA_CMAKE_ARGS && cmake --build build-sa -j@J@"
+  retry "$log" "export CFLAGS='$DC_OPT' CXXFLAGS='$DC_OPT'; cd /tmp/core-src/flycast-sa && rm -rf build-sa && cmake -S . -B build-sa -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_GLES=ON -DUSE_GLES2=OFF -DUSE_OPENGL=ON -DUSE_VULKAN=OFF -DUSE_HOST_SDL=ON -DUSE_OPENMP=OFF -DUSE_DISCORD=OFF $DC_SA_CMAKE_ARGS && cmake --build build-sa -j@J@"
   local exe; exe="$(find "$B/tmp/core-src/flycast-sa/build-sa" -maxdepth 1 -name flycast -type f -perm -u+x | head -n1)"
   [[ -n "$exe" ]] || { echo "no flycast executable was produced"; return 1; }
   no_desktop_gl "$exe"; install -m 755 "$exe" "$OUTC/bin/flycast"; save_deps flycast-standalone "${exe#"$B"}"; }
