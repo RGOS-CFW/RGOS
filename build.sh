@@ -396,7 +396,7 @@ if [[ -d "$HERE/splash" ]]; then
   SPLASH_DEV="$DEVICE"
   # fall back to the RG35XX H splash only when there is no splash-rg35xxsp.* file of any type
   [[ "$DEVICE" == "rg35xxsp" ]] && ! compgen -G "$HERE/splash/splash-rg35xxsp.*" >/dev/null && SPLASH_DEV=rg35xxh
-  # the MiniLoong Pocket 1 panel is 4:3 like the RG35XX H: reuse its splash until a splash-miniloong.* file exists
+  # MiniLoong Pocket 1: splash-miniloong.* is 960x720 (native panel size); the RG35XX H splash is only a fallback if it is removed
   [[ "$DEVICE" == "miniloong" ]] && ! compgen -G "$HERE/splash/splash-miniloong.*" >/dev/null && SPLASH_DEV=rg35xxh
   for f in "$HERE"/splash/*; do
     [[ -e "$f" ]] || continue   # empty splash/ folder: the glob stays literal and cp would abort the build
