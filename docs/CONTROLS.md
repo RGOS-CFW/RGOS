@@ -11,6 +11,7 @@
 | Y | add or remove a favourite (in a game list) |
 | L / R | page up / down in long lists |
 | Select + Start (hold) | power off, from the launcher |
+| Power (short press) | suspend; press again to resume |
 
 The hint line at the bottom of each screen shows the buttons that work there. If A and B are reversed, turn on *Settings > Swap A / B buttons*. If other buttons are wrong, use *Settings > Map buttons*.
 
