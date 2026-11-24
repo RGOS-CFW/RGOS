@@ -41,7 +41,7 @@ load_mods() {
     done
 }
 load_mods $(grep -iE 'joypad|pwm|gpio-keys|evdev|uinput' $MODLIST | mod_names)
-load_mods $(grep -E '/drivers/gpu/drm/' $MODLIST | grep -iE 'panfrost|gpu-sched|drm_shmem|drm_kms|sun4i|sun8i|sun50i|sunxi' | mod_names)
+load_mods $(grep -E '/drivers/gpu/drm/' $MODLIST | grep -iE 'panfrost|gpu-sched|drm_shmem|drm_kms|sun4i|sun8i|sun50i|sunxi|rockchip|dw[-_]mipi|display-connector' | mod_names)
 AUDLOG=/var/log/rgos-audio-load.log
 audio_mod_names() {
     grep -E '/sound/|sprd|sc27|sc2730|agdsp|agcp|audcp|audio|mcdt|vbc|aw87|aw873|asoc|snd|codec|mailbox|i2s|iis|dmaengine|virt-dma' $MODLIST \
