@@ -1,0 +1,6 @@
+# Scripts run on the device (Linux): CRLF breaks '#!/bin/sh\r' and every shell line, so keep them LF.
+*.sh text eol=lf
+*.py text eol=lf
+rgos/* text eol=lf
+initramfs/init text eol=lf
+tools/* text eol=lf
