@@ -82,8 +82,8 @@ SYSTEM_CORE_COMPATIBILITY = {
     "gc": ("dolphin",),
     "ws": ("mednafen_wswan",),
     "wsc": ("mednafen_wswan",),
-    "arcade": ("fbneo",),
-    "neogeo": ("fbneo",),
+    "arcade": ("fbneo", "mame2003_plus", "mame"),
+    "neogeo": ("fbneo", "mame2003_plus", "mame"),
     "pico8": ("fake08", "retro8"),
 }
 

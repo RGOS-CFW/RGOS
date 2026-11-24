@@ -531,7 +531,7 @@ CORE_NAMES = {"mgba": "mGBA", "gpsp": "gpSP", "vbam": "VBA-M", "gambatte": "Gamb
               "atari800": "Atari800", "prosystem": "ProSystem", "mednafen_ngp": "Beetle NeoPop", "race": "RACE",
               "mednafen_wswan": "Beetle Cygne", "pcsx_rearmed": "PCSX ReARMed", "mednafen_psx": "Beetle PSX",
               "mednafen_psx_hw": "Beetle PSX HW", "swanstation": "SwanStation", "dolphin": "Dolphin", "flycast": "Flycast", "flycast_standalone": "Flycast (standalone)", "mupen64plus_next": "Mupen64Plus-Next",
-              "parallel_n64": "ParaLLEl N64", "fbneo": "FinalBurn Neo", "fake08": "fake-08", "retro8": "retro8",
+              "parallel_n64": "ParaLLEl N64", "fbneo": "FinalBurn Neo", "mame2003_plus": "MAME 2003-Plus", "mame": "MAME", "fake08": "fake-08", "retro8": "retro8",
               "yabasanshiro": "YabaSanshiro", "yabause": "Yabause", "mednafen_saturn": "Beetle Saturn",
               "mednafen_gba": "Beetle GBA", "mednafen_gb": "Beetle GB"}
 

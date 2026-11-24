@@ -162,6 +162,9 @@ DC_SA_CMAKE_ARGS="${DC_SA_CMAKE_ARGS:-}"
 STELLA_REPO="${STELLA_REPO:-https://github.com/libretro/stella2014-libretro.git}"
 ATARI800_REPO="${ATARI800_REPO:-https://github.com/libretro/libretro-atari800.git}"
 PROSYSTEM_REPO="${PROSYSTEM_REPO:-https://github.com/libretro/prosystem-libretro.git}"
+# Arcade: MAME 2003-Plus (the handheld-friendly MAME core) is built as an extra next to FinalBurn Neo. MAME2003_REPO=none skips it.
+# Full current MAME is too heavy to build here: use "sudo ./build-cores.sh mame".
+MAME2003_REPO="${MAME2003_REPO:-https://github.com/libretro/mame2003-plus-libretro.git}"
 [[ "$DEVICE" == "rg-rotate" ]] || GC_REPO=none
 RGOS_INITRD="${RGOS_INITRD:-1}"
 [[ "$RGOS_INITRD" == 0 || "$RGOS_INITRD" == 1 ]] || { echo "RGOS_INITRD must be 0 or 1" >&2; exit 1; }
@@ -505,7 +508,7 @@ if ls "$CORES_DIR"/*_libretro.so >/dev/null 2>&1 || [[ -x "$CORES_DIR/bin/flycas
   fi
 fi
 [[ "$DEVICE" == "rg-rotate" ]] || rm -f "$LRDIR/dolphin_libretro.so"
-WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0; WANT_DC=0; WANT_N64=0; WANT_DCSA=0; WANT_SATURN=0; WANT_FAKE08=0; WANT_RETRO8=0
+WANT_MAME=0; WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0; WANT_DC=0; WANT_N64=0; WANT_DCSA=0; WANT_SATURN=0; WANT_FAKE08=0; WANT_RETRO8=0
 [[ "$NGP_SRC" != none && ! -e "$LRDIR/mednafen_ngp_libretro.so" ]] && WANT_NGP=1
 [[ "$PSX_REPO" != none && ! -e "$LRDIR/pcsx_rearmed_libretro.so" ]] && WANT_PSX=1
 have_core() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so "$ROOTFS/usr/lib/libretro/$1"_libretro.so "$ROOTFS/usr/local/lib/libretro/$1"_libretro.so; do [[ -e "$f" ]] && return 0; done; return 1; }
@@ -518,9 +521,10 @@ have_core() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so "$
 [[ "$PICO8_REPO" != none && ! -e "$LRDIR/fake08_libretro.so" ]] && ! have_core fake08 && WANT_FAKE08=1
 [[ "$PICO8_ALT_REPO" != none && ! -e "$LRDIR/retro8_libretro.so" ]] && ! have_core retro8 && WANT_RETRO8=1
 [[ "$STELLA_REPO" != none ]] && ! have_core stella2014 && WANT_ATARI=1
+[[ "$MAME2003_REPO" != none ]] && ! have_core mame2003_plus && WANT_MAME=1
 [[ "$ATARI800_REPO" != none ]] && ! have_core atari800 && WANT_ATARI=1
 [[ "$PROSYSTEM_REPO" != none ]] && ! have_core prosystem && WANT_ATARI=1
-if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC || WANT_N64 || WANT_DCSA || WANT_SATURN || WANT_FAKE08 || WANT_RETRO8 )); then
+if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC || WANT_N64 || WANT_DCSA || WANT_SATURN || WANT_FAKE08 || WANT_RETRO8 )); then
   echo "==> Installing a compiler in the rootfs to build libretro cores"
   rm -rf "$ROOTFS/tmp/core-src"; mkdir -p "$ROOTFS/tmp/core-src"
   cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
@@ -548,6 +552,18 @@ if (( WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || WANT_DC || WA
         install -m 755 "$ROOTFS"/tmp/core-src/gen/genesis_plus_gx_libretro.so "$LRDIR/genesis_plus_gx_libretro.so"
       ); then echo "   genesis_plus_gx_libretro.so built"
       else echo "!! could not build Genesis Plus GX: Mega Drive / Master System / Game Gear / Sega CD will have no core (put a prebuilt genesis_plus_gx_libretro.so in cores/ and rebuild)"; fi
+    fi
+    if (( WANT_MAME )); then
+      echo "==> Building the arcade core (mame2003_plus)"
+      if (
+        set -e
+        rm -rf "$WORK/mame2003-plus"
+        git clone -q --depth 1 "$MAME2003_REPO" "$WORK/mame2003-plus"
+        cp -r "$WORK/mame2003-plus" "$ROOTFS/tmp/core-src/mame2003"
+        chroot "$ROOTFS" sh -c 'cd /tmp/core-src/mame2003 && make platform=unix -j"$(nproc)"'
+        install -m 755 "$ROOTFS"/tmp/core-src/mame2003/mame2003_plus_libretro.so "$LRDIR/mame2003_plus_libretro.so"
+      ); then echo "   mame2003_plus_libretro.so built"
+      else echo "!! could not build MAME 2003-Plus: arcade only has FinalBurn Neo (Core Installer) (put a prebuilt mame2003_plus_libretro.so in cores/ and rebuild)"; rm -f "$LRDIR/mame2003_plus_libretro.so"; fi
     fi
     if (( WANT_ATARI )); then
       # Atari 2600 (Stella 2014), 5200 (Atari800) and 7800 (ProSystem): small, plain-Makefile cores. Each one is built on its own,

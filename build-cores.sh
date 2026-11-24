@@ -24,11 +24,15 @@ PICO8_MAKE_DIR="${PICO8_MAKE_DIR:-platform/libretro}"; PICO8_MAKE_ARGS="${PICO8_
 STELLA_REPO="${STELLA_REPO:-https://github.com/libretro/stella2014-libretro.git}"
 ATARI800_REPO="${ATARI800_REPO:-https://github.com/libretro/libretro-atari800.git}"
 PROSYSTEM_REPO="${PROSYSTEM_REPO:-https://github.com/libretro/prosystem-libretro.git}"
+MAME2003_REPO="${MAME2003_REPO:-https://github.com/libretro/mame2003-plus-libretro.git}"
+MAME_REPO="${MAME_REPO:-https://github.com/libretro/mame.git}"   # current full MAME: huge (hours, 16 GB+ RAM under qemu), only built when named
+MAME_MAKE_ARGS="${MAME_MAKE_ARGS:-SUBTARGET=mame PTR64=1 NOWERROR=1}"
 
-ALL=(ngp genesis stella2014 atari800 prosystem psx flycast flycast-standalone n64 saturn fake08 retro8 dolphin)
+ALL=(ngp genesis stella2014 atari800 prosystem mame2003_plus psx flycast flycast-standalone n64 saturn fake08 retro8 dolphin)
+EXTRA=(mame)   # only built when named explicitly
 usage() { cat <<U
 usage: sudo ./build-cores.sh [--list | --clean | <core>...]
-cores: ${ALL[*]}
+cores: ${ALL[*]}  (+ ${EXTRA[*]}, explicit only)
 aliases: gen=genesis dc/dreamcast=flycast dcsa/flycast-sa=flycast-standalone mupen/n64=n64 yaba/yabasanshiro/saturn=saturn
          pico8=fake08+retro8 atari=stella2014+atari800+prosystem gc/gamecube=dolphin
 no argument builds everything (dolphin included: GameCube is only used by the rg-rotate build).
@@ -57,11 +61,13 @@ for a in "$@"; do
     retro8) want+=(retro8) ;;
     pico8) want+=(fake08 retro8) ;;
     dolphin|gc|gamecube) want+=(dolphin) ;;
+    mame2003|mame2003-plus|mame2003plus) want+=(mame2003_plus) ;;
+    mame|mame-full) want+=(mame) ;;
     *) echo "unknown core '$a'" >&2; usage >&2; exit 1 ;;
   esac
 done
 (( ${#want[@]} )) || want=("${ALL[@]}")
-mapfile -t want < <(printf '%s\n' "${ALL[@]}" | grep -Fxf <(printf '%s\n' "${want[@]}"))   # unique, in build order
+mapfile -t want < <(printf '%s\n' "${ALL[@]}" "${EXTRA[@]}" | grep -Fxf <(printf '%s\n' "${want[@]}"))   # unique, in build order
 
 if [[ $EUID -ne 0 ]]; then
   command -v sudo >/dev/null || { echo "ERROR: needs root (run as root or install sudo)" >&2; exit 1; }
@@ -117,6 +123,11 @@ build_stella2014() { simple_make stella2014 "$STELLA_REPO" stella2014_libretro.s
 build_atari800() { simple_make atari800 "$ATARI800_REPO" atari800_libretro.so; }
 build_prosystem() { simple_make prosystem "$PROSYSTEM_REPO" prosystem_libretro.so; }
 build_psx() { simple_make psx "$PSX_REPO" pcsx_rearmed_libretro.so -f Makefile.libretro; }
+build_mame2003_plus() { simple_make mame2003_plus "$MAME2003_REPO" mame2003_plus_libretro.so platform=unix; }
+build_mame() { local log="$LOGS/mame.log"; : > "$log"; apt_in python3 libasound2-dev; fetch mame "$MAME_REPO"
+  retry "$log" "cd /tmp/core-src/mame && make -f Makefile.libretro $MAME_MAKE_ARGS -j@J@"
+  local so; so="$(find_so mame 'mame*_libretro.so')"; [[ -n "$so" ]] || { echo "mame_libretro.so was not produced (log: $log)"; return 1; }
+  take "$so" mame_libretro.so; }
 build_retro8() { simple_make retro8 "$PICO8_ALT_REPO" retro8_libretro.so platform=unix; }
 build_fake08() { local log="$LOGS/fake08.log"; : > "$log"; fetch fake08 "$PICO8_REPO"
   retry "$log" "cd /tmp/core-src/fake08/$PICO8_MAKE_DIR && make $PICO8_MAKE_ARGS -j@J@"; take "$(find_so fake08 fake08_libretro.so)" fake08_libretro.so; }
