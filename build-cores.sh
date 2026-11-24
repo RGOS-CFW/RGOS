@@ -175,7 +175,7 @@ core_repo() { case "$1" in
   fake08) echo "$PICO8_REPO" ;; retro8) echo "$PICO8_ALT_REPO" ;; dolphin) echo "$GC_REPO" ;; mame) echo "$MAME_REPO" ;;
 esac; }
 core_cfg() { case "$1" in   # everything besides the source that changes the result
-  flycast) echo "$DC_MAKE_ARGS" ;; flycast-standalone) echo "$DC_SA_CMAKE_ARGS" ;; n64) echo "$N64_MAKE_ARGS" ;;
+  flycast) echo "$DC_MAKE_ARGS $DC_OPT" ;; flycast-standalone) echo "$DC_SA_CMAKE_ARGS $DC_OPT" ;; n64) echo "$N64_MAKE_ARGS" ;;
   saturn) echo "$SATURN_BRANCH $SATURN_MAKE_DIR $SATURN_MAKE_ARGS" ;; fake08) echo "$PICO8_MAKE_DIR $PICO8_MAKE_ARGS" ;; mame) echo "$MAME_MAKE_ARGS" ;;
 esac; }
 core_outputs() { case "$1" in
