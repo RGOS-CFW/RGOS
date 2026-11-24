@@ -475,6 +475,35 @@ fi
 if ls "$HERE"/cores/*_libretro.so >/dev/null 2>&1; then
   echo "==> Copying prebuilt cores from cores/"; cp "$HERE"/cores/*_libretro.so "$LRDIR/"
 fi
+# Cores compiled ahead of time by ./build-cores.sh (work/cores): used instead of building them again below.
+CORES_DIR="$HERE/work/cores"
+if ls "$CORES_DIR"/*_libretro.so >/dev/null 2>&1 || [[ -x "$CORES_DIR/bin/flycast" ]]; then
+  echo "==> Using the cores built by build-cores.sh ($CORES_DIR)"
+  cp "$CORES_DIR"/*_libretro.so "$LRDIR/" 2>/dev/null || true
+  [[ "$DEVICE" == "rg-rotate" ]] || rm -f "$LRDIR/dolphin_libretro.so"
+  if [[ -x "$CORES_DIR/bin/flycast" && "$DC_STANDALONE" == 1 ]]; then
+    mkdir -p "$ROOTFS/usr/local/bin"; install -m 755 "$CORES_DIR/bin/flycast" "$ROOTFS/usr/local/bin/flycast"
+  fi
+  if [[ "$DEVICE" == "rg-rotate" && -d "$CORES_DIR/dolphin-Sys" ]]; then
+    mkdir -p "$ROOTFS/usr/local/share/rgos/dolphin-emu"; rm -rf "$ROOTFS/usr/local/share/rgos/dolphin-emu/Sys"
+    cp -r "$CORES_DIR/dolphin-Sys" "$ROOTFS/usr/local/share/rgos/dolphin-emu/Sys"
+  fi
+  # runtime libraries the prebuilt cores link against (recorded by build-cores.sh)
+  CORE_DEPS=""
+  for f in "$CORES_DIR"/deps/*.txt; do
+    [[ -e "$f" ]] || continue
+    [[ "$(basename "$f")" == dolphin_libretro.txt && "$DEVICE" != "rg-rotate" ]] && continue
+    CORE_DEPS+=" $(cat "$f" | tr '\n' ' ')"
+  done
+  CORE_DEPS="$(printf '%s\n' $CORE_DEPS | sort -u | tr '\n' ' ')"
+  if [[ -n "${CORE_DEPS// }" ]]; then
+    echo "==> Installing the libraries the prebuilt cores need: $CORE_DEPS"
+    for pkg in $CORE_DEPS; do
+      chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg" >/dev/null 2>&1 \
+        && chroot "$ROOTFS" apt-mark manual "$pkg" >/dev/null 2>&1 || true
+    done
+  fi
+fi
 [[ "$DEVICE" == "rg-rotate" ]] || rm -f "$LRDIR/dolphin_libretro.so"
 WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0; WANT_DC=0; WANT_N64=0; WANT_DCSA=0; WANT_SATURN=0; WANT_FAKE08=0; WANT_RETRO8=0
 [[ "$NGP_SRC" != none && ! -e "$LRDIR/mednafen_ngp_libretro.so" ]] && WANT_NGP=1
