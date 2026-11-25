@@ -139,6 +139,12 @@ GC_CORE_OPTIONS = (
     ("dolphin_force_texture_filtering", "disabled"),
     ("dolphin_gpu_texture_decoding", "disabled"),
     ("dolphin_skip_dupe_frames", "enabled"),
+    # Accuracy features that cost CPU/GPU time and that almost no GameCube game needs.
+    ("dolphin_mmu", "disabled"),
+    ("dolphin_anisotropic_filtering", "1x"),
+    ("dolphin_load_custom_textures", "disabled"),
+    ("dolphin_widescreen", "disabled"),
+    ("dolphin_osd_enabled", "disabled"),
 )
 # Used on the retry after a game died right after starting: the one option that can crash a kernel it does not suit.
 # JIT64 and the DSP JIT only exist in x86-64 builds of Dolphin: asking an aarch64 core for them is what made games die at start.
@@ -152,6 +158,15 @@ GC_RUN_SETTINGS = (
     ("video_max_swapchain_images", "3"),
     ("video_hard_sync", "false"),
     ("audio_latency", "96"),
+    # Frontend features that burn CPU every frame for nothing here: rewind snapshots the whole emulated RAM,
+    # run-ahead runs the core twice, shaders and bilinear smoothing cost GPU time, a threaded video driver adds latency.
+    # A line in <ROMS>/config/retroarch.cfg still overrides any of these.
+    ("rewind_enable", "false"),
+    ("run_ahead_enabled", "false"),
+    ("video_shader_enable", "false"),
+    ("video_smooth", "false"),
+    ("video_frame_delay", "0"),
+    ("video_threaded", "false"),
 )
 
 FALLBACK_DEFAULT = {"gba": "mgba", "gb": "gambatte", "gbc": "gambatte", "nes": "nestopia", "pico8": "fake08"}
@@ -1285,6 +1300,16 @@ def launch_retroarch(sid, core, core_path, content):
                 "MESA_SHADER_CACHE_DIR": "/tmp/mesa-cache", "SDL_AUDIODRIVER": "dummy"})
     if not os.environ.get("RGOS_NO_HW"):
         os.makedirs("/tmp/retroarch", exist_ok=True)
+    if sid in HW_VIDEO and not os.environ.get("RGOS_NO_HW"):
+        # A shader cache that survives reboots: compiled GLES shaders (Dolphin's ubershaders especially) are what stutters
+        # on the first play. /tmp is RAM and is empty after every boot, so keep it on the ROMS partition.
+        try:
+            cache = os.path.join(ROMS_ROOT, "config", "mesa-cache")
+            os.makedirs(cache, exist_ok=True)
+            env["MESA_SHADER_CACHE_DIR"] = cache
+            env.setdefault("MESA_SHADER_CACHE_MAX_SIZE", "256M")
+        except OSError as e:
+            log("cannot use a persistent shader cache (%s); using /tmp" % e)
     hw = not os.environ.get("RGOS_NO_HW") or os.environ.get("RGOS_SYSFS")
     hw_video = sid in HW_VIDEO and not (sid == "saturn" and core == "mednafen_saturn")
     attempts = video_attempts(sid, core=core)
