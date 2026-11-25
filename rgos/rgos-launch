@@ -880,6 +880,100 @@ def write_port_env_hook(env, run_dir, native_log=None):
         return ""
 
 
+# Standalone Flycast: the same tuning as DC_CORE_OPTIONS, written into Flycast's own emu.cfg ([config] section, "key = value",
+# booleans yes/no). Flycast ignores keys it does not know, so a wrong name can never break a launch.
+# The tuned values are applied once per DC_TUNE_ID, so changes made later in Flycast's own menu stick; bump the id to
+# push new defaults. Lines in <ROMS>/config/flycast-standalone.cfg ("key = value") are applied on EVERY launch and win.
+DC_TUNE_ID = "1"
+DC_STANDALONE_OPTIONS = (
+    ("rend.Resolution", "480"),                 # native 640x480
+    ("rend.ThreadedRendering", "yes"),          # emulated CPU and GL thread overlap
+    ("rend.AlphaSortMode", "0"),                # per-strip: fastest, least accurate
+    ("rend.UseMipmaps", "no"),
+    ("rend.AnisotropicFiltering", "1"),
+    ("rend.TextureUpscale", "1"),
+    ("rend.DelayFrameSwapping", "no"),
+    ("rend.RenderToTextureBuffer", "no"),
+    ("rend.WideScreen", "no"),
+    ("pvr.AutoSkipFrame", "1"),                 # skip only frames that are already late
+    ("aica.DSPEnabled", "no"),                  # the DSP JIT is the main audio cost
+    ("Dynarec.Enabled", "yes"),
+    ("Dynarec.idleskip", "yes"),
+)
+
+
+def _ini_set(lines, section, key, value):
+    """Set key in [section] of an ini file held as a list of lines (adds the section / key when missing)."""
+    head = "[%s]" % section.lower()
+    start = next((i for i, l in enumerate(lines) if l.strip().lower() == head), None)
+    if start is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines += ["[%s]" % section, "%s = %s" % (key, value)]
+        return
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("[")), len(lines))
+    for i in range(start + 1, end):
+        k = lines[i].split("=", 1)[0].strip() if "=" in lines[i] else None
+        if k == key:
+            lines[i] = "%s = %s" % (key, value)
+            return
+    at = end
+    while at > start + 1 and not lines[at - 1].strip():
+        at -= 1
+    lines.insert(at, "%s = %s" % (key, value))
+
+
+def _read_overrides(path):
+    out = []
+    try:
+        with open(path) as f:
+            for raw in f:
+                raw = raw.strip()
+                if raw and raw[0] not in "#;[" and "=" in raw:
+                    k, v = raw.split("=", 1)
+                    if k.strip():
+                        out.append((k.strip(), v.strip()))
+    except OSError:
+        pass
+    return out
+
+
+def tune_flycast(config_home, roms_root):
+    """Write the RG OS performance settings into Flycast's emu.cfg. Never raises: a launch must not depend on it."""
+    try:
+        fdir = os.path.join(config_home, "flycast")
+        cfg, stamp = os.path.join(fdir, "emu.cfg"), os.path.join(fdir, ".rgos-tune")
+        os.makedirs(fdir, exist_ok=True)
+        try:
+            with open(cfg) as f:
+                lines = f.read().splitlines()
+        except OSError:
+            lines = []
+        try:
+            with open(stamp) as f:
+                first = f.read().strip() != DC_TUNE_ID
+        except OSError:
+            first = True
+        opts = list(DC_STANDALONE_OPTIONS) if first else []
+        opts += _read_overrides(os.path.join(roms_root, "config", "flycast-standalone.cfg"))
+        if not opts:
+            return
+        for k, v in opts:
+            _ini_set(lines, "config", k, v)
+        tmp = cfg + ".rgos-new"
+        with open(tmp, "w") as f:
+            f.write("\n".join(lines) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, cfg)
+        if first:
+            with open(stamp, "w") as f:
+                f.write(DC_TUNE_ID + "\n")
+        log("flycast standalone: applied %d settings (%s)" % (len(opts), "defaults + overrides" if first else "overrides"))
+    except OSError as e:
+        log("cannot tune standalone Flycast: %s" % e)
+
+
 def standalone_env(sid, base=None, cwd=None):
     """Environment for a standalone emulator, with persistent Flycast settings and the ROM-card BIOS.
 
@@ -891,6 +985,18 @@ def standalone_env(sid, base=None, cwd=None):
     data_home = os.path.join(config_home, "data")
     env["XDG_CONFIG_HOME"] = config_home
     env["XDG_DATA_HOME"] = data_home
+    if sid == "dreamcast":
+        tune_flycast(config_home, ROMS_ROOT)
+        # Mesa: threaded GL dispatch moves driver work off the emulation thread, and a shader cache that survives reboots
+        # removes most of the first-run stutter (the RetroArch core only gets a RAM cache in /tmp).
+        cache = os.path.join(config_home, "mesa-cache")
+        try:
+            os.makedirs(cache, exist_ok=True)
+            env.setdefault("MESA_SHADER_CACHE_DIR", cache)
+            env.setdefault("MESA_SHADER_CACHE_MAX_SIZE", "128M")
+        except OSError:
+            pass
+        env.setdefault("mesa_glthread", "true")
     bios = os.path.join(ROMS_ROOT, "bios", "dc")
     if os.path.isdir(bios):
         link = os.path.join(data_home, "flycast", "data")
