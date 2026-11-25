@@ -817,7 +817,55 @@ def native_env(base=None, cwd=None):
         env.update(portpad.env_for(env, RUN_DIR, ROMS_ROOT, cwd))
     except Exception as e:
         log("controller mapping unavailable: %s" % e)
+    env.setdefault("TAR_OPTIONS", "--no-same-owner")  # port tarballs carry the packer's uid; root on exFAT cannot chown
+    hook = write_port_env_hook(env, RUN_DIR)
+    if hook:
+        env["BASH_ENV"] = hook
     return env
+
+
+# One environment string may not exceed 128 KiB (MAX_ARG_STRLEN) or every exec() after it fails with E2BIG
+# ("Argument list too long"). PortMaster's control.txt exports SDL_GAMECONTROLLERCONFIG from its whole
+# gamecontrollerdb.txt when it cannot match this device, which is exactly what killed tee / gptokeyb /
+# pidof / systemctl in the GTA III launcher. bash runs BASH_ENV before a port's .sh, and its DEBUG trap
+# fires before every command, so an oversized variable is replaced by the RG OS pad mapping before the
+# next exec. Only shell builtins are used: nothing may exec while the environment is oversized.
+ENV_CLAMP_BYTES = 60000
+
+
+def write_port_env_hook(env, run_dir, native_log=None):
+    """Write <run_dir>/port-env.sh for BASH_ENV; returns its path, or '' when it cannot be written."""
+    mapping = (env.get("SDL_GAMECONTROLLERCONFIG") or "").strip()
+    if not mapping or len(mapping) > ENV_CLAMP_BYTES:
+        return ""
+    try:
+        os.makedirs(run_dir, exist_ok=True)
+        map_path = os.path.join(run_dir, "port-mapping.txt")
+        with open(map_path, "w") as f:
+            f.write(mapping + "\n")
+        prev = env.get("BASH_ENV") or ""
+        if prev == os.path.join(run_dir, "port-env.sh"):
+            prev = ""
+        lines = ["# RG OS: written by rgos-launch for every port run; keeps the environment exec-able.",
+                 '[ -n "%s" ] && [ -r "%s" ] && . "%s"' % (prev, prev, prev) if prev else ":",
+                 "__rgos_clamp() {",
+                 '  if [ "${#SDL_GAMECONTROLLERCONFIG}" -gt %d ]; then' % ENV_CLAMP_BYTES,
+                 '    echo "rgos: SDL_GAMECONTROLLERCONFIG was ${#SDL_GAMECONTROLLERCONFIG} bytes (limit 131072 per variable);'
+                 ' replaced by the RG OS pad mapping" >>"%s" 2>/dev/null' % (native_log or NATIVE_LOG),
+                 '    SDL_GAMECONTROLLERCONFIG=$(<"%s")' % map_path,
+                 "    export SDL_GAMECONTROLLERCONFIG",
+                 "  fi",
+                 "  return 0",
+                 "}",
+                 "trap __rgos_clamp DEBUG",
+                 ""]
+        hook = os.path.join(run_dir, "port-env.sh")
+        with open(hook, "w") as f:
+            f.write("\n".join(lines))
+        return hook
+    except OSError as e:
+        log("cannot write the port environment hook: %s" % e)
+        return ""
 
 
 def standalone_env(sid, base=None, cwd=None):
@@ -1078,6 +1126,9 @@ def save_native_report(what, cmd, rc, dt, cwd, stopped=False, boot_dir=None):
                 names = ["(%s)" % e]
             f.write("\n--- %s\n%s\n" % (cwd, "\n".join(names)))
             f.write("\n--- kernel messages (segfault / OOM / GPU)\n" + (kernel_hints() or "(none)\n"))
+            pm_log = os.path.join(cwd or "", "log.txt")
+            if os.path.isfile(pm_log):
+                f.write("\n--- %s (last 60 lines)\n%s" % (pm_log, tail(pm_log, 60) or "(empty)\n"))
             f.write("\n--- rgos-launch log (last 40 lines)\n" + (tail(LAUNCH_LOG, 40) or "(empty)\n"))
             f.write("\n--- native log (last 150 lines)\n" + (tail(NATIVE_LOG, 150) or "(empty: the port printed nothing)\n"))
         os.sync()

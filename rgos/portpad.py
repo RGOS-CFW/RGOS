@@ -21,6 +21,7 @@ INPUT_CONF = os.environ.get("RGOS_INPUT_CONF", "/etc/rgos/input.json")
 DEVICE_FILE = os.environ.get("RGOS_DEVICE_FILE", "/etc/rgos-device")
 USER_DB_NAME = "rgos-gamecontrollerdb.txt"
 MAX_USER_BYTES = 256 * 1024
+MAX_ENV_BYTES = 48 * 1024
 
 # SDL name -> hub button index. Positional like an Xbox pad: a = bottom, b = right, x = left, y = top.
 BUTTONS = (
@@ -146,7 +147,13 @@ def env_for(base_env, run_dir, roms_root, port_dir=None, conf=None):
     """
     extra = user_lines(*user_files(roms_root, port_dir))
     text = build_db(analog_enabled(conf), extra, stick_count(conf))
-    cfg = "\n".join(text.splitlines()[2:])  # drop the comment header, keep mapping + user lines
+    lines, cfg, size = text.splitlines()[2:], [], 0  # drop the comment header, keep mapping + user lines
+    for line in lines:  # one env string over 128 KiB makes every exec() fail with E2BIG; the file keeps all lines
+        size += len(line) + 1
+        if cfg and size > MAX_ENV_BYTES:
+            break
+        cfg.append(line)
+    cfg = "\n".join(cfg)
     existing = (base_env.get("SDL_GAMECONTROLLERCONFIG") or "").strip()
     env = {"SDL_GAMECONTROLLERCONFIG": cfg + ("\n" + existing if existing else "")}
     path = write_db(run_dir, text)

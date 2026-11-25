@@ -136,5 +136,19 @@ class LauncherTests(unittest.TestCase):
         self.assertIn(portpad.sdl_guid(), env["SDL_GAMECONTROLLERCONFIG"])
 
 
+class EnvSizeTests(unittest.TestCase):
+    def test_a_huge_user_db_cannot_push_the_env_var_past_the_exec_limit(self):
+        roms = tempfile.mkdtemp(prefix="rgos-roms-")
+        os.makedirs(os.path.join(roms, "ports"))
+        with open(os.path.join(roms, "ports", portpad.USER_DB_NAME), "w") as f:
+            for i in range(3000):
+                f.write("%032x,Pad %d,a:b0,b:b1,platform:Linux\n" % (i, i))
+        env = portpad.env_for({}, tempfile.mkdtemp(prefix="rgos-run-"), roms)
+        self.assertLess(len(env["SDL_GAMECONTROLLERCONFIG"]), portpad.MAX_ENV_BYTES + 200)
+        self.assertIn(portpad.sdl_guid(), env["SDL_GAMECONTROLLERCONFIG"])
+        with open(env["SDL_GAMECONTROLLERCONFIG_FILE"]) as f:
+            self.assertGreater(len(f.read()), portpad.MAX_ENV_BYTES)  # the file keeps every line
+
+
 if __name__ == "__main__":
     unittest.main()

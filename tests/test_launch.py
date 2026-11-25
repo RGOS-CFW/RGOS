@@ -1,6 +1,7 @@
 import importlib.machinery
 import importlib.util
 import os
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -341,3 +342,30 @@ class GameCubeLaunchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PortEnvTests(unittest.TestCase):
+    """An oversized SDL_GAMECONTROLLERCONFIG makes every later exec() fail with E2BIG (seen in GTA III)."""
+
+    def setUp(self):
+        self.launch = load_launch()
+        self.run = tempfile.mkdtemp(prefix="rgos-portenv-")
+        self.launch.RUN_DIR = self.run
+        self.launch.NATIVE_LOG = os.path.join(self.run, "native.log")
+
+    def test_hook_clamps_an_oversized_controller_config(self):
+        env = self.launch.native_env({"RGOS_NO_HW": "1", "PATH": "/usr/bin:/bin"})
+        self.assertEqual(env["BASH_ENV"], os.path.join(self.run, "port-env.sh"))
+        script = os.path.join(self.run, "port.sh")
+        with open(script, "w") as f:
+            f.write('export SDL_GAMECONTROLLERCONFIG="$(head -c 200000 /dev/zero | tr \'\\0\' a)"\n'
+                    '/usr/bin/env true && echo "len=${#SDL_GAMECONTROLLERCONFIG}"\n')
+        out = subprocess.run(["bash", script], env=env, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertLess(int(out.stdout.split("len=")[1]), 60000)
+        with open(self.launch.NATIVE_LOG) as f:
+            self.assertIn("replaced by the RG OS pad mapping", f.read())
+
+    def test_tar_ignores_the_packers_owner(self):
+        env = self.launch.native_env({"RGOS_NO_HW": "1"})
+        self.assertEqual(env["TAR_OPTIONS"], "--no-same-owner")
