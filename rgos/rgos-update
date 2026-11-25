@@ -105,6 +105,15 @@ def partitions():
     return ["/dev/" + n for n in sorted(cand, key=_natural) if n not in skip]
 
 
+def umount(mp):
+    """Unmount a mount point this script made. A mount that stays behind (read-only ROMS) makes the session's own read-write mount of
+    the same partition fail later, so fall back to a lazy unmount and say so in the log."""
+    rc, out = sh(["umount", mp])
+    if rc != 0:
+        log("umount %s failed (%s): trying a lazy unmount" % (mp, out.strip()))
+        sh(["umount", "-l", mp])
+
+
 def mounted_at(dev):
     try:
         with open("/proc/mounts") as f:
@@ -202,7 +211,7 @@ def find_update(parts):
         if found:
             return found
         if ours:
-            sh(["umount", mp])
+            umount(mp)
     return None
 
 
@@ -572,31 +581,34 @@ def cmd_boot():
         pass
     say("RG OS update: %s" % base)
     result, rc, suffix = "", 0, ".failed"
-    if not boot:
-        result = "no RG OS boot partition found"
-    else:
-        try:
-            status, uid = apply_tar(tar, boot[0])
-            suffix = ".applied"
-            if status == "same":
-                result = "build %s is already installed - skipped" % uid
-            else:
-                result, rc = "build %s installed" % uid, 10
-        except UpdateError as e:
-            result = "FAILED: %s" % e
-        except OSError as e:
-            result = "FAILED: %s" % e
-    say("RG OS update: " + result)
-    sh(["mount", "-o", "remount,rw", mp])
-    _mark(tar, suffix)
     try:
-        with open(os.path.join(upd, "rgos-update.log"), "a") as f:
-            f.write("%s %s: %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), base, result))
-    except OSError:
-        pass
-    os.sync()
-    if ours:
-        sh(["umount", mp])
+        if not boot:
+            result = "no RG OS boot partition found"
+        else:
+            try:
+                status, uid = apply_tar(tar, boot[0])
+                suffix = ".applied"
+                if status == "same":
+                    result = "build %s is already installed - skipped" % uid
+                else:
+                    result, rc = "build %s installed" % uid, 10
+            except UpdateError as e:
+                result = "FAILED: %s" % e
+            except Exception as e:           # a bug or an odd tar must never leave the ROMS partition mounted or crash the boot
+                log("unexpected error: %r" % (e,))
+                result = "FAILED: unexpected %s: %s" % (type(e).__name__, e)
+        say("RG OS update: " + result)
+        sh(["mount", "-o", "remount,rw", mp])
+        _mark(tar, suffix)
+        try:
+            with open(os.path.join(upd, "rgos-update.log"), "a") as f:
+                f.write("%s %s: %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), base, result))
+        except OSError:
+            pass
+        os.sync()
+    finally:
+        if ours:
+            umount(mp)
     say("Restarting..." if rc == 10 else "Continuing with the installed system.")
     time.sleep(2 if rc == 10 else 6)
     return rc

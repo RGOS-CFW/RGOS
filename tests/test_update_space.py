@@ -51,5 +51,50 @@ class PlanInplace(unittest.TestCase):
             plan({"SYSTEM": 700}, {}, 64)
 
 
+class BootCleanup(unittest.TestCase):
+    """The updater mounts the ROMS partition read-only to look for a tar. It must always let go again, or the session's own
+    read-write mount of that partition fails and ROMS silently falls back to the FAT partition."""
+
+    def run_boot(self, apply_exc):
+        import tempfile
+        d = tempfile.mkdtemp()
+        upd = os.path.join(d, "update")
+        os.makedirs(upd)
+        tar = os.path.join(upd, "rgos-update-rg35xxh-x.tar")
+        open(tar, "wb").close()
+        calls = []
+        saved = {k: getattr(U, k) for k in ("partitions", "ensure_fs", "find_boot", "find_update", "apply_tar", "sh", "LOG_FILE", "TTY", "time")}
+        try:
+            U.partitions = lambda: ["/dev/mmcblk0p3"]
+            U.ensure_fs = lambda: None
+            U.find_boot = lambda parts: ("/boot", None)
+            U.find_update = lambda parts: ("/dev/mmcblk0p3", d, True, upd, tar)
+            U.sh = lambda args, timeout=30: (calls.append(args) or (0, ""))
+            U.LOG_FILE, U.TTY = os.path.join(d, "log"), os.devnull
+
+            def boom(*a):
+                raise apply_exc
+            U.apply_tar = boom
+            U.time = type("T", (), {"sleep": staticmethod(lambda s: None), "strftime": staticmethod(__import__("time").strftime)})
+            rc = U.cmd_boot()
+        finally:
+            for k, v in saved.items():
+                setattr(U, k, v)
+        return rc, calls, d, upd
+
+    def test_unexpected_error_still_unmounts_and_marks_the_tar_failed(self):
+        rc, calls, d, upd = self.run_boot(KeyError("SYSTEM"))
+        self.assertEqual(rc, 0)
+        self.assertIn(["umount", d], calls)
+        self.assertTrue(os.path.exists(os.path.join(upd, "rgos-update-rg35xxh-x.tar.failed")))
+        with open(os.path.join(upd, "rgos-update.log")) as f:
+            self.assertIn("FAILED: unexpected KeyError", f.read())
+
+    def test_update_error_still_unmounts(self):
+        rc, calls, d, upd = self.run_boot(U.UpdateError("nope"))
+        self.assertEqual(rc, 0)
+        self.assertIn(["umount", d], calls)
+
+
 if __name__ == "__main__":
     unittest.main()
