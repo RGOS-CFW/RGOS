@@ -177,5 +177,16 @@ class LaunchTests(unittest.TestCase):
         self.assertIn("flycast_standalone", err.call_args[0][0])
 
 
+class BuildScriptTests(unittest.TestCase):
+    def test_build_restores_libraries_the_dev_purge_removed_from_standalone_flycast(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "build.sh"), encoding="utf-8") as fh:
+            text = fh.read()
+        purge = text.index("apt-get purge -y --auto-remove gcc")
+        check = text.index("ldd /usr/local/bin/flycast 2>&1 | grep")
+        self.assertGreater(check, purge)  # the repair must run after the purge, not before it
+        self.assertIn("libzip5", text[check:])
+
+
 if __name__ == "__main__":
     unittest.main()

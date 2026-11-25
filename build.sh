@@ -894,6 +894,32 @@ if [[ "$DEVICE" == "rg-rotate" && -e "$LRDIR/dolphin_libretro.so" ]]; then
     [[ -z "$GC_GONE" ]] || { echo "!! dolphin_libretro.so still has missing libraries (GameCube will not start; install the matching Debian packages with EXTRA_PKGS=... or rebuild the core here):"; echo "$GC_GONE"; }
   fi
 fi
+# Standalone flycast: the toolchain purge above removes libzip-dev and, with it, the libzip runtime package the binary links
+# (libzip.so.5), so the emulator dies at start-up with "error while loading shared libraries: libzip.so.5". Whatever
+# `ldd` reports as missing is put back here (the package name for libzip differs between Debian/Ubuntu suites).
+if [[ -x "$ROOTFS/usr/local/bin/flycast" ]]; then
+  dcsa_missing() { chroot "$ROOTFS" sh -c 'ldd /usr/local/bin/flycast 2>&1 | grep "not found"' || true; }
+  DCSA_GONE="$(dcsa_missing)"
+  if [[ -n "$DCSA_GONE" ]]; then
+    echo "==> standalone flycast needs libraries that are not in the image, trying to install them:"; echo "$DCSA_GONE"
+    cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf" 2>/dev/null || true
+    chroot "$ROOTFS" apt-get update >/dev/null 2>&1 || true
+    for pkg in libzip5 libzip4t64 libzip4 libsdl2-2.0-0 libcurl4t64 libcurl4 libasound2t64 libasound2 libpulse0 libgbm1 libdrm2 \
+               libegl1 libgles2 zlib1g; do
+      [[ -n "$(dcsa_missing)" ]] || break
+      chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg" >/dev/null 2>&1 \
+        && chroot "$ROOTFS" apt-mark manual "$pkg" >/dev/null 2>&1 || true
+    done
+    rm -f "$ROOTFS/etc/resolv.conf"
+    DCSA_GONE="$(dcsa_missing)"
+    if [[ -n "$DCSA_GONE" ]]; then
+      echo "!! standalone flycast still has missing libraries (it will not start; install the matching Debian packages with EXTRA_PKGS=...):"; echo "$DCSA_GONE"
+      [[ "${DC_SA_REQUIRED:-0}" != 1 ]] || { echo "!! DC_SA_REQUIRED=1: stopping" >&2; exit 1; }
+    else
+      echo "   standalone flycast: all libraries are present now"
+    fi
+  fi
+fi
 CORES="$(ls "$ROOTFS"/usr/local/lib/libretro/*_libretro.so "$ROOTFS"/usr/lib/*/libretro/*_libretro.so "$ROOTFS"/usr/lib/libretro/*_libretro.so 2>/dev/null | xargs -rn1 basename | tr '\n' ' ' || true)"
 echo "==> libretro cores in the image: ${CORES:-NONE}"
 core_present() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so "$ROOTFS/usr/lib/libretro/$1"_libretro.so "$ROOTFS/usr/local/lib/libretro/$1"_libretro.so; do [[ -e "$f" ]] && return 0; done; return 1; }
