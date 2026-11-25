@@ -365,6 +365,50 @@ def ensure_writable(bootdir):
                               "(Windows: right-click > Properties > Tools > Check), then try again" % e)
 
 
+def _old_size(bootdir, name):
+    try:
+        return os.path.getsize(os.path.join(bootdir, name))
+    except OSError:
+        return 0
+
+
+def plan_inplace(order, new_sizes, old_sizes, free_bytes):
+    """Which files must replace their old copy in place (old file deleted right before the new one is written).
+
+    Files are staged in `order`. Free space at each step is what is free now, minus the new files already written, plus the old
+    copies already deleted. A file that does not fit first goes in place itself; if that is still not enough, files staged
+    earlier are switched to in-place too (their old copies are freed first) until it fits. Raises UpdateError, saying how much
+    is missing, when even replacing everything in place is not enough."""
+    cur = free_bytes - MARGIN
+    inplace, normal = set(), []
+    for name in order:
+        size = new_sizes[name]
+        if size > cur:
+            if old_sizes.get(name):
+                inplace.add(name)
+                cur += old_sizes[name]
+            if size > cur:
+                for n in sorted(normal, key=lambda x: old_sizes.get(x, 0), reverse=True):
+                    if size <= cur:
+                        break
+                    if old_sizes.get(n):
+                        normal.remove(n)
+                        inplace.add(n)
+                        cur += old_sizes[n]
+            if size > cur:
+                mib = lambda v: (max(v, 0) + (1 << 20) - 1) >> 20
+                raise UpdateError("not enough free space on the boot partition: %s needs %d MiB, but only %d MiB can be made free "
+                                  "even by replacing the old files in place (%d MiB short). The boot partition was sized for the "
+                                  "image that is installed and this update is bigger: reflash a newer image (its boot partition "
+                                  "leaves room for updates), or delete big files from the FAT partition's root "
+                                  "(rgos-bootinfo.txt, *.prev, *.new, old logs, ROMs in roms/) and try again"
+                                  % (name, mib(size), mib(cur), mib(size - cur)))
+        elif name not in inplace:
+            normal.append(name)
+        cur -= size
+    return inplace
+
+
 def apply_tar(tar, bootdir):
     tf, man, payload = read_tar(tar)
     uid = str(man["id"])
@@ -390,24 +434,9 @@ def apply_tar(tar, bootdir):
     if free() < need:
         # Not enough room to keep old + new side by side. Work out which files have to replace the old copy in place.
         # Everything is verified from the tar first, so the old files are never deleted for a damaged update.
-        room = free() - MARGIN
-        for name in order:
-            m = payload[name]
-            if m.size <= room:
-                room -= m.size
-            else:
-                inplace.add(name)
-                try:
-                    room += os.path.getsize(os.path.join(bootdir, name))
-                except OSError:
-                    pass
-                if m.size > room:
-                    raise UpdateError("not enough free space on the boot partition: %s needs %d MiB but at most %d MiB can be freed. "
-                                      "Delete big files in the FAT partition's root (rgos-bootinfo.txt, *.prev, *.new, "
-                                      "extlinux.conf.stock, old logs, ROMs in roms/) and try again"
-                                      % (name, (m.size + (1 << 20) - 1) >> 20, max(0, room) >> 20))
-                room -= m.size
-        say("  boot partition is small: replacing %s in place" % ", ".join(sorted(inplace)))
+        inplace = plan_inplace(order, {n: payload[n].size for n in payload},
+                               {n: _old_size(bootdir, n) for n in payload}, free())
+        say("  boot partition is small: replacing %s in place" % (", ".join(sorted(inplace)) or "nothing"))
         say("  verifying update before touching the old files...")
         vtf, _, vpayload = read_tar(tar)
         try:

@@ -30,7 +30,7 @@ Options (environment): RG34XXSP: H700_RAM=DDR4|DDR3 (default DDR4, must match th
   RG35XXSP_DTB=sun50i-h700-anbernic-rg35xx-sp[-rev6-panel], ROCKNIX_H700_VERSION=<release tag>; miniloong: ROCKNIX_RK3566_VERSION=<AURKNIX release tag>, MINILOONG_DTB=<dtb name without .dtb, default miniloong>;
   any device: ROCKNIX_URL=<image .img.gz>.
 Image size (image / installer modes): the stock ROCKNIX image is a fixed ~2.2 GB; the result is shrunk to what RG OS really needs.
-  COMPACT_IMAGE=0 keeps the stock layout/size, BOOT_HEADROOM_MB=<n> is the free space left on the FAT boot partition (default 64;
+  COMPACT_IMAGE=0 keeps the stock layout/size, BOOT_HEADROOM_MB=<n|auto> is the free space left on the FAT boot partition (default auto = size of SYSTEM + 64;
   offline update tars are staged next to the old SYSTEM, so set it to about the size of SYSTEM if you install updates by tar),
   PRUNE_ROCKNIX=0 keeps the unused stock ROCKNIX files (other device trees, desktop/server firmware), FIRMWARE_KEEP="amdgpu ..."
   keeps firmware that is removed by default, PRUNE_BOOT_EXTRA="file ..." also deletes those root files of the boot partition.
@@ -180,11 +180,11 @@ case "$DEVICE" in rg-rotate|rg34xxsp|rg35xxh|rg35xxsp) GC_DEVICE=1 ;; esac
 (( GC_DEVICE )) || GC_REPO=none
 # Smallest possible image: unused stock ROCKNIX files are dropped (PRUNE_ROCKNIX) and the image is laid out again with a boot
 # partition that fits its content plus BOOT_HEADROOM_MB (COMPACT_IMAGE), instead of the stock ~2.2 GB layout.
-COMPACT_IMAGE="${COMPACT_IMAGE:-1}"; PRUNE_ROCKNIX="${PRUNE_ROCKNIX:-1}"; BOOT_HEADROOM_MB="${BOOT_HEADROOM_MB:-64}"
+COMPACT_IMAGE="${COMPACT_IMAGE:-1}"; PRUNE_ROCKNIX="${PRUNE_ROCKNIX:-1}"; BOOT_HEADROOM_MB="${BOOT_HEADROOM_MB:-auto}"
 FIRMWARE_KEEP="${FIRMWARE_KEEP:-}"; PRUNE_BOOT_EXTRA="${PRUNE_BOOT_EXTRA:-}"
 [[ "$COMPACT_IMAGE" == 0 || "$COMPACT_IMAGE" == 1 ]] || { echo "COMPACT_IMAGE must be 0 or 1" >&2; exit 1; }
 [[ "$PRUNE_ROCKNIX" == 0 || "$PRUNE_ROCKNIX" == 1 ]] || { echo "PRUNE_ROCKNIX must be 0 or 1" >&2; exit 1; }
-[[ "$BOOT_HEADROOM_MB" =~ ^[0-9]+$ ]] || { echo "BOOT_HEADROOM_MB must be a whole number of MiB" >&2; exit 1; }
+[[ "$BOOT_HEADROOM_MB" =~ ^([0-9]+|auto)$ ]] || { echo "BOOT_HEADROOM_MB must be a whole number of MiB or auto" >&2; exit 1; }
 RGOS_INITRD="${RGOS_INITRD:-1}"
 # 1 (default): the image carries /rgos-wipe-roms, so the first boot after FLASHING erases the old ROMS partition left on the card
 # (flashing only rewrites the image area; ROMS lives behind it). 0: a reflash keeps games, saves and settings.
@@ -1223,7 +1223,15 @@ fi
 
 if [[ "$COMPACT_IMAGE" == 1 ]]; then
   echo "==> Shrinking the image: the stock layout is a fixed ~2.2 GB, RG OS only needs its own files"
-  python3 "$HERE/tools/compact-image.py" "$IMG" --headroom-mb "$BOOT_HEADROOM_MB" --label "$BOOT_LABEL"
+  HEADROOM_MB="$BOOT_HEADROOM_MB"
+  if [[ "$HEADROOM_MB" == auto ]]; then
+    # An offline update stages the new SYSTEM next to the old one, so the boot partition needs about one SYSTEM of free space
+    # (+64 MiB for the initramfs and growth). With less, every update has to delete the old SYSTEM first, and fails as soon as the
+    # new one is bigger than the old one plus the free space. The free space costs nothing in the download (it is all zeros).
+    HEADROOM_MB=$(( ( $(stat -c %s "$WORK/SYSTEM" 2>/dev/null || echo 0) + (1 << 20) - 1 ) / (1 << 20) + 64 ))
+    echo "   boot partition headroom: ${HEADROOM_MB} MiB (SYSTEM size + 64, so updates fit next to the old SYSTEM; BOOT_HEADROOM_MB=<n> overrides)"
+  fi
+  python3 "$HERE/tools/compact-image.py" "$IMG" --headroom-mb "$HEADROOM_MB" --label "$BOOT_LABEL"
   echo "==> Image size: $(( $(stat -c %s "$IMG") / 1048576 )) MiB"
 fi
 
