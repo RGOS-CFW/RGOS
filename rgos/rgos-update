@@ -22,7 +22,8 @@ Safety:
     the new one is written (no .prev for those). The tar stays on the card until the update has finished, so a power cut
     can be repaired by running the update again from a PC copy of the same files;
   * files are replaced by renaming (no 500 MB copies): the old file becomes <name>.prev, the verified <name>.new takes its place,
-    and any failure renames everything back (manual rollback from a PC: rename <name>.prev over <name>);
+    and any failure renames everything back (manual rollback from a PC: rename <name>.prev over <name>). Only after the whole
+    update is installed are the <name>.prev copies deleted, so no old files are left taking up space on the boot partition;
   * the tar is renamed to <name>.applied / <name>.failed afterwards so it never runs twice, and the installed build id is
     stored in rgos-update.id on the boot partition (an update with the same id is skipped);
   * a result line is appended to update/rgos-update.log on the card. Details: /var/log/rgos-update.log.
@@ -518,6 +519,14 @@ def apply_tar(tar, bootdir):
         _cleanup(bootdir)
         os.sync()
         raise UpdateError("installation failed; " + ("rollback incomplete, check the *.prev files" if errors else "previous boot files restored"))
+    os.sync()
+    # The update is installed (new files in place, build id written, everything synced): only now are the old copies deleted.
+    # Until this point they were the rollback; a failure above restores them and never reaches this line.
+    for name in order:
+        try:
+            os.remove(os.path.join(bootdir, name + ".prev"))
+        except OSError:
+            pass
     os.sync()
     return "installed", uid
 
