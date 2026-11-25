@@ -369,3 +369,34 @@ class PortEnvTests(unittest.TestCase):
     def test_tar_ignores_the_packers_owner(self):
         env = self.launch.native_env({"RGOS_NO_HW": "1"})
         self.assertEqual(env["TAR_OPTIONS"], "--no-same-owner")
+
+
+class PortDiagnosticsTests(unittest.TestCase):
+    def setUp(self):
+        self.launch = load_launch()
+        self.run = tempfile.mkdtemp(prefix="rgos-diag-")
+        self.launch.RUN_DIR = self.run
+        self.launch.NATIVE_LOG = os.path.join(self.run, "native.log")
+
+    def test_hook_logs_the_gl_setup_once_after_libgl_is_sourced(self):
+        env = self.launch.native_env({"RGOS_NO_HW": "1", "PATH": "/usr/bin:/bin"})
+        script = os.path.join(self.run, "port.sh")
+        with open(script, "w") as f:
+            f.write("export LIBGL_ES=2 LIBGL_GL=21\n:\n:\n")
+        out = subprocess.run(["bash", script], env=env, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        with open(self.launch.NATIVE_LOG) as f:
+            lines = [l for l in f if "GL env:" in l]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("LIBGL_ES=2", lines[0])
+
+    def test_drm_nodes_names_the_driver_of_each_card(self):
+        sysdrm = os.path.join(self.run, "drm")
+        for card, drv in (("card0", "panfrost"), ("card1", "sun4i-drm")):
+            os.makedirs(os.path.join(sysdrm, card, "device"))
+            os.makedirs(os.path.join(self.run, "drivers", drv), exist_ok=True)
+            os.symlink(os.path.join(self.run, "drivers", drv), os.path.join(sysdrm, card, "device", "driver"))
+        os.makedirs(os.path.join(sysdrm, "card1-HDMI-A-1"))
+        text = self.launch.drm_nodes(sysdrm)
+        self.assertIn("card0: driver=panfrost connectors=none", text)
+        self.assertIn("card1: driver=sun4i-drm connectors=HDMI-A-1", text)

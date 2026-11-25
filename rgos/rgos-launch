@@ -855,6 +855,11 @@ def write_port_env_hook(env, run_dir, native_log=None):
                  '    SDL_GAMECONTROLLERCONFIG=$(<"%s")' % map_path,
                  "    export SDL_GAMECONTROLLERCONFIG",
                  "  fi",
+                 "  if [ -n \"$LIBGL_ES$LIBGL_GL\" ] && [ -z \"$__rgos_gl\" ]; then",
+                 "    __rgos_gl=1  # once, right after the port sourced its libgl_*.txt: what GL setup it really got",
+                 '    echo "rgos: GL env: LIBGL_ES=$LIBGL_ES LIBGL_GL=$LIBGL_GL LIBGL_FB=$LIBGL_FB SDL_VIDEODRIVER=$SDL_VIDEODRIVER'
+                 ' CFW_NAME=$CFW_NAME DEVICE_ARCH=$DEVICE_ARCH PWD=$PWD LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >>"%s" 2>/dev/null' % (native_log or NATIVE_LOG),
+                 "  fi",
                  "  return 0",
                  "}",
                  "trap __rgos_clamp DEBUG",
@@ -1093,6 +1098,23 @@ def launch_native(target):
 PORT_TOOLS = ("bash", "unzip", "wget", "curl", "xxd", "pkill", "pgrep", "pidof", "killall", "ps", "mount", "python3")
 
 
+def drm_nodes(sys_drm="/sys/class/drm"):
+    """One line per /dev/dri card: its kernel driver. GL/KMS ports open card0, which must be the display one."""
+    out = []
+    try:
+        for name in sorted(os.listdir(sys_drm)):
+            if re.fullmatch(r"card\d+", name):
+                try:
+                    drv = os.path.basename(os.readlink(os.path.join(sys_drm, name, "device", "driver")))
+                except OSError:
+                    drv = "?"
+                conns = [c.split("-", 1)[1] for c in sorted(os.listdir(sys_drm)) if c.startswith(name + "-")]
+                out.append("%s: driver=%s connectors=%s\n" % (name, drv, ",".join(conns) or "none"))
+    except OSError:
+        pass
+    return "".join(out) or "(unreadable)\n"
+
+
 def save_native_report(what, cmd, rc, dt, cwd, stopped=False, boot_dir=None):
     """Write logs/rgos-native.txt on the FAT boot partition after every native port / PortMaster run.
 
@@ -1126,6 +1148,7 @@ def save_native_report(what, cmd, rc, dt, cwd, stopped=False, boot_dir=None):
                 names = ["(%s)" % e]
             f.write("\n--- %s\n%s\n" % (cwd, "\n".join(names)))
             f.write("\n--- kernel messages (segfault / OOM / GPU)\n" + (kernel_hints() or "(none)\n"))
+            f.write("\n--- DRM nodes (which driver owns card0 / card1)\n%s" % drm_nodes())
             pm_log = os.path.join(cwd or "", "log.txt")
             if os.path.isfile(pm_log):
                 f.write("\n--- %s (last 60 lines)\n%s" % (pm_log, tail(pm_log, 60) or "(empty)\n"))
