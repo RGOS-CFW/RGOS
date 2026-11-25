@@ -162,6 +162,20 @@ mountpoint -q /dev/pts || mount -t devpts devpts /dev/pts 2>/dev/null
 [ -e /dev/stdout ] || ln -s /proc/self/fd/1 /dev/stdout 2>/dev/null
 [ -e /dev/stderr ] || ln -s /proc/self/fd/2 /dev/stderr 2>/dev/null
 [ -e /var/run ] || ln -s /run /var/run 2>/dev/null
+# Screen orientation. The MiniLoong Pocket 1 panel is scanned out in portrait (the framebuffer is taller than wide) while the
+# console is held in landscape, so everything drawn upright showed up turned 90 degrees clockwise. RGOS_FB_ROTATE is how many
+# degrees clockwise the framebuffer content has to be turned to look upright on the screen; fbout, rgos-overlay and gamemenu all read
+# it, and rgos-launch derives RetroArch's video_rotation from it. If the picture is upside down or still sideways, put 0, 90, 180
+# or 270 in rgos-rotate.txt on the boot partition (no rebuild needed).
+if [ -z "$RGOS_FB_ROTATE" ]; then
+    case "$(cat /etc/rgos-device 2>/dev/null)" in miniloong) RGOS_FB_ROTATE=270 ;; esac
+    if [ -f /boot/rgos-rotate.txt ]; then
+        rot=$(tr -dc '0-9' < /boot/rgos-rotate.txt 2>/dev/null)
+        case "$rot" in 0|90|180|270) RGOS_FB_ROTATE=$rot ;; esac
+    fi
+fi
+[ -n "$RGOS_FB_ROTATE" ] && export RGOS_FB_ROTATE
+echo "screen: RGOS_FB_ROTATE=${RGOS_FB_ROTATE:-0}" >> /var/log/rgos-state.log
 python3 /opt/rgos/wifictl.py daemon >> /var/log/rgos-wifi.log 2>&1 &
 python3 /opt/rgos/btctl.py start >> /var/log/rgos-bt.log 2>&1 &
 python3 /opt/rgos/sshctl.py boot >> /var/log/rgos-ssh.log 2>&1 &

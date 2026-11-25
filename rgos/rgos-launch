@@ -309,6 +309,13 @@ def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, fo
         lines.append('input_joypad_driver = %s' % q(joy_driver))
     if video_driver:
         lines.append('video_driver = %s' % q(video_driver))
+    try:
+        fb_rot = int(os.environ.get("RGOS_FB_ROTATE", "0") or 0) % 360
+    except ValueError:
+        fb_rot = 0
+    if fb_rot in (90, 180, 270):
+        # the panel shows the framebuffer turned clockwise by fb_rot; RetroArch's video_rotation turns the picture counter-clockwise in 90 degree steps
+        lines.append('video_rotation = %s' % q(((360 - fb_rot) // 90) % 4))
     if sid == "gc":
         lines += ['%s = %s' % (k, q(v)) for k, v in GC_RUN_SETTINGS]
     elif sid == "dreamcast":
