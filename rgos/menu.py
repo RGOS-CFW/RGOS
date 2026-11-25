@@ -598,12 +598,17 @@ def _stick_count():
         return 2
 
 
+# GameCube (Dolphin) runs on the RG Rotate and on the Allwinner H700 consoles. The H700 is much weaker (4x Cortex-A53,
+# Mali-G31 MP2): only light games reach full speed there, so rgos-launch gives it its own cheaper core options.
+GC_DEVICES = ("rg-rotate", "rg34xxsp", "rg35xxh", "rg35xxsp")
+
+
 def _gc_allowed():
-    return (os.environ.get("RGOS_DEVICE") or _device() or "rg-rotate") == "rg-rotate"
+    return (os.environ.get("RGOS_DEVICE") or _device() or "rg-rotate") in GC_DEVICES
 
 
 def filter_systems():
-    """Hide systems that have no installed core (and GameCube off the RG Rotate). Edits SYSTEMS in place so that
+    """Hide systems that have no installed core (and GameCube on devices that cannot run it). Edits SYSTEMS in place so that
     everything holding a reference to it sees the change; the Core Installer calls this after installing a core."""
     if os.environ.get("RGOS_ALL_SYSTEMS") == "1":
         SYSTEMS[:] = ALL_SYSTEMS

@@ -146,6 +146,16 @@ GC_CORE_OPTIONS = (
     ("dolphin_widescreen", "disabled"),
     ("dolphin_osd_enabled", "disabled"),
 )
+# Allwinner H700 consoles (RG34XXSP, RG35XX H, RG35XX SP): 4x Cortex-A53 and a Mali-G31 MP2, well below the RG Rotate's
+# Unisoc T618. Ubershaders are too heavy for that GPU, so shaders compile asynchronously and the draw is skipped until
+# one is ready; everything else of GC_CORE_OPTIONS is already the cheap path. Override in <ROMS>/config/dolphin-options.cfg.
+H700_DEVICES = frozenset(("rg34xxsp", "rg35xxh", "rg35xxsp"))
+GC_H700_OPTIONS = (
+    ("dolphin_shader_compilation_mode", "a-sync"),
+    ("dolphin_dsp_hle", "enabled"),
+    ("dolphin_efb_scale", "x1 (640 x 528)"),
+)
+GC_H700_RUN_SETTINGS = (("audio_latency", "128"),)
 # Used on the retry after a game died right after starting: the one option that can crash a kernel it does not suit.
 # JIT64 and the DSP JIT only exist in x86-64 builds of Dolphin: asking an aarch64 core for them is what made games die at start.
 GC_SAFE_OPTIONS = (("dolphin_fastmem", "disabled"), ("dolphin_cpu_core", "Cached Interpreter"))
@@ -332,7 +342,10 @@ def run_config(sid, roms_root, audio_device, joy_index=None, joy_driver=None, fo
         # the panel shows the framebuffer turned clockwise by fb_rot; RetroArch's video_rotation turns the picture counter-clockwise in 90 degree steps
         lines.append('video_rotation = %s' % q(((360 - fb_rot) // 90) % 4))
     if sid == "gc":
-        lines += ['%s = %s' % (k, q(v)) for k, v in GC_RUN_SETTINGS]
+        gc_run = dict(GC_RUN_SETTINGS)
+        if device_id() in H700_DEVICES:
+            gc_run.update(GC_H700_RUN_SETTINGS)
+        lines += ['%s = %s' % (k, q(v)) for k, v in gc_run.items()]
     elif sid == "dreamcast":
         lines += ['%s = %s' % (k, q(v)) for k, v in DC_RUN_SETTINGS]
     if core_options:
@@ -365,6 +378,14 @@ def read_option_overrides(path, prefix="dolphin_"):
     return out
 
 
+def device_id():
+    try:
+        with open(os.environ.get("RGOS_DEVICE_FILE", "/etc/rgos-device")) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 def gc_core_options(roms_root, run_dir, safe=False):
     """Write the Dolphin core options for this launch and return the file's path ("" if it cannot be written).
 
@@ -372,6 +393,8 @@ def gc_core_options(roms_root, run_dir, safe=False):
     <ROMS>/config/dolphin-options.cfg. The file lives in the run directory, so it is rebuilt on every launch.
     """
     opts = dict(GC_CORE_OPTIONS)
+    if device_id() in H700_DEVICES:
+        opts.update(GC_H700_OPTIONS)
     if platform.machine().lower() in ("x86_64", "amd64"):
         opts.update(GC_X86_OPTIONS)
     if safe:

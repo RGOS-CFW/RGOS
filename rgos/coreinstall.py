@@ -21,7 +21,7 @@ import zipfile
 
 DEFAULT_URL = "https://buildbot.libretro.com/nightly/linux/aarch64/latest"
 CONF_FILE = os.environ.get("RGOS_CORE_CONF", "/etc/rgos/coreinstall.json")
-# Cores that must not be offered: dolphin needs its Sys data folder, which only the RG Rotate image carries, and
+# Cores that must not be offered: dolphin needs its Sys data folder, which only the RG Rotate and H700 images carry, and
 # flycast_standalone is a program, not a libretro core (there is nothing to download from the buildbot).
 EXCLUDE = frozenset(("dolphin", "flycast_standalone"))
 # Cores whose libretro buildbot build asks for desktop OpenGL. RetroArch on this image is a GLES build, so these start and
