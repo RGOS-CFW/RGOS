@@ -154,6 +154,10 @@ GC_H700_OPTIONS = (
     ("dolphin_shader_compilation_mode", "a-sync"),
     ("dolphin_dsp_hle", "enabled"),
     ("dolphin_efb_scale", "x1 (640 x 528)"),
+    # Bounding-box emulation needs extra GPU readbacks (only a couple of games use it) and the fast depth calculation is
+    # cheaper; both are far too costly / accurate for a Mali-G31.
+    ("dolphin_bbox_enabled", "disabled"),
+    ("dolphin_fast_depth_calc", "enabled"),
 )
 GC_H700_RUN_SETTINGS = (("audio_latency", "128"),)
 # Used on the retry after a game died right after starting: the one option that can crash a kernel it does not suit.
@@ -376,6 +380,15 @@ def read_option_overrides(path, prefix="dolphin_"):
     except OSError:
         pass
     return out
+
+
+# [ERROR] lines RetroArch writes on every launch that do not mean the game failed (the playlist lives on the read-only
+# system image; the extra pads of the input hub find no free player slot). They must not count as an early failure.
+BENIGN_ERRORS = ("Failed to write to playlist", "[Autoconf]", "Not enough system memory for custom resources")
+
+
+def real_error(text):
+    return any("[ERROR]" in l and not any(b in l for b in BENIGN_ERRORS) for l in text.splitlines())
 
 
 def device_id():
@@ -677,11 +690,20 @@ def _read(path):
         return ""
 
 
+def gpu_reclock_unsafe(node):
+    """The H700's GPU PLL often fails to lock when the kernel switches the GPU frequency (ccu_helper_wait_for_lock WARN in dmesg,
+    one per switch). Forcing the GPU governor to performance and back made two such switches per game on top of the
+    automatic ones, so on those consoles only the CPU governor is pinned and the GPU keeps its own."""
+    return "/class/devfreq/" in node and device_id() in H700_DEVICES
+
+
 def set_governor(gov):
     if not gov:
         return {}
     todo = {}
     for node in governor_nodes():
+        if gpu_reclock_unsafe(node):
+            continue
         d, base = os.path.split(node)
         avail = _read(os.path.join(d, "scaling_available_governors" if base == "scaling_governor" else "available_governors"))
         prev = _read(node)
@@ -763,6 +785,28 @@ def ra_verbose():
 def game_priority():
     try:
         os.setpriority(os.PRIO_PROCESS, 0, -5)
+    except OSError:
+        pass
+    try:                                    # on a 1 GB console the OOM killer must pick anything but the running game
+        with open("/proc/self/oom_score_adj", "w") as f:
+            f.write("-500")
+    except OSError:
+        pass
+
+
+def free_memory_for_game():
+    """Hand the page cache back before a heavy emulator starts (best effort): Dolphin wants ~100 MB of contiguous-ish
+    memory plus a shader cache, and the cache of the menu's artwork / the squashfs would otherwise be what it fights with."""
+    if os.environ.get("RGOS_NO_HW"):
+        return
+    try:
+        os.sync()
+        for path, val in (("/proc/sys/vm/drop_caches", "3"), ("/proc/sys/vm/compact_memory", "1")):
+            try:
+                with open(path, "w") as f:
+                    f.write(val)
+            except OSError:
+                pass
     except OSError:
         pass
 
@@ -1354,6 +1398,8 @@ def launch_retroarch(sid, core, core_path, content):
         log("starting%s: %s" % (" (video_driver %s)" % video if video else "", " ".join(cmd)))
         t0 = time.monotonic()
         saved = set_governor(perf_governor(sid)) if hw else {}
+        if sid in ("gc", "n64", "dreamcast", "saturn", "psx", "psp"):
+            free_memory_for_game()
         set_game_flag(True, kind="retroarch", title=game_title(content) or "RetroArch")
         try:
             rc = subprocess.call(cmd, env=env, stdin=subprocess.DEVNULL,
@@ -1368,7 +1414,7 @@ def launch_retroarch(sid, core, core_path, content):
         log("retroarch exited rc=%s (%s) after %.1fs" % (rc, rc_text(rc), dt))
         # A clean exit (rc 0) that ran past the early-failure window is the player quitting: a stray "[ERROR]" line in the
         # log (a missing optional file, a failed save at shutdown) must not relaunch the game under them.
-        failed = rc != 0 or (dt < EARLY_FAIL_S and "[ERROR]" in tail(LOG, 40))
+        failed = rc != 0 or (dt < EARLY_FAIL_S and real_error(tail(LOG, 40)))
         if hw_video and failed and gl_mismatch(tail(LOG, 60)):
             log("%s core needs desktop OpenGL but RetroArch is a GLES build; retrying cannot help" % sid)
             break
