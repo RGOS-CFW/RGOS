@@ -35,7 +35,7 @@ on:
         type: boolean
         default: true
       build_gc:
-        description: RG Rotate only - build the GameCube core (Dolphin libretro) from source (very slow under emulation; off skips it)
+        description: RG Rotate and H700 - build the GameCube core (Dolphin libretro) from source (very slow under emulation; off skips it)
         required: true
         type: boolean
         default: true

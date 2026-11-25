@@ -174,7 +174,10 @@ PROSYSTEM_REPO="${PROSYSTEM_REPO:-https://github.com/libretro/prosystem-libretro
 # Arcade: MAME 2003-Plus (the handheld-friendly MAME core) is built as an extra next to FinalBurn Neo. MAME2003_REPO=none skips it.
 # Full current MAME is too heavy to build here: use "sudo ./build-cores.sh mame".
 MAME2003_REPO="${MAME2003_REPO:-https://github.com/libretro/mame2003-plus-libretro.git}"
-[[ "$DEVICE" == "rg-rotate" ]] || GC_REPO=none
+# GameCube (Dolphin libretro): RG Rotate and the Allwinner H700 consoles (same list as GC_DEVICES in rgos/menu.py).
+GC_DEVICE=0
+case "$DEVICE" in rg-rotate|rg34xxsp|rg35xxh|rg35xxsp) GC_DEVICE=1 ;; esac
+(( GC_DEVICE )) || GC_REPO=none
 # Smallest possible image: unused stock ROCKNIX files are dropped (PRUNE_ROCKNIX) and the image is laid out again with a boot
 # partition that fits its content plus BOOT_HEADROOM_MB (COMPACT_IMAGE), instead of the stock ~2.2 GB layout.
 COMPACT_IMAGE="${COMPACT_IMAGE:-1}"; PRUNE_ROCKNIX="${PRUNE_ROCKNIX:-1}"; BOOT_HEADROOM_MB="${BOOT_HEADROOM_MB:-64}"
@@ -518,11 +521,11 @@ CORES_DIR="$HERE/work/cores"
 if ls "$CORES_DIR"/*_libretro.so >/dev/null 2>&1 || [[ -x "$CORES_DIR/bin/flycast" ]]; then
   echo "==> Using the cores built by build-cores.sh ($CORES_DIR)"
   cp "$CORES_DIR"/*_libretro.so "$LRDIR/" 2>/dev/null || true
-  [[ "$DEVICE" == "rg-rotate" ]] || rm -f "$LRDIR/dolphin_libretro.so"
+  (( GC_DEVICE )) || rm -f "$LRDIR/dolphin_libretro.so"
   if [[ -x "$CORES_DIR/bin/flycast" && "$DC_STANDALONE" == 1 ]]; then
     mkdir -p "$ROOTFS/usr/local/bin"; install -m 755 "$CORES_DIR/bin/flycast" "$ROOTFS/usr/local/bin/flycast"
   fi
-  if [[ "$DEVICE" == "rg-rotate" && -d "$CORES_DIR/dolphin-Sys" ]]; then
+  if (( GC_DEVICE )) && [[ -d "$CORES_DIR/dolphin-Sys" ]]; then
     mkdir -p "$ROOTFS/usr/local/share/rgos/dolphin-emu"; rm -rf "$ROOTFS/usr/local/share/rgos/dolphin-emu/Sys"
     cp -r "$CORES_DIR/dolphin-Sys" "$ROOTFS/usr/local/share/rgos/dolphin-emu/Sys"
   fi
@@ -530,7 +533,7 @@ if ls "$CORES_DIR"/*_libretro.so >/dev/null 2>&1 || [[ -x "$CORES_DIR/bin/flycas
   CORE_DEPS=""
   for f in "$CORES_DIR"/deps/*.txt; do
     [[ -e "$f" ]] || continue
-    [[ "$(basename "$f")" == dolphin_libretro.txt && "$DEVICE" != "rg-rotate" ]] && continue
+    [[ "$(basename "$f")" == dolphin_libretro.txt ]] && ! (( GC_DEVICE )) && continue
     CORE_DEPS+=" $(cat "$f" | tr '\n' ' ')"
   done
   CORE_DEPS="$(printf '%s\n' $CORE_DEPS | sort -u | tr '\n' ' ')"
@@ -542,13 +545,13 @@ if ls "$CORES_DIR"/*_libretro.so >/dev/null 2>&1 || [[ -x "$CORES_DIR/bin/flycas
     done
   fi
 fi
-[[ "$DEVICE" == "rg-rotate" ]] || rm -f "$LRDIR/dolphin_libretro.so"
+(( GC_DEVICE )) || rm -f "$LRDIR/dolphin_libretro.so"
 WANT_MAME=0; WANT_NGP=0; WANT_PSX=0; WANT_GEN=0; WANT_GC=0; WANT_ATARI=0; WANT_DC=0; WANT_N64=0; WANT_DCSA=0; WANT_SATURN=0; WANT_FAKE08=0; WANT_RETRO8=0
 [[ "$NGP_SRC" != none && ! -e "$LRDIR/mednafen_ngp_libretro.so" ]] && WANT_NGP=1
 [[ "$PSX_REPO" != none && ! -e "$LRDIR/pcsx_rearmed_libretro.so" ]] && WANT_PSX=1
 have_core() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so "$ROOTFS/usr/lib/libretro/$1"_libretro.so "$ROOTFS/usr/local/lib/libretro/$1"_libretro.so; do [[ -e "$f" ]] && return 0; done; return 1; }
 [[ "$GENESIS_REPO" != none ]] && ! have_core genesis_plus_gx && WANT_GEN=1
-[[ "$GC_REPO" != none && ! -e "$LRDIR/dolphin_libretro.so" ]] && WANT_GC=1
+(( GC_DEVICE )) && [[ "$GC_REPO" != none && ! -e "$LRDIR/dolphin_libretro.so" ]] && WANT_GC=1
 [[ "$DC_REPO" != none && ! -e "$LRDIR/flycast_libretro.so" ]] && WANT_DC=1
 [[ "$DC_REPO" != none && "$DC_STANDALONE" == 1 && ! -x "$ROOTFS/usr/local/bin/flycast" && ! -x "$ROOTFS/usr/bin/flycast" ]] && WANT_DCSA=1
 [[ "$N64_REPO" != none && ! -e "$LRDIR/mupen64plus_next_libretro.so" ]] && ! have_core mupen64plus_next && WANT_N64=1
@@ -851,7 +854,7 @@ KEEP
       fi
     fi
     if (( WANT_GC )); then
-      echo "==> Building the GameCube core (Dolphin libretro, GameCube only in the menu; RG Rotate)"
+      echo "==> Building the GameCube core (Dolphin libretro; RG Rotate and H700)"
       if chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git ca-certificates cmake ninja-build pkg-config \
            libevdev-dev libudev-dev libasound2-dev libpulse-dev libgl-dev libegl-dev libgles-dev libdrm-dev libgbm-dev libusb-1.0-0-dev libbluetooth-dev \
            libcurl4-openssl-dev libpng-dev libminizip-dev liblzo2-dev libmbedtls-dev libhidapi-dev zlib1g-dev libxi-dev libxrandr-dev libx11-dev \
@@ -870,7 +873,7 @@ ldd /usr/local/lib/libretro/dolphin_libretro.so | awk '/=>/ {print $3}' | while 
 KEEP
         chroot "$ROOTFS" sh /tmp/core-src/keep-libs.sh
       ); then echo "   dolphin_libretro.so built"
-      else echo "!! could not build the GameCube core: GameCube will not appear on the RG Rotate (put a prebuilt dolphin_libretro.so in cores/ and rebuild)"; rm -f "$LRDIR/dolphin_libretro.so"; fi
+      else echo "!! could not build the GameCube core: GameCube will not appear on this device (put a prebuilt dolphin_libretro.so in cores/ and rebuild)"; rm -f "$LRDIR/dolphin_libretro.so"; fi
     fi
   else
     echo "!! could not install a compiler in the rootfs: skipped building the Genesis Plus GX / Neo Geo Pocket / Atari / PlayStation / Dreamcast / Nintendo 64 cores"
@@ -883,7 +886,7 @@ KEEP
   fi
   rm -rf "$ROOTFS/tmp/core-src" "$ROOTFS/etc/resolv.conf"
 fi
-if [[ "$DEVICE" == "rg-rotate" && -e "$LRDIR/dolphin_libretro.so" ]]; then
+if (( GC_DEVICE )) && [[ -e "$LRDIR/dolphin_libretro.so" ]]; then
   gc_missing() { chroot "$ROOTFS" sh -c 'ldd /usr/local/lib/libretro/dolphin_libretro.so 2>&1 | grep "not found"' || true; }
   GC_GONE="$(gc_missing)"
   if [[ -n "$GC_GONE" ]]; then
@@ -933,7 +936,7 @@ core_present() { local f; for f in "$ROOTFS"/usr/lib/*/libretro/"$1"_libretro.so
 for c in gambatte mgba nestopia genesis_plus_gx snes9x mednafen_wswan mednafen_ngp pcsx_rearmed stella2014 atari800 prosystem; do
   core_present "$c" || echo "!! ${c}_libretro.so is missing from the image (a Debian libretro package missing, or the source build of that core failed)"
 done
-if [[ "$DEVICE" == "rg-rotate" && "$GC_REPO" != none ]]; then core_present dolphin || echo "!! dolphin_libretro.so is missing from the image: no GameCube on this build"; fi
+if (( GC_DEVICE )) && [[ "$GC_REPO" != none ]]; then core_present dolphin || echo "!! dolphin_libretro.so is missing from the image: no GameCube on this build"; fi
 [[ "$DC_REPO" == none || "$DC_STANDALONE" != 1 || -x "$ROOTFS/usr/local/bin/flycast" || -x "$ROOTFS/usr/bin/flycast" ]] || echo "!! standalone flycast is missing from the image: Dreamcast will only offer the libretro Flycast core"
 [[ "$N64_REPO" == none ]] || core_present mupen64plus_next || echo "!! mupen64plus_next_libretro.so is missing from the image: no Nintendo 64 on this build"
 [[ "$SATURN_REPO" == none ]] || core_present yabasanshiro || echo "!! yabasanshiro_libretro.so is missing from the image: Sega Saturn needs a core from Tools > Core Installer"

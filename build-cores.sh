@@ -39,7 +39,7 @@ usage: sudo ./build-cores.sh [--list | --clean | --force] [<core>...]
 cores: ${ALL[*]}  (+ ${EXTRA[*]}, explicit only)
 aliases: gen=genesis dc/dreamcast=flycast dcsa/flycast-sa=flycast-standalone mupen/n64=n64 yaba/yabasanshiro/saturn=saturn
          pico8=fake08+retro8 atari=stella2014+atari800+prosystem gc/gamecube=dolphin
-no argument builds everything (dolphin included: GameCube is only used by the rg-rotate build).
+no argument builds everything (dolphin included: GameCube is used by the RG Rotate and H700 builds).
 U
 }
 want=(); FORCE="${FORCE:-0}"
