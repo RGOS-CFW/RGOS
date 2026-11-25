@@ -33,15 +33,41 @@ say()  { klog "$*"; echo "RG OS: $*"; }
 WANT=""
 for a in $(cat /proc/cmdline); do case "$a" in boot=*) WANT=${a#boot=} ;; esac; done
 
+# Make sure partition nodes exist even when devtmpfs is missing or slow: create them from /sys/class/block.
+mknod_blocks() {
+  for s in /sys/class/block/*; do
+    [ -f "$s/dev" ] || continue
+    nm=${s##*/}
+    [ -b "/dev/$nm" ] && continue
+    mm=$(cat "$s/dev" 2>/dev/null) || continue
+    mknod "/dev/$nm" b "${mm%%:*}" "${mm##*:}" 2>/dev/null
+  done
+}
+
+# A boot partition is the FAT partition that holds SYSTEM. After an interrupted update the file can be missing while a
+# SYSTEM.prev (the old, known-good image) or a fully written SYSTEM.new is still there, so those count too and are used
+# as a fallback instead of hanging here forever.
+SYSFILE=""
+pick_system() {
+  [ -f /flash/SYSTEM ] && { SYSFILE=SYSTEM; return 0; }
+  for f in SYSTEM.prev SYSTEM.new; do
+    [ -f "/flash/$f" ] && { SYSFILE=$f; return 0; }
+  done
+  return 1
+}
+
 try_dev() {
   [ -b "$1" ] || return 1
-  mount -t vfat -o rw,noatime "$1" /flash 2>/dev/null || mount -t vfat -o ro "$1" /flash 2>/dev/null || return 1
-  [ -f /flash/SYSTEM ] && return 0
-  umount /flash 2>/dev/null
+  for fs in vfat exfat auto; do
+    mount -t $fs -o rw,noatime "$1" /flash 2>/dev/null || mount -t $fs -o ro "$1" /flash 2>/dev/null || continue
+    pick_system && return 0
+    umount /flash 2>/dev/null
+  done
   return 1
 }
 
 find_boot() {
+  mknod_blocks
   if [ -n "$WANT" ]; then
     case "$WANT" in /dev/*) hint=$WANT ;; *) hint=$(findfs "$WANT" 2>/dev/null) ;; esac
     [ -n "$hint" ] && try_dev "$hint" && return 0
@@ -50,12 +76,33 @@ find_boot() {
   return 1
 }
 
+# Shown on screen while waiting, so a stuck boot says WHY instead of only "waiting...".
+diag() {
+  echo "RG OS: boot partition not found yet. Details:"
+  bd=""; for x in /dev/mmcblk* /dev/sd[a-z]* /dev/nvme*; do [ -b "$x" ] && bd="$bd ${x#/dev/}"; done
+  echo " block devices:$bd"
+  echo " filesystems:   $(grep -e vfat -e exfat /proc/filesystems | tr -d '\t' | tr '\n' ' ')"
+  for d in /dev/mmcblk*p[0-9]* /dev/sd[a-z][0-9]*; do
+    [ -b "$d" ] || continue
+    if mount -t auto -o ro "$d" /flash 2>/dev/null; then
+      echo " $d: $(ls /flash | head -n 12 | tr '\n' ' ')"
+      umount /flash 2>/dev/null
+    else
+      echo " $d: cannot be mounted"
+    fi
+  done
+  echo " Fix: put the card in a PC; the FAT partition must contain SYSTEM."
+  echo " If only SYSTEM.prev or SYSTEM.new is there, copy it as SYSTEM."
+}
+
 n=0
 until find_boot; do
   n=$((n + 1))
   [ "$n" -eq 40 ] && say "waiting for the boot partition (the one with SYSTEM)..."
+  [ "$n" -ge 60 ] && [ $((n % 120)) -eq 60 ] && diag
   sleep 0.25 2>/dev/null || sleep 1
 done
+[ "$SYSFILE" != SYSTEM ] && { say "SYSTEM is missing, booting from $SYSFILE"; klog "SYSTEM missing, using $SYSFILE"; }
 klog "boot partition found after $n tries (boot=$WANT)"
 
 TRACE=/flash/rgos-initramfs.txt
@@ -65,10 +112,10 @@ trace() { echo "[$(cut -d' ' -f1 /proc/uptime 2>/dev/null)] $*" >> "$TRACE" 2>/d
   echo "--- /proc/partitions"; cat /proc/partitions 2>&1; } > "$TRACE" 2>/dev/null
 
 n=0
-until mount -t squashfs -o ro,loop /flash/SYSTEM /sysroot 2>/dev/null; do
+until mount -t squashfs -o ro,loop "/flash/$SYSFILE" /sysroot 2>/dev/null; do
   n=$((n + 1))
-  [ "$n" -eq 5 ] && { say "cannot mount /flash/SYSTEM (card error? re-flash the image)"
-    trace "cannot mount /flash/SYSTEM as squashfs after $n tries; SYSTEM is $(ls -l /flash/SYSTEM 2>&1)"
+  [ "$n" -eq 5 ] && { say "cannot mount /flash/$SYSFILE (card error? re-flash the image)"
+    trace "cannot mount /flash/$SYSFILE as squashfs after $n tries; file is $(ls -l /flash/$SYSFILE 2>&1)"
     { echo "--- /proc/filesystems"; cat /proc/filesystems; echo "--- /dev/loop*"; ls -l /dev/loop* 2>&1
       echo "--- dmesg (tail)"; dmesg 2>&1 | tail -n 40; } >> "$TRACE" 2>/dev/null; sync; }
   sleep 1
