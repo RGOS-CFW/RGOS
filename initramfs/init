@@ -73,6 +73,8 @@ find_boot() {
     [ -n "$hint" ] && try_dev "$hint" && return 0
   fi
   for d in /dev/mmcblk*p[0-9]* /dev/sd[a-z][0-9]* /dev/nvme*n*p[0-9]*; do try_dev "$d" && return 0; done
+  # last resort: a card formatted without a partition table (FAT straight on the disk)
+  for d in /dev/mmcblk[0-9] /dev/sd[a-z] /dev/nvme[0-9]n[0-9]; do try_dev "$d" && return 0; done
   return 1
 }
 
@@ -99,9 +101,13 @@ n=0
 until find_boot; do
   n=$((n + 1))
   [ "$n" -eq 40 ] && say "waiting for the boot partition (the one with SYSTEM)..."
-  [ "$n" -ge 60 ] && [ $((n % 120)) -eq 60 ] && diag
+  [ "$n" -ge 40 ] && [ $((n % 120)) -eq 40 ] && diag
   sleep 0.25 2>/dev/null || sleep 1
 done
+if [ "$n" -ge 40 ]; then
+  say "boot partition found, starting RG OS..."
+  [ -d /logo ] && paint_logo /logo
+fi
 [ "$SYSFILE" != SYSTEM ] && { say "SYSTEM is missing, booting from $SYSFILE"; klog "SYSTEM missing, using $SYSFILE"; }
 klog "boot partition found after $n tries (boot=$WANT)"
 
