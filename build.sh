@@ -29,6 +29,11 @@ Options (environment): RG34XXSP: H700_RAM=DDR4|DDR3 (default DDR4, must match th
   RG34XXSP_DTB=sun50i-h700-anbernic-rg34xx-sp[-v2-panel], RG35XXH_DTB=sun50i-h700-anbernic-rg35xx-h[-rev6-panel],
   RG35XXSP_DTB=sun50i-h700-anbernic-rg35xx-sp[-rev6-panel], ROCKNIX_H700_VERSION=<release tag>; miniloong: ROCKNIX_RK3566_VERSION=<AURKNIX release tag>, MINILOONG_DTB=<dtb name without .dtb, default miniloong>;
   any device: ROCKNIX_URL=<image .img.gz>.
+Image size (image / installer modes): the stock ROCKNIX image is a fixed ~2.2 GB; the result is shrunk to what RG OS really needs.
+  COMPACT_IMAGE=0 keeps the stock layout/size, BOOT_HEADROOM_MB=<n> is the free space left on the FAT boot partition (default 64;
+  offline update tars are staged next to the old SYSTEM, so set it to about the size of SYSTEM if you install updates by tar),
+  PRUNE_ROCKNIX=0 keeps the unused stock ROCKNIX files (other device trees, desktop/server firmware), FIRMWARE_KEEP="amdgpu ..."
+  keeps firmware that is removed by default, PRUNE_BOOT_EXTRA="file ..." also deletes those root files of the boot partition.
 EOF
 }
 
@@ -170,6 +175,13 @@ PROSYSTEM_REPO="${PROSYSTEM_REPO:-https://github.com/libretro/prosystem-libretro
 # Full current MAME is too heavy to build here: use "sudo ./build-cores.sh mame".
 MAME2003_REPO="${MAME2003_REPO:-https://github.com/libretro/mame2003-plus-libretro.git}"
 [[ "$DEVICE" == "rg-rotate" ]] || GC_REPO=none
+# Smallest possible image: unused stock ROCKNIX files are dropped (PRUNE_ROCKNIX) and the image is laid out again with a boot
+# partition that fits its content plus BOOT_HEADROOM_MB (COMPACT_IMAGE), instead of the stock ~2.2 GB layout.
+COMPACT_IMAGE="${COMPACT_IMAGE:-1}"; PRUNE_ROCKNIX="${PRUNE_ROCKNIX:-1}"; BOOT_HEADROOM_MB="${BOOT_HEADROOM_MB:-64}"
+FIRMWARE_KEEP="${FIRMWARE_KEEP:-}"; PRUNE_BOOT_EXTRA="${PRUNE_BOOT_EXTRA:-}"
+[[ "$COMPACT_IMAGE" == 0 || "$COMPACT_IMAGE" == 1 ]] || { echo "COMPACT_IMAGE must be 0 or 1" >&2; exit 1; }
+[[ "$PRUNE_ROCKNIX" == 0 || "$PRUNE_ROCKNIX" == 1 ]] || { echo "PRUNE_ROCKNIX must be 0 or 1" >&2; exit 1; }
+[[ "$BOOT_HEADROOM_MB" =~ ^[0-9]+$ ]] || { echo "BOOT_HEADROOM_MB must be a whole number of MiB" >&2; exit 1; }
 RGOS_INITRD="${RGOS_INITRD:-1}"
 [[ "$RGOS_INITRD" == 0 || "$RGOS_INITRD" == 1 ]] || { echo "RGOS_INITRD must be 0 or 1" >&2; exit 1; }
 NGP_SRC="${NGP_SRC:-https://github.com/libretro/beetle-ngp-libretro/archive/refs/heads/master.tar.gz}"
@@ -183,6 +195,7 @@ ROOTFS="$WORK/rootfs"
 
 need=(debootstrap losetup mksquashfs unsquashfs wget gunzip md5sum python3 readelf sfdisk truncate)
 [[ ( "$MODE" == "image" || "$MODE" == "installer" ) && "$PTABLE" == gpt ]] && need+=(sgdisk)
+[[ ( "$MODE" == "image" || "$MODE" == "installer" ) && "$COMPACT_IMAGE" == 1 ]] && need+=(mkfs.vfat blkid)
 [[ "$(uname -m)" == "aarch64" ]] || need+=(qemu-aarch64-static)
 [[ "$MODE" == "update-img" ]] && need=(wget gunzip)
 for t in "${need[@]}"; do
@@ -341,6 +354,20 @@ case "$DEVICE" in
         || echo "!! Bluetooth firmware rtl_bt/$f.bin is not in the image: the H700's RTL8821CS adapter cannot initialise without it (install firmware-realtek / linux-firmware into the rootfs, or drop the file into /lib/firmware/rtl_bt)"
     done ;;
 esac
+# The stock ROCKNIX firmware set covers hardware that cannot exist on these handhelds (PC/server GPUs, Intel/Qualcomm radios,
+# datacenter NICs). It is copied from the stock SYSTEM, so it is dropped here; everything a handheld can have stays
+# (Realtek, Broadcom, MediaTek, Atheros, Unisoc, AIC, Mali, regulatory.db, ...). FIRMWARE_KEEP="name ..." keeps entries of the list.
+if [[ "$PRUNE_ROCKNIX" == 1 && -d "$ROOTFS/lib/firmware" ]]; then
+  FW_BEFORE="$(du -sk "$ROOTFS/lib/firmware" | cut -f1)"
+  for pat in amdgpu radeon nvidia i915 xe intel amd amd-ucode amdnpu amdtee 'iwlwifi-*' qcom mellanox netronome qed bnx2 bnx2x \
+             cxgb3 cxgb4 liquidio myricom 3com e100 tigon; do
+    case " $FIRMWARE_KEEP " in *" $pat "*) continue ;; esac
+    find "$ROOTFS/lib/firmware" -maxdepth 1 -name "$pat" -exec rm -rf {} + 2>/dev/null || true
+  done
+  # relative links that pointed into a removed directory (absolute ones are left alone: they do not resolve on the build host)
+  find "$ROOTFS/lib/firmware" -type l ! -lname '/*' -xtype l -delete 2>/dev/null || true
+  echo "==> Unused stock firmware removed: $(( FW_BEFORE / 1024 )) MiB -> $(( $(du -sk "$ROOTFS/lib/firmware" | cut -f1) / 1024 )) MiB"
+fi
 mkdir -p "$ROOTFS/system/etc"; ln -sfn /lib/firmware "$ROOTFS/system/etc/firmware"
 mkdir -p "$ROOTFS/etc/rgos/audio"
 AST="$(find "$WORK/system" -name asound.state -type f 2>/dev/null | head -1)"
@@ -1084,6 +1111,39 @@ if [[ "$MODE" == "update" ]]; then
   [[ ( "$DEVICE" == "rg34xxsp" || "$DEVICE" == "rg35xxh" || "$DEVICE" == "rg35xxsp" ) && "${UPDATE_DTB:-0}" == "1" ]] && cp "$WORK/mnt/dtb.img" "$WORK/upd/dtb.img"
 fi
 
+if [[ "$PRUNE_ROCKNIX" == 1 && "$MODE" != "update" ]]; then
+  # Stock ROCKNIX files RG OS never loads. Everything extlinux.conf names (kernel, initrd, device tree) and the files an
+  # offline update may replace stay; other device trees are dropped only when extlinux.conf picks its tree with an FDT line
+  # (with FDTDIR U-Boot chooses by itself, so they all stay).
+  echo "==> Removing unused stock ROCKNIX files from the boot partition"
+  BOOT_KB_BEFORE="$(du -sk "$WORK/mnt" | cut -f1)"
+  mapfile -t BOOT_REFS < <(awk 'tolower($1) ~ /^(linux|kernel|initrd|fdt|fdtdir)$/ {print $2}' "$EXT" | sed -e 's#^/*##' -e 's#/*$##')
+  boot_ref() { local r; for r in "${BOOT_REFS[@]}" dtb.img KERNEL KERNEL.md5 SYSTEM SYSTEM.md5 "$INITRD_NAME" extlinux \
+                                 device_trees/ums512-rg-rotate.dtb device_trees/miniloong.dtb miniloong.dtb; do
+                 [[ "$1" == "$r" || "$1" == "$r"/* ]] && return 0; done; return 1; }
+  if ! grep -qi '^[[:space:]]*fdtdir' "$EXT"; then
+    while IFS= read -r -d '' f; do
+      rel="${f#"$WORK/mnt"/}"
+      boot_ref "$rel" || { rm -f "$f"; echo "   removed $rel"; }
+    done < <(find "$WORK/mnt" -type f -iname '*.dtb' -print0)
+    [[ -d "$WORK/mnt/device_trees" ]] && find "$WORK/mnt/device_trees" -depth -type d -empty -delete
+  else
+    echo "   (extlinux.conf uses FDTDIR: every device tree stays)"
+  fi
+  # leftovers: archives and *.prev / *.new copies of earlier updates
+  while IFS= read -r -d '' f; do
+    rel="${f#"$WORK/mnt"/}"; boot_ref "$rel" || { rm -f "$f"; echo "   removed $rel"; }
+  done < <(find "$WORK/mnt" -maxdepth 1 -type f \( -iname '*.tar' -o -iname '*.tar.gz' -o -iname '*.zip' -o -name '*.prev' -o -name '*.new' \) -print0)
+  for f in $PRUNE_BOOT_EXTRA; do
+    f="${f#/}"
+    [[ -n "$f" && "$f" != *..* ]] || continue
+    boot_ref "$f" && { echo "   (not removing $f: the boot files need it)"; continue; }
+    [[ -e "$WORK/mnt/$f" ]] && { rm -rf "${WORK:?}/mnt/$f"; echo "   removed $f (PRUNE_BOOT_EXTRA)"; }
+  done
+  echo "   boot partition now: $(( $(du -sk "$WORK/mnt" | cut -f1) / 1024 )) MiB (was $(( BOOT_KB_BEFORE / 1024 )) MiB)"
+  ls -la "$WORK/mnt"
+fi
+
 { echo "RG OS image info (written by build.sh)"
   echo "device: $DEVICE"
   echo "base image: $(basename "$ROCKNIX_URL")"
@@ -1114,6 +1174,12 @@ if [[ "$MODE" == "update" ]]; then
   echo "Done: $UPD_TAR"
   echo "Copy it to the update/ folder of the ROMS partition (or the boot partition) and reboot the device; it installs it and restarts."
   exit 0
+fi
+
+if [[ "$COMPACT_IMAGE" == 1 ]]; then
+  echo "==> Shrinking the image: the stock layout is a fixed ~2.2 GB, RG OS only needs its own files"
+  python3 "$HERE/tools/compact-image.py" "$IMG" --headroom-mb "$BOOT_HEADROOM_MB" --label "$BOOT_LABEL"
+  echo "==> Image size: $(( $(stat -c %s "$IMG") / 1048576 )) MiB"
 fi
 
 if [[ "$PTABLE" == gpt ]]; then
