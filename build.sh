@@ -183,6 +183,10 @@ FIRMWARE_KEEP="${FIRMWARE_KEEP:-}"; PRUNE_BOOT_EXTRA="${PRUNE_BOOT_EXTRA:-}"
 [[ "$PRUNE_ROCKNIX" == 0 || "$PRUNE_ROCKNIX" == 1 ]] || { echo "PRUNE_ROCKNIX must be 0 or 1" >&2; exit 1; }
 [[ "$BOOT_HEADROOM_MB" =~ ^[0-9]+$ ]] || { echo "BOOT_HEADROOM_MB must be a whole number of MiB" >&2; exit 1; }
 RGOS_INITRD="${RGOS_INITRD:-1}"
+# 1 (default): the image carries /rgos-wipe-roms, so the first boot after FLASHING erases the old ROMS partition left on the card
+# (flashing only rewrites the image area; ROMS lives behind it). 0: a reflash keeps games, saves and settings.
+RGOS_WIPE_ROMS="${RGOS_WIPE_ROMS:-1}"
+[[ "$RGOS_WIPE_ROMS" == 0 || "$RGOS_WIPE_ROMS" == 1 ]] || { echo "RGOS_WIPE_ROMS must be 0 or 1" >&2; exit 1; }
 [[ "$RGOS_INITRD" == 0 || "$RGOS_INITRD" == 1 ]] || { echo "RGOS_INITRD must be 0 or 1" >&2; exit 1; }
 NGP_SRC="${NGP_SRC:-https://github.com/libretro/beetle-ngp-libretro/archive/refs/heads/master.tar.gz}"
 EMU_PKGS="retroarch,libretro-gambatte,libretro-mgba,libretro-snes9x,libretro-nestopia,libretro-beetle-wswan,libretro-core-info,liblzo2-2,libgl1-mesa-dri,libegl1,libegl-mesa0,libgles2,libgbm1,libsdl2-2.0-0,libopenal1"
@@ -1100,6 +1104,15 @@ if [[ "$MODE" == "installer" ]]; then
 fi
 if [[ -f "$WORK/mnt/SYSTEM.md5" ]]; then
   (cd "$WORK/mnt" && md5sum SYSTEM > SYSTEM.md5)
+fi
+
+if [[ "$MODE" != "update" ]]; then
+  if [[ "$RGOS_WIPE_ROMS" == 1 ]]; then
+    echo "==> Flash marker: the first boot after flashing erases the old ROMS partition (RGOS_WIPE_ROMS=0 turns this off)"
+    echo "Remove this file to keep the ROMS partition. rgos-roms deletes it after the first boot." > "$WORK/mnt/rgos-wipe-roms"
+  else
+    rm -f "$WORK/mnt/rgos-wipe-roms"
+  fi
 fi
 
 echo "==> Building the RG OS initramfs (replaces ROCKNIX's init: no 60 s wait, no error screen)"

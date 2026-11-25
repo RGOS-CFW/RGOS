@@ -77,6 +77,35 @@ if [ ! -b "$part" ]; then
 fi
 
 fstype=$(blkid -p -o value -s TYPE "$part" 2>/dev/null)
+
+# Wipe flag: every freshly flashed image carries /boot/rgos-wipe-roms (build.sh), the old ROMS partition behind it survives the
+# flash, so the first boot after a flash erases it. The flag is removed BEFORE anything is erased and the wipe is skipped when it
+# cannot be removed (read-only boot partition), so a failure can never turn into "wipe on every boot". Offline updates never
+# write this file, so they keep your data.
+WIPE=/boot/rgos-wipe-roms
+if [ -f "$WIPE" ]; then
+    rm -f "$WIPE" 2>/dev/null; sync
+    if [ -e "$WIPE" ]; then
+        say "cannot remove $WIPE (boot partition read-only?): NOT wiping $part"
+    elif grep -q "^$part " /proc/mounts 2>/dev/null; then
+        say "$part is mounted: NOT wiping it"
+    elif [ -n "$fstype" ]; then
+        say "wipe flag found: erasing $part (it held '$fstype')"
+        # keep the installer's choice if there is one, else the file system the partition already had
+        if [ -z "${RGOS_ROMS_FS:-}" ]; then
+            case "$fstype" in vfat) fs=fat32 ;; ext4) fs=ext4 ;; exfat) fs=exfat ;; esac
+        fi
+        case "$fs" in fat32) mkfs_cmd=mkfs.vfat ;; ext4) mkfs_cmd=mkfs.ext4 ;; *) mkfs_cmd=mkfs.exfat ;; esac
+        if command -v "$mkfs_cmd" >/dev/null 2>&1; then
+            dd if=/dev/zero of="$part" bs=1M count=4 >> "$LOG" 2>&1
+            sync
+            fstype=""
+        else
+            say "$mkfs_cmd is missing from the image: NOT wiping $part"
+        fi
+    fi
+fi
+
 if [ -n "$fstype" ]; then
     say "$part already holds '$fstype': nothing to do"; exit 0
 fi
