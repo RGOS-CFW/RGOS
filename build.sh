@@ -489,7 +489,7 @@ if [[ "$PORTMASTER" == 1 ]]; then
   [[ -x "$ROOTFS/usr/bin/unzip" ]] || echo "!! unzip is not in the image: PortMaster may close right after its splash (a busybox unzip is linked in below as a fallback)"
 fi
 printf 'BUILD_ID=%s\n' "$(date +%Y%m%d-%H%M)" > "$ROOTFS/etc/rgos-release"
-echo '{"enabled": false, "mountpoint": "/media/roms2"}' > "$ROOTFS/etc/rgos/sdcard.json"
+echo '{"enabled": true, "mountpoint": "/media/roms2", "create_folders": true}' > "$ROOTFS/etc/rgos/sdcard.json"
 [[ -f "$HERE/config/retroarch.cfg" ]] || { echo "!! $HERE/config/retroarch.cfg missing"; exit 1; }
 cp "$HERE/config/retroarch.cfg" "$ROOTFS/etc/rgos/retroarch.cfg"
 mkdir -p "$ROOTFS/etc/rgos/autoconfig" && cp "$HERE"/config/autoconfig/*.cfg "$ROOTFS/etc/rgos/autoconfig/"

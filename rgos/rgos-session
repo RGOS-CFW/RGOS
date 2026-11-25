@@ -180,6 +180,7 @@ python3 /opt/rgos/wifictl.py daemon >> /var/log/rgos-wifi.log 2>&1 &
 python3 /opt/rgos/btctl.py start >> /var/log/rgos-bt.log 2>&1 &
 python3 /opt/rgos/sshctl.py boot >> /var/log/rgos-ssh.log 2>&1 &
 python3 /opt/rgos/rgos-volume >> /var/log/rgos-volume.log 2>&1 &
+python3 /opt/rgos/sdcard.py watch >> /var/log/rgos-sdcard.log 2>&1 &
 python3 /opt/rgos/rgos-overlay >> /var/log/rgos-overlay.log 2>&1 &
 python3 /opt/rgos/gamemenu.py daemon >> /var/log/rgos-gamemenu.log 2>&1 &
 python3 /opt/rgos/rgos-input >> /var/log/rgos-input.log 2>&1 &

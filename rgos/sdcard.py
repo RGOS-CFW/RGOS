@@ -220,12 +220,25 @@ def umount(mountpoint):
 
 def make_folders(mountpoint):
     base = os.path.join(mountpoint, "roms")
+    ok = True
     for s in SYSTEM_DIRS:
+        path = os.path.join(base, s)
+        if os.path.isdir(path):
+            continue
         try:
-            os.makedirs(os.path.join(base, s), exist_ok=True)
-        except OSError:
-            return False
-    return True
+            os.makedirs(path, exist_ok=True)
+        except OSError as e:
+            log("could not create %s: %s" % (path, e))
+            ok = False
+            break
+    return ok
+
+
+def is_readonly(mountpoint, table=None):
+    for _src, mnt, _fs, opts in (mounts() if table is None else table):
+        if mnt == mountpoint:
+            return "ro" in opts.split(",")
+    return False
 
 
 def write_status(info):
@@ -287,14 +300,15 @@ def sync():
                 log("card 2: could not mount %s (%s)" % (want["dev"], want["fstype"]))
                 want = None
     if want:
-        if conf["create_folders"] and not want.get("ro") and not os.path.isdir(os.path.join(mp, "roms")):
-            make_folders(mp)
+        if is_readonly(mp):
+            want["ro"] = True
+        if conf["create_folders"]:
+            if want.get("ro"):
+                log("card 2 is mounted read-only: cannot create the roms folders on %s" % mp)
+            else:
+                make_folders(mp)
         st = {"mount": mp, "dev": want["dev"], "disk": want["disk"], "fstype": want["fstype"], "label": want["label"],
               "ro": bool(want.get("ro", False)), "time": int(time.time())}
-        if st["dev"] == (mounted or ("",))[0] and os.path.exists(STATUS_FILE):
-            old = load_status_file()
-            if old and old.get("dev") == st["dev"]:
-                st["ro"] = old.get("ro", st["ro"])
         write_status(st)
     else:
         write_status(None)
@@ -338,6 +352,56 @@ def usage(mountpoint):
 
 
 
+def signature():
+    """Cheap fingerprint of the SD slots: changes when a card is inserted or removed."""
+    sig = []
+    try:
+        names = sorted(n for n in os.listdir(SYS_BLOCK) if DISK_RE.match(n))
+    except OSError:
+        return ()
+    for n in names:
+        size = _read_int(os.path.join(SYS_BLOCK, n, "size"))
+        if size > 0:
+            parts = tuple(sorted(x for x in os.listdir(os.path.join(SYS_BLOCK, n)) if x.startswith(n + "p")))
+            sig.append((n, size, parts))
+    return tuple(sig)
+
+
+def locked_sync():
+    try:
+        os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
+        lock = open(LOCK_FILE, "w")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+    except OSError:
+        lock = None
+    try:
+        sync()
+    except Exception as e:
+        log("sync failed: %r" % (e,))
+    finally:
+        if lock:
+            lock.close()
+
+
+def watch(interval=2.0):
+    """There is no udev here: poll the slots and sync on boot and whenever a card shows up or goes away."""
+    last = None
+    retry = 0
+    while True:
+        sig = signature()
+        want_sync = sig != last
+        if not want_sync and retry > 0:
+            retry -= 1
+            want_sync = retry == 0
+        if want_sync:
+            sh(["udevadm", "settle", "--timeout=3"], 5)
+            locked_sync()
+            last = sig
+            # a freshly inserted card can take a moment to expose its partitions: look again a few polls later
+            retry = 3
+        time.sleep(interval)
+
+
 def cli(argv):
     cmd = next((a for a in argv if not a.startswith("--")), "sync")
     if cmd == "status":
@@ -347,12 +411,15 @@ def cli(argv):
     if cmd == "bootdisk":
         print(boot_disk())
         return 0
+    if cmd == "watch":
+        watch()
+        return 0
     if cmd == "roots":
         for r in extra_roots():
             print(r)
         return 0
     if cmd != "sync":
-        print("usage: rgos-sdcard [sync|status|roots|bootdisk]", file=sys.stderr)
+        print("usage: sdcard.py [sync|watch|status|roots|bootdisk]", file=sys.stderr)
         return 2
     try:
         os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
