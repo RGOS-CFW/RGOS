@@ -161,7 +161,7 @@ build_flycast_standalone() { local log="$LOGS/flycast-standalone.log"; : > "$log
 build_dolphin() { local log="$LOGS/dolphin.log"; : > "$log"
   cx env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libevdev-dev libudev-dev libasound2-dev libpulse-dev libgl-dev libegl-dev libgles-dev libdrm-dev libgbm-dev libusb-1.0-0-dev libbluetooth-dev libcurl4-openssl-dev libpng-dev libminizip-dev liblzo2-dev libmbedtls-dev libhidapi-dev zlib1g-dev libxi-dev libxrandr-dev libx11-dev >>"$LOGS/apt.log" 2>&1 || { echo "dolphin build dependencies failed to install (see $LOGS/apt.log)"; return 1; }
   fetch dolphin "$GC_REPO"
-  cx sh -c 'cd /tmp/core-src/dolphin && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-mtune=cortex-a75 -DCMAKE_CXX_FLAGS=-mtune=cortex-a75 -DLIBRETRO=ON -DENABLE_QT=OFF -DENABLE_NOGUI=OFF -DENABLE_X11=OFF -DENABLE_TESTS=OFF -DENABLE_ANALYTICS=OFF -DENABLE_LTO=OFF -DUSE_DISCORD_PRESENCE=OFF -DENABLE_CLI_TOOL=OFF' >>"$log" 2>&1 \
+  cx sh -c 'cd /tmp/core-src/dolphin && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-mtune=cortex-a55 -DCMAKE_CXX_FLAGS=-mtune=cortex-a55 -DLIBRETRO=ON -DENABLE_QT=OFF -DENABLE_NOGUI=OFF -DENABLE_X11=OFF -DENABLE_TESTS=OFF -DENABLE_ANALYTICS=OFF -DENABLE_LTO=OFF -DUSE_DISCORD_PRESENCE=OFF -DENABLE_CLI_TOOL=OFF' >>"$log" 2>&1 \
     && retry "$log" "cd /tmp/core-src/dolphin && cmake --build build -j@J@"
   local so; so="$(find_so dolphin dolphin_libretro.so)"; [[ -n "$so" ]] || { echo "dolphin_libretro.so was not produced"; return 1; }
   take "$so" dolphin_libretro.so; rm -rf "$OUTC/dolphin-Sys"; cp -r "$B/tmp/core-src/dolphin/Data/Sys" "$OUTC/dolphin-Sys"; }

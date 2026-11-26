@@ -862,7 +862,7 @@ KEEP
         rm -rf "$WORK/dolphin-libretro"
         git clone -q --depth 1 --recurse-submodules --shallow-submodules "$GC_REPO" "$WORK/dolphin-libretro" || exit 1
         cp -r "$WORK/dolphin-libretro" "$ROOTFS/tmp/core-src/gc" || exit 1
-        chroot "$ROOTFS" sh -c 'cd /tmp/core-src/gc && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-mtune=cortex-a75 -DCMAKE_CXX_FLAGS=-mtune=cortex-a75 -DLIBRETRO=ON -DENABLE_QT=OFF -DENABLE_NOGUI=OFF -DENABLE_X11=OFF -DENABLE_TESTS=OFF -DENABLE_ANALYTICS=OFF -DENABLE_LTO=OFF -DUSE_DISCORD_PRESENCE=OFF -DENABLE_CLI_TOOL=OFF && cmake --build build -j"$(nproc)"' || exit 1
+        chroot "$ROOTFS" sh -c 'cd /tmp/core-src/gc && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-mtune=cortex-a55 -DCMAKE_CXX_FLAGS=-mtune=cortex-a55 -DLIBRETRO=ON -DENABLE_QT=OFF -DENABLE_NOGUI=OFF -DENABLE_X11=OFF -DENABLE_TESTS=OFF -DENABLE_ANALYTICS=OFF -DENABLE_LTO=OFF -DUSE_DISCORD_PRESENCE=OFF -DENABLE_CLI_TOOL=OFF && cmake --build build -j"$(nproc)"' || exit 1
         so="$(find "$ROOTFS/tmp/core-src/gc" -name dolphin_libretro.so -type f | head -n1)"
         [[ -n "$so" ]] || exit 1
         install -m 755 "$so" "$LRDIR/dolphin_libretro.so" || exit 1

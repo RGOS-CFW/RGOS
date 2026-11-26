@@ -399,11 +399,13 @@ def device_id():
         return ""
 
 
-def gc_core_options(roms_root, run_dir, safe=False):
+def gc_core_options(roms_root, run_dir, safe=False, content=None):
     """Write the Dolphin core options for this launch and return the file's path ("" if it cannot be written).
 
     Order of precedence: built-in tuned defaults < safe-mode changes (retry after a crash) < the user's own
-    <ROMS>/config/dolphin-options.cfg. The file lives in the run directory, so it is rebuilt on every launch.
+    <ROMS>/config/dolphin-options.cfg < a per-game <ROMS>/config/dolphin/<rom file name without extension>.cfg.
+    The per-game file lets one heavy game get e.g. a lower dolphin_cpu_clock_rate without slowing down or breaking the rest.
+    The file lives in the run directory, so it is rebuilt on every launch.
     """
     opts = dict(GC_CORE_OPTIONS)
     if device_id() in H700_DEVICES:
@@ -413,6 +415,10 @@ def gc_core_options(roms_root, run_dir, safe=False):
     if safe:
         opts.update(GC_SAFE_OPTIONS)
     opts.update(read_option_overrides(os.path.join(roms_root, "config", GC_OPTIONS_NAME)))
+    if content:
+        stem = os.path.splitext(os.path.basename(content))[0]
+        if stem:
+            opts.update(read_option_overrides(os.path.join(roms_root, "config", "dolphin", stem + ".cfg")))
     path = os.path.join(run_dir, GC_OPTIONS_NAME)
     try:
         os.makedirs(run_dir, exist_ok=True)
@@ -1385,7 +1391,7 @@ def launch_retroarch(sid, core, core_path, content):
     history, rc, cmd = [], 0, []
     for n, video in enumerate(attempts):
         if sid == "gc":
-            gc_opts = gc_core_options(ROMS_ROOT, RUN_DIR, safe=n > 0)
+            gc_opts = gc_core_options(ROMS_ROOT, RUN_DIR, safe=n > 0, content=content)
         elif sid in ("n64", "saturn", "dreamcast"):
             gc_opts = core_options(sid, ROMS_ROOT, RUN_DIR, safe=n > 0, core=core)
         else:

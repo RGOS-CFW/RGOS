@@ -56,6 +56,22 @@ class GcPerf(unittest.TestCase):
         self.assertIn('dolphin_fast_depth_calc = "enabled"', text)
         self.assertIn('dolphin_shader_compilation_mode = "a-sync"', text)
 
+    def test_per_game_options_beat_the_global_file_and_only_hit_that_game(self):
+        self.set_device("rg35xxh")
+        roms = os.path.join(self.tmp, "roms")
+        os.makedirs(os.path.join(roms, "config", "dolphin"))
+        with open(os.path.join(roms, "config", "dolphin-options.cfg"), "w") as f:
+            f.write('dolphin_cpu_clock_rate = "100%"\n')
+        with open(os.path.join(roms, "config", "dolphin", "Wind Waker.cfg"), "w") as f:
+            f.write('dolphin_cpu_clock_rate = "75%"\n')
+        run = os.path.join(self.tmp, "run")
+        mine = open(L.gc_core_options(roms, run, content="/roms/gc/Wind Waker.iso")).read()
+        other = open(L.gc_core_options(roms, run, content="/roms/gc/Luigi.iso")).read()
+        none = open(L.gc_core_options(roms, run)).read()
+        self.assertIn('dolphin_cpu_clock_rate = "75%"', mine)
+        self.assertIn('dolphin_cpu_clock_rate = "100%"', other)
+        self.assertIn('dolphin_cpu_clock_rate = "100%"', none)
+
 
 if __name__ == "__main__":
     unittest.main()
