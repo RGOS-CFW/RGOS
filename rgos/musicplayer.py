@@ -35,7 +35,9 @@ def music_dir(roms_root):
 
 
 def _natural(s):
-    return [int(p) if p.isdigit() else p for p in re.split(r"(\d+)", s.lower())]
+    # re.split with a capture group alternates text / digits, so the digit runs sit at the odd indexes. Going by
+    # position (not str.isdigit) keeps characters like "²" or "①", which isdigit() accepts but int() rejects, as text.
+    return [int(p) if i % 2 else p for i, p in enumerate(re.split(r"(\d+)", s.lower()))]
 
 
 def scan(root):
