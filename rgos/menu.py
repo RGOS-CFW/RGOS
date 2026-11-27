@@ -12,6 +12,7 @@ import btctl
 import sshctl
 import biosctl
 import coreinstall
+import musicplayer
 import filemanager
 import rgclassic
 import artwork
@@ -995,7 +996,7 @@ def anim_val(key, target, omega=20.0):
 # screen transitions: moving between menus slides + crossfades; popups / dropdowns crossfade
 _VT = {"last": None, "t0": 0.0, "dur": 0.0, "dir": 0, "kind": ""}
 TR_SLIDE = 44
-VT_DEPTH = {"home": 0, "systems": 1, "tools": 1, "settings": 1, "recents": 1, "favorites": 1, "kbd": 3}
+VT_DEPTH = {"home": 0, "systems": 1, "tools": 1, "music": 2, "settings": 1, "recents": 1, "favorites": 1, "kbd": 3}
 SPRING_K, SPRING_C = rgclassic.SPRING_K, rgclassic.SPRING_C
 HOME_INTRO_S = 1.0
 _HOME_FX = {"key": None, "t0": 0.0, "last": 0.0, "idx": None, "sel_t": 0.0}
@@ -1204,6 +1205,7 @@ HOME_COLS = 2
 HOME_ITEMS = [("games", "Games"), ("recents", "Recents"), ("favorites", "Favorites"), ("tools", "Tools"), ("settings", "Settings"), ("power", "Power Off")]
 TOOLS = [("files", "File Manager", "Browse, copy, move, rename and delete files on the SD cards", "@view:files"),
          ("portmaster", "PortMaster", "Browse, install and update native Linux game ports", "@tool:portmaster"),
+         ("music", "Music", "Play the songs in the ROMS music folder", "@view:music"),
          ("coreinstall", "Core Installer", "Download RetroArch cores for your systems", "@view:coreinstall"),
          ("retroarch", "RetroArch", "Open the RetroArch menu (cores, content, settings)", "@tool:retroarch")]
 BOOT_ROOT = "/boot"
@@ -1400,9 +1402,72 @@ def icon_files(c, cx, cy, col, bg):
     pygame.draw.rect(c, col, (cx - 32, cy - 14, 64, 40), border_radius=6)
 
 
+def icon_music(c, cx, cy, col, bg):
+    pygame.draw.ellipse(c, col, (cx - 26, cy + 8, 28, 20))
+    pygame.draw.rect(c, col, (cx - 2, cy - 26, 6, 42))
+    pygame.draw.polygon(c, col, [(cx + 4, cy - 26), (cx + 28, cy - 16), (cx + 28, cy - 4), (cx + 4, cy - 14)])
+
+
+def mp_glyph(c, kind, cx, cy, r, col):
+    """Transport glyphs for the music player, centred on (cx, cy), about 2r wide (all integer coordinates)."""
+    cx, cy, r = int(cx), int(cy), int(r)
+    if kind == "play":
+        pygame.draw.polygon(c, col, [(cx - r * 6 // 10, cy - r), (cx - r * 6 // 10, cy + r), (cx + r, cy)])
+    elif kind == "pause":
+        w = max(3, r * 6 // 10)
+        pygame.draw.rect(c, col, (cx - r * 3 // 4, cy - r, w, 2 * r), border_radius=1)
+        pygame.draw.rect(c, col, (cx + r * 3 // 4 - w, cy - r, w, 2 * r), border_radius=1)
+    elif kind == "stop":
+        pygame.draw.rect(c, col, (cx - r * 4 // 5, cy - r * 4 // 5, r * 8 // 5, r * 8 // 5), border_radius=2)
+    elif kind in ("next", "prev"):
+        d = 1 if kind == "next" else -1
+        for off in (-55, 45):
+            x0 = cx + d * r * off // 100
+            pygame.draw.polygon(c, col, [(x0 - d * r // 2, cy - r * 4 // 5), (x0 - d * r // 2, cy + r * 4 // 5), (x0 + d * r // 2, cy)])
+        pygame.draw.rect(c, col, (cx + d * r * 95 // 100 - 1, cy - r * 4 // 5, 3, r * 8 // 5))
+
+
+def mp_chip(c, font, x, cy, text, on, right=False):
+    """A small status pill (SHUFFLE / REPEAT ALL ...). x is its left edge, or its right edge with right=True."""
+    t = font.render(text, True, ACCENT if on else DIM)
+    w, h = t.get_width() + 18, t.get_height() + 6
+    if right:
+        x -= w
+    ui_rect(c, SEL_BG if on else PANEL, (x, cy - h // 2, w, h), h // 2)
+    c.blit(t, (x + 9, cy - t.get_height() // 2))
+    return w
+
+
+_MQ = {}
+
+
+def marquee(c, font, text, col, x, y, width, now):
+    """Text that scrolls sideways when it is wider than `width` (like the PSP's long song titles)."""
+    key = (font, text, col)
+    surf = _MQ.get(key)
+    if surf is None:
+        if len(_MQ) > 40:
+            _MQ.clear()
+        surf = _MQ[key] = font.render(text, True, col)
+    if surf.get_width() <= width:
+        c.blit(surf, (x, y))
+        return False
+    gap, over = 48, surf.get_width() - width
+    cyc = (over + gap) / 40.0 + 2.4          # 40 px/s, with a pause at each end
+    ph = now % cyc
+    off = 0 if ph < 1.2 else min(over + gap, (ph - 1.2) * 40.0)
+    keep = c.get_clip()
+    c.set_clip(pygame.Rect(x, y - 2, width, surf.get_height() + 4).clip(keep))
+    c.blit(surf, (x - off, y))
+    if off > over:
+        c.blit(surf, (x - off + surf.get_width() + gap, y))
+    c.set_clip(keep)
+    return True
+
+
 ICONS = {"games": icon_games, "recents": icon_recents, "favorites": icon_favorites, "tools": icon_tools, "settings": icon_settings, "power": icon_power,
          "theme": icon_theme, "launcher": icon_launcher, "splash": icon_splash, "emulators": icon_emulators, "bios": icon_bios, "artwork": icon_artwork, "bmap": icon_bmap,
-         "swapab": icon_swapab, "dpadjoy": icon_dpadjoy, "wifi": icon_wifi, "bluetooth": icon_bluetooth, "ssh": icon_ssh, "info": icon_info, "files": icon_files}
+         "swapab": icon_swapab, "dpadjoy": icon_dpadjoy, "wifi": icon_wifi, "bluetooth": icon_bluetooth, "ssh": icon_ssh, "info": icon_info, "files": icon_files, "music": icon_music}
 
 
 # ---- per-system icons (RG XMB list) --------------------------------------------------------
@@ -2922,7 +2987,7 @@ def main():
                          "sub": "Games you play show up here" if cat == "recents" else "Press Y on a game to add it", "icon": cat, "act": None}]
             return [{"label": g["title"], "sub": sysname.get(g["sid"], g["tag"]), "icon": system_icon(g["sid"]), "act": ("launch", g)} for g in gl]
         if cat == "tools":
-            return [{"label": t[1], "sub": t[2], "icon": "files" if t[3] == "@view:files" else "tools", "act": ("tool", t[3])} for t in TOOLS]
+            return [{"label": t[1], "sub": t[2], "icon": "files" if t[3] == "@view:files" else "music" if t[3] == "@view:music" else "tools", "act": ("tool", t[3])} for t in TOOLS]
         return [{"label": "Power Off", "sub": "Shut down RG OS", "icon": "power", "act": ("power",)}]
 
     _xic = {}
@@ -3018,6 +3083,21 @@ def main():
     bios_cache, bios_scroll, bios_pos, bios_all = None, 0, 0.0, False
     ci = coreinstall.Installer(coreinstall.core_dir(ROMS_ROOT), names=CORE_NAMES)
     ci_rows, ci_idx = [], 0
+    mp_lib = musicplayer.Library(musicplayer.music_dir(ROMS_ROOT))
+    mp = musicplayer.Player(pygame.mixer, log=log)
+    mp_art_px = 200 + min(DY, 240) // 2
+    mp_art = musicplayer.ArtLoader(pygame, mp_art_px)
+    mp_idx, mp_sub, mp_energy = 0, "list", 0.0
+
+    def mp_open():
+        nonlocal mp_idx, mp_sub
+        mp_lib.rescan()
+        mp.set_tracks(mp_lib.tracks)
+        mp.enter()
+        if mp.cur in mp_lib.tracks:
+            mp_idx = mp_lib.tracks.index(mp.cur)
+        mp_idx = max(0, min(mp_idx, len(mp_lib.tracks) - 1))
+        mp_sub = "np" if mp.active and mp.cur is not None else "list"
     info_scroll, info_pos = 0, 0.0
     wconf, wscan, wf_idx, wf_msg, wf_msg_until, wf_pending = wifictl.load_conf(), wifictl.Scanner(), 0, "", 0.0, ("", False)
     btm, bt_idx = btctl.Manager(), 0
@@ -3170,6 +3250,7 @@ def main():
     while code is None:
         if os.path.exists(SCREENOFF_FILE):
             inp.poll()
+            mp.tick()    # music keeps playing (and moves on to the next song) with the screen off
             if not blanked:
                 canvas.fill((0, 0, 0))
                 present()
@@ -3178,7 +3259,10 @@ def main():
             continue
         blanked = False
         _pt0 = time.perf_counter()
-        _music_tick()
+        mp.hold = view == "music"
+        mp.tick()
+        if not mp.engaged:
+            _music_tick()      # the launcher's background music stays out while the player owns the mixer
         _asc = art["sc"]
         if _asc is not None:
             _now = time.monotonic()
@@ -3246,7 +3330,7 @@ def main():
                     dd_set(dd["kind"], dd["orig"])
                     dd = None
             elif a == "menu":
-                if view in ("systems", "games", "recents", "favorites", "tools", "settings", "wifi", "bt", "ssh", "info", "bios", "artwork", "files", "coreinstall"):
+                if view in ("systems", "games", "recents", "favorites", "tools", "settings", "wifi", "bt", "ssh", "info", "bios", "artwork", "files", "coreinstall", "music"):
                     view = "home"
                 elif view == "bmap" and bmap and bmap.state in ("done", "fail"):
                     view = "home"
@@ -3280,6 +3364,10 @@ def main():
                             xmb_ret[0] = True
                         elif act[1] == "@view:coreinstall":
                             ci_rows[:], ci_idx, view = core_installer_rows(), 0, "coreinstall"
+                            xmb_ret[0] = True
+                        elif act[1] == "@view:music":
+                            mp_open()
+                            view = "music"
                             xmb_ret[0] = True
                         else:
                             code = launch(act[1])
@@ -3367,8 +3455,58 @@ def main():
                         fm, fm_pop, view = make_file_manager(), None, "files"
                     elif tgt == "@view:coreinstall":
                         ci_rows[:], ci_idx, view = core_installer_rows(), 0, "coreinstall"
+                    elif tgt == "@view:music":
+                        mp_open()
+                        view = "music"
                     else:
                         code = launch(tgt)
+            elif view == "music":
+                mp_rows = max(3, (H - 76 - 40 - (70 if mp_lib.tracks else 0) - 16) // 44)
+                mp_n = len(mp_lib.tracks)
+                if a == "start":
+                    if mp_n:
+                        mp.toggle()
+                elif a == "y":
+                    mp.say("Shuffle " + ("on" if mp.toggle_shuffle() else "off"))
+                elif a == "x":
+                    mp.say("Repeat " + mp.cycle_repeat())
+                elif mp_sub == "list":
+                    if a in ("up", "down") and mp_n:
+                        mp_idx = (mp_idx + (1 if a == "down" else -1)) % mp_n
+                    elif a in ("left", "l") and mp_n:
+                        mp_idx = max(0, mp_idx - mp_rows + 1)
+                    elif a in ("right", "r") and mp_n:
+                        mp_idx = min(mp_n - 1, mp_idx + mp_rows - 1)
+                    elif a == "a" and mp_n:
+                        tr = mp_lib.tracks[mp_idx]
+                        if tr is mp.cur and mp.active:
+                            mp_sub = "np"
+                        elif mp.play(tr):
+                            mp_sub = "np"
+                    elif a == "select":
+                        mp_lib.rescan()
+                        mp.set_tracks(mp_lib.tracks)
+                        mp_idx = max(0, min(mp_idx, len(mp_lib.tracks) - 1))
+                        mp.say("%d song%s" % (len(mp_lib.tracks), "" if len(mp_lib.tracks) == 1 else "s"))
+                    elif a == "b":
+                        view = back_to("tools")
+                else:
+                    if a == "a":
+                        mp.toggle()
+                    elif a == "left":
+                        mp.seek(-musicplayer.SEEK_STEP)
+                    elif a == "right":
+                        mp.seek(musicplayer.SEEK_STEP)
+                    elif a == "l":
+                        mp.prev()
+                    elif a == "r":
+                        mp.next()
+                    elif a in ("b", "select"):
+                        if mp.cur in mp_lib.tracks:
+                            mp_idx = mp_lib.tracks.index(mp.cur)
+                        mp_sub = "list"
+                    if mp.cur is None:
+                        mp_sub = "list"
             elif view == "coreinstall":
                 ci_vis = 7 + DY // 44
                 ci_s = ci.snapshot()
@@ -3725,19 +3863,20 @@ def main():
         if anim_moving:
             _BOOST.poke()
         _BOOST.tick()
-        XMB_UI[0] = launcher_id == "xmb"
-        CLASSIC_UI[0], CLASSIC_UI[1] = launcher_id == "rgclassic", classic_unit()
+        xmb_look = launcher_id == "xmb" or view == "music"     # the music player always wears the PSP look
+        XMB_UI[0] = xmb_look
+        CLASSIC_UI[0], CLASSIC_UI[1] = launcher_id == "rgclassic" and view != "music", classic_unit()
         f_logo, f_big, f_row, f_small, f_tiny = PX_FONTS if CLASSIC_UI[0] else TT_FONTS
         classic_on = launcher_id == "rgclassic" and view == "home"
         if classic_on:
             pass
-        elif launcher_id == "rgclassic":
+        elif launcher_id == "rgclassic" and view != "music":
             classic_ui.apply(BG, PANEL, SEL_BG, ACCENT, TEXT, DIM)
             if _CLASSIC_BG[0] != classic_ui._theme:
                 _CLASSIC_BG[0], _CLASSIC_BG[1] = classic_ui._theme, pygame.transform.scale(classic_ui.bg, (W, H))
             canvas.blit(_CLASSIC_BG[1], (0, 0))
             draw_classic_header(canvas, f_logo)
-        elif launcher_id == "xmb":
+        elif xmb_look:
             xmb_bg(canvas, time.time(), anim_moving or time.monotonic() - last_act < XMB_BG_SETTLE)
         else:
             canvas.fill(BG)
@@ -3760,6 +3899,8 @@ def main():
             info = "Tools > Files   %s" % clk
         elif view == "coreinstall":
             info = "Tools > Core Installer   %s" % clk
+        elif view == "music":
+            info = "Tools > Music   %d song%s   %s" % (len(mp_lib.tracks), "" if len(mp_lib.tracks) == 1 else "s", clk)
         elif view in ("settings", "bmap"):
             info = "Settings   %s" % clk
         elif view == "info":
@@ -3787,7 +3928,7 @@ def main():
         s = f_small.render(info, True, DIM)
         bat = None if classic_on else rd_bat()
         right = W - 20
-        if launcher_id == "xmb":
+        if xmb_look:
             pl = (W - 90 - 16 if bat else W - 20) - s.get_width() - 20
             pygame.draw.rect(canvas, xmb_tint(W - 40, 33, 0.10), (pl, 14, W - 8 - pl, 38), border_radius=19)
             pygame.draw.rect(canvas, xmb_tint(W - 40, 33, 0.24), (pl, 14, W - 8 - pl, 38), 1, border_radius=19)
@@ -3836,7 +3977,7 @@ def main():
             cdescs = {"games": "%d games" % len(all_games),
                       "recents": "%d recent" % len(recent_games()),
                       "favorites": "%d favorites" % len(favorite_games()),
-                      "tools": "Files, ports, RetroArch",
+                      "tools": "Files, music, ports, RetroArch",
                       "settings": "Theme, Wi-Fi, info, controls",
                       "power": "Shut down RG OS"}
             classic_ui.apply(BG, PANEL, SEL_BG, ACCENT, TEXT, DIM)
@@ -3857,7 +3998,7 @@ def main():
             subs = {"games": "%d games" % len(all_games),
                     "recents": "%d recent" % len(recent_games()),
                     "favorites": "%d favorites" % len(favorite_games()),
-                    "tools": "Files, ports, RetroArch",
+                    "tools": "Files, music, ports, RetroArch",
                     "settings": "Theme, Wi-Fi, info, controls",
                     "power": "Shut down RG OS"}
             if _HOME_FX["idx"] != home_idx:
@@ -3914,11 +4055,13 @@ def main():
                 draw_xmb_dropdown(canvas, f_small, dd, dd_options(dd["kind"]))
                 hint = "Up/Down Browse   A Select   B Cancel"
         elif view == "tools":
+            t_step = min(90, (H - top_y - 36) // len(TOOLS))      # the rows squeeze together on a short screen
+            t_h = t_step - 8
             for i, (_tid, tname, tdesc, _tgt) in enumerate(TOOLS):
-                by, sel = top_y + i * 90, i == tool_idx
-                draw_button(canvas, (list_x, by, W - 2 * list_x, 82), SEL_BG if sel else PANEL, 12, 3, sel)
-                canvas.blit(f_row.render(tname, True, TEXT if sel else DIM), (list_x + 24, by + 16))
-                canvas.blit(f_small.render(fit(f_small, tdesc, W - 2 * list_x - 48), True, DIM), (list_x + 24, by + 46))
+                by, sel = top_y + i * t_step, i == tool_idx
+                draw_button(canvas, (list_x, by, W - 2 * list_x, t_h), SEL_BG if sel else PANEL, 12, 3, sel)
+                canvas.blit(f_row.render(tname, True, TEXT if sel else DIM), (list_x + 24, by + (16 if t_h >= 82 else 8)))
+                canvas.blit(f_small.render(fit(f_small, tdesc, W - 2 * list_x - 48), True, DIM), (list_x + 24, by + (46 if t_h >= 82 else 36)))
             hint = "A Open   B Back   START+SELECT Power off"
         elif view == "files":
             canvas.blit(f_small.render(tail_fit(f_small, fm.title(), W - 2 * list_x), True, ACCENT), (list_x, 68))
@@ -4090,6 +4233,126 @@ def main():
             if time.time() < art["until"]:
                 canvas.blit(f_small.render(fit(f_small, art["msg"], W - 2 * list_x), True, ACCENT), (list_x, py + 60))
             hint = "A Select   " + ("X Stop   " if _run else "") + "B Back"
+        elif view == "music":
+            now_m, mp_tr = time.time(), mp_lib.tracks
+            mp_energy += ((1.0 if mp.state == "playing" else 0.0) - mp_energy) * min(1.0, _anim_clock[1] * 6.0)
+            rep_txt = "REPEAT" + {"off": "", "all": " ALL", "one": " ONE"}[mp.repeat]
+            mp_msg = mp.message()
+            if mp_sub == "np" and mp.cur is not None:
+                tr, ART = mp.cur, mp_art_px
+                pb = H - 44
+                ph = pb - 72
+                ui_rect(canvas, PANEL, (20, 72, W - 40, ph), 12)
+                cx0, cy0 = 44, 72 + max(16, (ph - (ART + 150)) // 2)
+                ui_rect(canvas, SEL_BG, (cx0 - 4, cy0 - 4, ART + 8, ART + 8), 6)
+                cover = mp_art.ask(tr.path)
+                if cover is not None:
+                    canvas.blit(cover, (cx0, cy0))
+                else:
+                    pygame.draw.rect(canvas, _mix(PANEL, ACCENT, 0.22), (cx0, cy0, ART, ART))
+                    canvas.blit(xmb_icon("music", ART // 2, _mix(DIM, ACCENT, 0.5)), (cx0 + ART // 4, cy0 + ART // 4))
+                tx = cx0 + ART + 28
+                tw = W - 44 - tx
+                canvas.blit(f_small.render({"playing": "NOW PLAYING", "paused": "PAUSED", "stopped": "STOPPED"}[mp.state], True, ACCENT), (tx, cy0 + 2))
+                marquee(canvas, f_big, tr.label, TEXT, tx, cy0 + 26, tw, now_m)
+                marquee(canvas, f_row, tr.artist or "Unknown artist", DIM, tx, cy0 + 62, tw, now_m)
+                if tr.album:
+                    marquee(canvas, f_small, tr.album, DIM, tx, cy0 + 92, tw, now_m)
+                if tr in mp_tr:
+                    canvas.blit(f_tiny.render("Song %d of %d" % (mp_tr.index(tr) + 1, len(mp_tr)), True, DIM), (tx, cy0 + 118))
+                n_b = max(12, min(32, tw // 12))
+                vh = max(36, min(90, ART - 150))
+                bw_ = max(3, (tw - 3 * (n_b - 1)) // n_b)
+                for i, v in enumerate(musicplayer.viz_bars(now_m, n_b, mp_energy)):
+                    h_ = max(2, int(v * vh))
+                    pygame.draw.rect(canvas, _mix(DIM, ACCENT, v), (tx + i * (bw_ + 3), cy0 + ART - h_, bw_, h_), border_radius=2)
+                pos, dur = mp.position(), tr.duration
+                by_ = cy0 + ART + 34
+                rt = f_small.render(musicplayer.fmt_time(dur), True, DIM)
+                canvas.blit(f_small.render(musicplayer.fmt_time(pos), True, TEXT), (cx0, by_ - 8))
+                canvas.blit(rt, (W - 44 - rt.get_width(), by_ - 8))
+                bx0, bx1 = cx0 + 58, W - 44 - 58
+                pygame.draw.rect(canvas, _mix(PANEL, TEXT, 0.28), (bx0, by_ - 3, bx1 - bx0, 6), border_radius=3)
+                fw_ = int((bx1 - bx0) * min(1.0, pos / dur)) if dur else 0
+                if fw_:
+                    pygame.draw.rect(canvas, ACCENT, (bx0, by_ - 3, fw_, 6), border_radius=3)
+                pygame.draw.circle(canvas, TEXT, (bx0 + fw_, by_), 7)
+                ty_ = by_ + 46
+                mx = W // 2
+                mp_glyph(canvas, "prev", mx - 92, ty_, 10, TEXT)
+                mp_glyph(canvas, "next", mx + 92, ty_, 10, TEXT)
+                pygame.draw.circle(canvas, ACCENT, (mx, ty_), 25, 2)
+                mp_glyph(canvas, "pause" if mp.state == "playing" else "play", mx + (0 if mp.state == "playing" else 2), ty_, 11, ACCENT)
+                mp_chip(canvas, f_tiny, cx0, ty_, "SHUFFLE", mp.shuffle)
+                mp_chip(canvas, f_tiny, W - 44, ty_, rep_txt, mp.repeat != "off", True)
+                hint = mp_msg or ("A %s   L/R Prev/Next   Left/Right Seek   Y Shuffle   X Repeat   B List" % ("Pause" if mp.state == "playing" else "Play"))
+            else:
+                rows = max(3, (H - 76 - 40 - (70 if mp_tr else 0) - 16) // 44)
+                ph = rows * 44 + 16
+                ui_rect(canvas, PANEL, (20, 72, W - 40, ph), 12)
+                if not mp_tr:
+                    canvas.blit(xmb_icon("music", 64, DIM), (W // 2 - 32, 72 + ph // 2 - 80))
+                    for k_, (fnt_, txt_, col_) in enumerate(((f_row, "No music found", TEXT),
+                                                              (f_small, "Copy MP3, OGG, FLAC or WAV files into the music folder", DIM),
+                                                              (f_small, "on the ROMS card:  " + musicplayer.music_dir(ROMS_ROOT), DIM))):
+                        t_ = fnt_.render(fit(fnt_, txt_, W - 80), True, col_)
+                        canvas.blit(t_, (W // 2 - t_.get_width() // 2, 72 + ph // 2 - 2 + k_ * 28))
+                else:
+                    first_m = min(max(0, mp_idx - rows // 2), max(0, len(mp_tr) - rows))
+                    mp_fl, mp_hi = anim_val("mp_first", first_m, 24.0), anim_val("mp_hi", mp_idx, 24.0)
+                    top_m = 72 + 8
+                    canvas.set_clip(pygame.Rect(20, top_m - 2, W - 40, rows * 44 + 2))
+                    _hy = int(top_m + (mp_hi - mp_fl) * 44)
+                    ui_rect(canvas, SEL_BG, (28, _hy, W - 56, 40), 8)
+                    pygame.draw.rect(canvas, ACCENT, (28, _hy, W - 56, 40), 2, border_radius=8)
+                    lo_m = max(0, int(mp_fl))
+                    eq = musicplayer.viz_bars(now_m, 3, mp_energy)
+                    dur_x = W - 28 - 16 - 56
+                    art_x = dur_x - 12 - 170
+                    for slot, tr in enumerate(mp_tr[lo_m:lo_m + rows + 2]):
+                        i = lo_m + slot
+                        y, sel = int(top_m + (i - mp_fl) * 44), abs(i - mp_hi) < 0.5
+                        cur = tr is mp.cur and mp.active
+                        col = ACCENT if cur else (TEXT if sel else DIM)
+                        if cur:
+                            for b_ in range(3):
+                                h_ = 4 + int(eq[b_] * 16)
+                                pygame.draw.rect(canvas, ACCENT, (42 + b_ * 7, y + 30 - h_, 5, h_), border_radius=1)
+                        else:
+                            canvas.blit(xmb_icon("music", 20, ACCENT if sel else DIM), (42, y + 10))
+                        canvas.blit(f_small.render(fit(f_small, tr.label, art_x - 76 - 12), True, col), (76, y + 12))
+                        if tr.artist:
+                            canvas.blit(f_small.render(fit(f_small, tr.artist, 170), True, DIM), (art_x, y + 12))
+                        dtxt = f_small.render(musicplayer.fmt_time(tr.duration), True, DIM)
+                        canvas.blit(dtxt, (dur_x + 56 - dtxt.get_width(), y + 12))
+                    canvas.set_clip(None)
+                    if len(mp_tr) > rows:
+                        trk = rows * 44 - 8
+                        th_ = max(18, trk * rows // len(mp_tr))
+                        pygame.draw.rect(canvas, _mix(PANEL, TEXT, 0.18), (W - 31, top_m + 2, 4, trk), border_radius=2)
+                        pygame.draw.rect(canvas, ACCENT, (W - 31, top_m + 2 + int((trk - th_) * mp_fl / max(1, len(mp_tr) - rows)), 4, th_), border_radius=2)
+                if mp_tr:
+                    by_ = 72 + ph + 8
+                    ui_rect(canvas, PANEL, (20, by_, W - 40, 62), 12)
+                    cur_t = mp.cur if mp.cur is not None else None
+                    mp_glyph(canvas, {"playing": "pause", "paused": "play", "stopped": "stop"}[mp.state], 46, by_ + 22, 9, ACCENT if mp.active else DIM)
+                    cx_ = W - 40
+                    rw_ = mp_chip(canvas, f_tiny, cx_, by_ + 18, rep_txt, mp.repeat != "off", True)
+                    sw_ = mp_chip(canvas, f_tiny, cx_ - rw_ - 8, by_ + 18, "SHUFFLE", mp.shuffle, True)
+                    lim_ = W - 40 - 74 - rw_ - sw_ - 20
+                    if cur_t is not None and mp.active:
+                        marquee(canvas, f_row, cur_t.label, TEXT, 74, by_ + 6, lim_, now_m)
+                        canvas.blit(f_small.render(fit(f_small, cur_t.artist or "Unknown artist", lim_ - 120), True, DIM), (74, by_ + 32))
+                        pos, dur = mp.position(), cur_t.duration
+                        tt = f_small.render("%s / %s" % (musicplayer.fmt_time(pos), musicplayer.fmt_time(dur)), True, DIM)
+                        canvas.blit(tt, (W - 40 - 14 - tt.get_width(), by_ + 32))
+                        pygame.draw.rect(canvas, _mix(PANEL, TEXT, 0.28), (74, by_ + 54, W - 40 - 74 - 14, 4), border_radius=2)
+                        if dur:
+                            pygame.draw.rect(canvas, ACCENT, (74, by_ + 54, int((W - 40 - 74 - 14) * min(1.0, pos / dur)), 4), border_radius=2)
+                    else:
+                        canvas.blit(f_row.render("Nothing playing", True, DIM), (74, by_ + 6))
+                        canvas.blit(f_small.render("Pick a song and press A", True, DIM), (74, by_ + 32))
+                hint = mp_msg or "A Play   START Pause   Y Shuffle   X Repeat   SELECT Rescan   B Back"
         elif view == "coreinstall":
             ci_s = ci.snapshot()
             px, py, pw, ph = list_x, top_y, W - 2 * list_x, 336 + DY
