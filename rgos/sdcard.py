@@ -409,7 +409,10 @@ def signature():
     for n in names:
         size = _read_int(os.path.join(SYS_BLOCK, n, "size"))
         if size > 0:
-            parts = tuple(sorted(x for x in os.listdir(os.path.join(SYS_BLOCK, n)) if x.startswith(n + "p")))
+            try:
+                parts = tuple(sorted(x for x in os.listdir(os.path.join(SYS_BLOCK, n)) if x.startswith(n + "p")))
+            except OSError:         # card pulled between the size read and the listing: treat it as gone, keep the watcher alive
+                continue
             sig.append((n, size, parts))
     return tuple(sig)
 
