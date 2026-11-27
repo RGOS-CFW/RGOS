@@ -77,7 +77,7 @@ def get_mode(conf=None):
             mode = json.load(f).get("hdmi")
     except (OSError, ValueError, AttributeError):
         return DEFAULT_MODE
-    return mode if mode in MODES else DEFAULT_MODE
+    return mode if isinstance(mode, str) and mode in MODES else DEFAULT_MODE
 
 
 def kernel_arg(mode, name=DEFAULT_CONNECTOR):
@@ -127,12 +127,15 @@ def apply_extlinux(mode, path=None, name=DEFAULT_CONNECTOR):
         return None
 
 
+def connector_name():
+    c = hdmi_connector()
+    return c["name"] if c else DEFAULT_CONNECTOR
+
+
 def set_mode(mode, conf=None, extlinux=None):
     if mode not in MODES:
         return False, False
-    connector = hdmi_connector()
-    name = connector["name"] if connector else DEFAULT_CONNECTOR
-    changed = apply_extlinux(mode, extlinux, name)
+    changed = apply_extlinux(mode, extlinux, connector_name())
     if changed is None:
         return False, False
     target = conf or CONF
@@ -156,7 +159,7 @@ def boot_check(conf=None, extlinux=None):
     path = extlinux or extlinux_path()
     if not path:
         return "no extlinux.conf found"
-    result = apply_extlinux(mode, path)
+    result = apply_extlinux(mode, path, connector_name())
     return {None: "could not write extlinux.conf", False: "ok", True: "restored video=%s" % mode}[result]
 
 
