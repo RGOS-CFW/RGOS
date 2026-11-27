@@ -148,7 +148,7 @@ def check_system(sid, core, bios_dirs):
 
 
 def check_all(systems, core_of, bios_dirs):
-    rows, summ = [], {"missing": 0, "optional": 0, "ok": 0, "systems": 0}
+    rows, summ = [], {"missing": 0, "optional": 0, "case": 0, "ok": 0, "systems": 0}
     for sid, name in systems:
         if not needs_bios(sid):
             continue
@@ -161,6 +161,8 @@ def check_all(systems, core_of, bios_dirs):
                 summ["missing"] += 1
             elif r["status"] == OPTIONAL:
                 summ["optional"] += 1
+            elif r["status"] == CASE:
+                summ["case"] += 1
             else:
                 summ["ok"] += 1
     return rows, summ

@@ -581,6 +581,8 @@ def bios_summary_text(summ):
         parts.append("%d required missing" % summ["missing"])
     if summ["optional"]:
         parts.append("%d optional missing" % summ["optional"])
+    if summ.get("case"):
+        parts.append("%d need renaming" % summ["case"])
     parts.append("%d OK" % summ["ok"])
     return "   ".join(parts)
 
