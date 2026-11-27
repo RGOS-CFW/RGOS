@@ -22,7 +22,7 @@ class PowerKeys:
     def scan(self):
         for p in sorted(glob.glob(os.path.join(self.sys, "class/input/event*"))):
             path = os.path.join(self.dev, os.path.basename(p))
-            if path in self.fds.values():
+            if any(v[0] == path for v in self.fds.values()):     # fds values are (dev path, sysfs path) tuples
                 continue
             try:
                 fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
