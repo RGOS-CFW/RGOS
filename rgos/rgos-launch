@@ -903,7 +903,11 @@ def native_env(base=None, cwd=None):
     env.update({"HOME": "/root", "XDG_RUNTIME_DIR": RUN_DIR, "XDG_DATA_HOME": "/root/.local/share",
                 "XDG_CONFIG_HOME": "/root/.config"})
     dev = alsa_device()
-    env.setdefault("AUDIODEV", dev)
+    # rgos-session exports AUDIODEV for the built-in codec at boot, so setdefault() kept it even when HDMI was
+    # active and PortMaster / native ports played through the speaker. The device found now wins; the generic
+    # "default" fallback (no hardware detected) only fills a gap.
+    if dev != "default" or not env.get("AUDIODEV"):
+        env["AUDIODEV"] = dev
     if env.get("SDL_AUDIODRIVER", "") in ("", "dummy"):
         env["SDL_AUDIODRIVER"] = "alsa"
     try:  # SDL controller mapping for the hub pad; a failure here must never stop a port from starting
