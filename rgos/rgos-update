@@ -25,7 +25,9 @@ Safety:
     and any failure renames everything back (manual rollback from a PC: rename <name>.prev over <name>). Only after the whole
     update is installed are the <name>.prev copies deleted, so no old files are left taking up space on the boot partition;
   * the tar is renamed to <name>.applied / <name>.failed afterwards so it never runs twice, and the installed build id is
-    stored in rgos-update.id on the boot partition (an update with the same id is skipped);
+    stored in rgos-update.id on the boot partition (an update with the same id is skipped). On the boot partition itself a
+    successfully applied tar is deleted instead (it is as big as SYSTEM and would eat the free space the next update needs), and
+    old .applied / .failed tars left on the boot partition are deleted before every update;
   * a result line is appended to update/rgos-update.log on the card. Details: /var/log/rgos-update.log.
 
 Commands:
@@ -43,6 +45,7 @@ FORMAT = 1
 MARGIN = 2 << 20
 ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 TAR_RE = re.compile(r"\.(tar|tar\.gz|tgz)$", re.I)
+STALE_RE = re.compile(r"\.(tar|tar\.gz|tgz)\.(applied|failed)$", re.I)
 RUN = os.environ.get("RGOS_UPDATE_RUN", "/run/rgos/update")
 LOG_FILE = os.environ.get("RGOS_UPDATE_LOG", "/var/log/rgos-update.log")
 TTY = os.environ.get("RGOS_UPDATE_TTY", "/dev/tty1")
@@ -375,6 +378,44 @@ def ensure_writable(bootdir):
                               "(Windows: right-click > Properties > Tools > Check), then try again" % e)
 
 
+def reclaim_stale_tars(bootdir):
+    """Delete finished update tars (<name>.applied / <name>.failed) from update/ and roms/update/ of the boot partition.
+
+    They are only a record of what ran. The tar is as big as the SYSTEM image, so one left behind on the small FAT boot
+    partition takes the room the next update needs (and the room for copying the next tar there from a PC). Returns the
+    number of bytes freed.
+    """
+    freed = 0
+    roms = _subdir(bootdir, "roms")
+    for base in (bootdir, roms):
+        d = _subdir(base, UPD_DIR) if base else None
+        if not d:
+            continue
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for f in names:
+            path = os.path.join(d, f)
+            if not STALE_RE.search(f) or not os.path.isfile(path):
+                continue
+            try:
+                size = os.path.getsize(path)
+                os.remove(path)
+            except OSError:
+                continue
+            freed += size
+            log("  removed old update tar %s (%d MiB freed)" % (f, size >> 20))
+    return freed
+
+
+def on_same_fs(path, other):
+    try:
+        return os.stat(path).st_dev == os.stat(other).st_dev
+    except OSError:
+        return False
+
+
 def _old_size(bootdir, name):
     try:
         return os.path.getsize(os.path.join(bootdir, name))
@@ -411,7 +452,7 @@ def plan_inplace(order, new_sizes, old_sizes, free_bytes):
                                   "even by replacing the old files in place (%d MiB short). The boot partition was sized for the "
                                   "image that is installed and this update is bigger: reflash a newer image (its boot partition "
                                   "leaves room for updates), or delete big files from the FAT partition's root "
-                                  "(rgos-bootinfo.txt, *.prev, *.new, old logs, ROMs in roms/) and try again"
+                                  "(update/*.applied and update/*.failed tars, rgos-bootinfo.txt, *.prev, *.new, old logs, ROMs in roms/) and try again"
                                   % (name, mib(size), mib(cur), mib(size - cur)))
         elif name not in inplace:
             normal.append(name)
@@ -430,6 +471,7 @@ def apply_tar(tar, bootdir):
         return "same", uid
     ensure_writable(bootdir)
     _cleanup(bootdir)
+    reclaim_stale_tars(bootdir)
     free = lambda: (lambda st: st.f_bavail * st.f_frsize)(os.statvfs(bootdir))
     # smallest first: kernel / dtb / initrd are staged normally, the big SYSTEM image goes last
     order = sorted(payload, key=lambda n: (payload[n].size, n))
@@ -597,9 +639,23 @@ def cmd_boot():
             except Exception as e:           # a bug or an odd tar must never leave the ROMS partition mounted or crash the boot
                 log("unexpected error: %r" % (e,))
                 result = "FAILED: unexpected %s: %s" % (type(e).__name__, e)
+        # A tar on the boot partition itself is as big as SYSTEM: keeping it as .applied would use up the free space the next
+        # update (and copying the next tar there) needs. The result line in update/rgos-update.log is the record.
+        drop = suffix == ".applied" and bool(boot) and on_same_fs(tar, boot[0])
+        if drop:
+            result += " (tar deleted from the boot partition to keep its free space)"
+        elif suffix == ".failed" and boot and on_same_fs(tar, boot[0]):
+            result += " (the tar stays as %s.failed on the boot partition: delete it from a PC before copying a new one)" % base
         say("RG OS update: " + result)
         sh(["mount", "-o", "remount,rw", mp])
-        _mark(tar, suffix)
+        if drop:
+            try:
+                os.remove(tar)
+            except OSError as e:
+                log("could not delete %s: %s" % (tar, e))
+                _mark(tar, suffix)
+        else:
+            _mark(tar, suffix)
         try:
             with open(os.path.join(upd, "rgos-update.log"), "a") as f:
                 f.write("%s %s: %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), base, result))

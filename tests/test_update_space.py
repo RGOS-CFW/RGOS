@@ -96,5 +96,111 @@ class BootCleanup(unittest.TestCase):
         self.assertIn(["umount", d], calls)
 
 
+class StaleTars(unittest.TestCase):
+    """A finished tar left on the small FAT boot partition (as .applied / .failed) is as big as SYSTEM and eats the free space
+    the next update needs. They are deleted before every update, and a tar that was applied from the boot partition is deleted."""
+
+    def setUp(self):
+        import tempfile
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, self.d, True)
+        self.boot = os.path.join(self.d, "boot")
+        os.makedirs(os.path.join(self.boot, "update"))
+        os.makedirs(os.path.join(self.boot, "roms", "update"))
+        saved = (U.LOG_FILE, U.TTY, U.DEVICE_FILE)
+        self.addCleanup(lambda: (setattr(U, "LOG_FILE", saved[0]), setattr(U, "TTY", saved[1]), setattr(U, "DEVICE_FILE", saved[2])))
+        U.LOG_FILE, U.TTY = os.path.join(self.d, "log"), os.devnull
+        U.DEVICE_FILE = os.path.join(self.d, "device")
+        with open(U.DEVICE_FILE, "w") as f:
+            f.write("rg35xxh\n")
+
+    def touch(self, rel, size=10):
+        path = os.path.join(self.boot, rel)
+        with open(path, "wb") as f:
+            f.write(b"x" * size)
+        return path
+
+    def make_tar(self, uid="new"):
+        import hashlib, io, json, tarfile
+        system = b"hsqs" + b"\0" * 4096
+        man = json.dumps({"format": 1, "id": uid, "device": "rg35xxh", "files": {"SYSTEM": hashlib.sha256(system).hexdigest()}}).encode()
+        path = os.path.join(self.boot, "update", "rgos-update-rg35xxh-%s.tar" % uid)
+        with tarfile.open(path, "w") as tf:
+            for name, data in (("manifest.json", man), ("boot/SYSTEM", system)):
+                ti = tarfile.TarInfo(name)
+                ti.size = len(data)
+                tf.addfile(ti, io.BytesIO(data))
+        return path
+
+    def test_reclaim_removes_only_finished_tars(self):
+        gone = [self.touch("update/a.tar.applied", 2 << 20), self.touch("update/b.tar.failed"), self.touch("roms/update/c.tgz.applied"),
+                self.touch("update/D.TAR.APPLIED")]
+        kept = [self.touch("update/live.tar"), self.touch("update/rgos-update.log"), self.touch("SYSTEM"), self.touch("roms/zelda.applied")]
+        self.assertGreaterEqual(U.reclaim_stale_tars(self.boot), 2 << 20)
+        for g in gone:
+            self.assertFalse(os.path.exists(g), g)
+        for k in kept:
+            self.assertTrue(os.path.exists(k), k)
+
+    def test_reclaim_without_update_folders_is_harmless(self):
+        import shutil
+        shutil.rmtree(os.path.join(self.boot, "update"))
+        shutil.rmtree(os.path.join(self.boot, "roms"))
+        self.assertEqual(U.reclaim_stale_tars(self.boot), 0)
+
+    def test_apply_frees_old_tars_first(self):
+        old = self.touch("update/rgos-update-rg35xxh-old.tar.applied", 1 << 20)
+        self.touch("SYSTEM", 100)
+        tar = self.make_tar("new")
+        status, uid = U.apply_tar(tar, self.boot)
+        self.assertEqual((status, uid), ("installed", "new"))
+        self.assertFalse(os.path.exists(old))
+        with open(os.path.join(self.boot, "SYSTEM"), "rb") as f:
+            self.assertEqual(f.read(4), b"hsqs")
+
+    def boot_run(self, tar, apply_result):
+        calls = []
+        saved = {k: getattr(U, k) for k in ("partitions", "ensure_fs", "find_boot", "find_update", "apply_tar", "sh", "time")}
+        try:
+            U.partitions = lambda: ["/dev/mmcblk0p1"]
+            U.ensure_fs = lambda: None
+            U.find_boot = lambda parts: (self.boot, None)
+            U.find_update = lambda parts: ("/dev/mmcblk0p1", self.boot, False, os.path.dirname(tar), tar)
+            U.sh = lambda args, timeout=30: (calls.append(args) or (0, ""))
+
+            def fake(*a):
+                if isinstance(apply_result, Exception):
+                    raise apply_result
+                return apply_result
+            U.apply_tar = fake
+            U.time = type("T", (), {"sleep": staticmethod(lambda s: None), "strftime": staticmethod(__import__("time").strftime)})
+            return U.cmd_boot()
+        finally:
+            for k, v in saved.items():
+                setattr(U, k, v)
+
+    def test_tar_applied_from_the_boot_partition_is_deleted(self):
+        tar = self.touch("update/rgos-update-rg35xxh-new.tar", 1 << 20)
+        self.assertEqual(self.boot_run(tar, ("installed", "new")), 10)
+        self.assertFalse(os.path.exists(tar))
+        self.assertFalse(os.path.exists(tar + ".applied"))
+        with open(os.path.join(self.boot, "update", "rgos-update.log")) as f:
+            text = f.read()
+        self.assertIn("build new installed", text)
+        self.assertIn("deleted from the boot partition", text)
+
+    def test_already_installed_tar_on_the_boot_partition_is_deleted_too(self):
+        tar = self.touch("update/rgos-update-rg35xxh-new.tar")
+        self.assertEqual(self.boot_run(tar, ("same", "new")), 0)
+        self.assertFalse(os.path.exists(tar) or os.path.exists(tar + ".applied"))
+
+    def test_failed_tar_on_the_boot_partition_is_kept_as_failed_with_a_hint(self):
+        tar = self.touch("update/rgos-update-rg35xxh-new.tar")
+        self.assertEqual(self.boot_run(tar, U.UpdateError("nope")), 0)
+        self.assertTrue(os.path.exists(tar + ".failed"))
+        with open(os.path.join(self.boot, "update", "rgos-update.log")) as f:
+            self.assertIn("delete it from a PC", f.read())
+
+
 if __name__ == "__main__":
     unittest.main()
