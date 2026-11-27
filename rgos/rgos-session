@@ -144,6 +144,9 @@ if ! mountpoint -q /media/roms && mountpoint -q /boot && mkdir -p /boot/roms 2>/
       && mkdir -p /media/roms/update /media/roms/roms/gb /media/roms/roms/gbc /media/roms/roms/gba 2>/dev/null \
       && echo "ROMS: using /boot/roms on the FAT partition (no ext4 ROMS partition)" >> /var/log/rgos-state.log
 fi
+# second SD slot: mount whatever card is in it on /media/roms2 and create roms/<system> on it. Started here (right after the primary
+# ROMS is mounted, before the slow PortMaster copy) so the card is ready at boot; it keeps polling for cards inserted later
+python3 /opt/rgos/sdcard.py watch >> /var/log/rgos-sdcard.log 2>&1 &
 # preinstalled PortMaster: copy the rootfs seed onto ROMS once; never touch an existing install (PortMaster updates itself there)
 if mountpoint -q /media/roms && [ -f /opt/rgos/seed/PortMaster/PortMaster.sh ] && [ ! -e /media/roms/roms/ports/PortMaster ]; then
     if mkdir -p /media/roms/roms/ports 2>/dev/null && rm -rf /media/roms/roms/ports/.PortMaster.tmp \
@@ -180,7 +183,6 @@ python3 /opt/rgos/wifictl.py daemon >> /var/log/rgos-wifi.log 2>&1 &
 python3 /opt/rgos/btctl.py start >> /var/log/rgos-bt.log 2>&1 &
 python3 /opt/rgos/sshctl.py boot >> /var/log/rgos-ssh.log 2>&1 &
 python3 /opt/rgos/rgos-volume >> /var/log/rgos-volume.log 2>&1 &
-python3 /opt/rgos/sdcard.py watch >> /var/log/rgos-sdcard.log 2>&1 &
 python3 /opt/rgos/rgos-overlay >> /var/log/rgos-overlay.log 2>&1 &
 python3 /opt/rgos/gamemenu.py daemon >> /var/log/rgos-gamemenu.log 2>&1 &
 python3 /opt/rgos/rgos-input >> /var/log/rgos-input.log 2>&1 &

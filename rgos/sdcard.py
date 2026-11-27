@@ -169,14 +169,44 @@ def partitions(disk):
     return [(os.path.join(DEV_DIR, n), s) for n, s in sorted(parts, key=lambda x: _num(x[0].rsplit("p", 1)[1]))]
 
 
+def sniff_fs(dev):
+    """Identify the file system by reading the superblock ourselves: used when blkid is missing, stale or silent."""
+    try:
+        with open(dev, "rb") as f:
+            head = f.read(1024)
+            f.seek(1080)
+            magic = f.read(2)
+    except OSError:
+        return ""
+    if head[3:11] == b"EXFAT   ":
+        return "exfat"
+    if head[3:11] == b"NTFS    ":
+        return "ntfs"
+    if magic == b"\x53\xef":
+        return "ext4"
+    if len(head) >= 512 and head[510:512] == b"\x55\xaa" and (head[82:90] == b"FAT32   " or head[54:59] in (b"FAT12", b"FAT16")):
+        return "vfat"
+    return ""
+
+
 def probe(dev):
-    rc, out = sh(["blkid", "-o", "export", dev], 8)
+    # -p = low-level probe of the device itself. Plain blkid answers from /run/blkid + /etc/blkid.tab, which goes stale when
+    # a card is swapped or was probed before it was ready, and that made a perfectly good exFAT card look like "nothing".
     info = {}
-    if rc == 0:
-        for line in out.splitlines():
-            if "=" in line:
-                k, v = line.split("=", 1)
-                info[k.strip()] = v.strip()
+    for args in (["blkid", "-p", "-o", "export", dev], ["blkid", "-o", "export", dev]):
+        rc, out = sh(args, 8)
+        if rc == 0:
+            for line in out.splitlines():
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    info[k.strip()] = v.strip()
+        if info.get("TYPE"):
+            break
+    if not info.get("TYPE"):
+        guess = sniff_fs(dev)
+        if guess:
+            info["TYPE"] = guess
+            info["SNIFFED"] = "1"
     return info
 
 
@@ -187,29 +217,45 @@ def pick_partition(disk, conf):
             continue
         info = probe(dev)
         fs, label = info.get("TYPE", ""), info.get("LABEL", "")
-        if fs not in conf["fs"] or fs not in MOUNT_TYPES or label in SKIP_LABELS:
+        if label in SKIP_LABELS:
             continue
-        cand = {"dev": dev, "disk": disk, "fstype": fs, "label": label, "sectors": sectors}
-        key = (label.upper() == "ROMS", sectors)
+        known = fs in conf["fs"] and fs in MOUNT_TYPES
+        if fs and not known:
+            continue                    # swap, an Android partition, a file system the user switched off, ...
+        # an unrecognised partition is still tried (fstype "auto"): better a failed mount in the log than a silently ignored card
+        cand = {"dev": dev, "disk": disk, "fstype": fs if known else "auto", "label": label, "sectors": sectors}
+        key = (known, label.upper() == "ROMS", sectors)
         if best is None or key > best[0]:
             best = (key, cand)
     return best[1] if best else None
 
 
 
-def mount_dev(dev, fstype, mountpoint, readonly=False):
+def mount_dev(dev, fstype, mountpoint, readonly=False, order=None):
+    """Returns (mounted, read_only, fstype_used)."""
     os.makedirs(mountpoint, exist_ok=True)
-    modules = {"exfat": ("exfat",), "vfat": ("vfat",), "ntfs": ("ntfs3", "ntfs")}.get(fstype, ())
-    for mod in modules:
-        sh(["modprobe", mod], 10)
+    kinds = list(order or DEFAULTS["fs"]) if fstype == "auto" else [fstype]
+    for kind in kinds:
+        for mod in {"exfat": ("exfat",), "vfat": ("vfat",), "ntfs": ("ntfs3", "ntfs")}.get(kind, ()):
+            sh(["modprobe", mod], 10)
     for ro in ([True] if readonly else [False, True]):
-        for t in MOUNT_TYPES[fstype]:
-            opts = MOUNT_OPTS[t] + (",ro" if ro else "")
-            rc, out = sh(["mount", "-t", t, "-o", opts, dev, mountpoint], 20)
-            if rc == 0:
-                return True, ro
-            log("mount -t %s -o %s %s %s failed (rc=%s): %s" % (t, opts, dev, mountpoint, rc, out.strip()[:200]))
-    return False, False
+        for kind in kinds:
+            for t in MOUNT_TYPES.get(kind, ()):
+                opts = MOUNT_OPTS[t] + (",ro" if ro else "")
+                rc, out = sh(["mount", "-t", t, "-o", opts, dev, mountpoint], 20)
+                if rc == 0:
+                    return True, ro, kind
+                log("mount -t %s -o %s %s %s failed (rc=%s): %s" % (t, opts, dev, mountpoint, rc, out.strip()[:200]))
+    try:
+        with open("/proc/filesystems") as f:
+            log("kernel file systems: %s" % " ".join(x.split()[-1] for x in f if x.strip()))
+    except OSError:
+        pass
+    rc, out = sh(["dmesg"], 5)
+    tail = [l for l in out.splitlines() if re.search(r"exfat|mmc|FAT-fs|EXT4-fs|ntfs", l, re.I)][-6:]
+    for l in tail:
+        log("dmesg: " + l.strip()[:200])
+    return False, False, None
 
 
 def umount(mountpoint):
@@ -266,7 +312,7 @@ def heal_primary(table, conf):
         if info.get("LABEL") == "ROMS" and info.get("TYPE") in MOUNT_TYPES:
             log("/media/roms is on %s, not on the boot card %s: remounting %s" % (cur, boot, dev))
             umount(PRIMARY_MOUNT)
-            ok, _ro = mount_dev(dev, info["TYPE"], PRIMARY_MOUNT)
+            ok, _ro, _fs = mount_dev(dev, info["TYPE"], PRIMARY_MOUNT)
             return ok
     return False
 
@@ -292,9 +338,10 @@ def sync():
             umount(mp)
             mounted = None
         if want:
-            ok, ro = mount_dev(want["dev"], want["fstype"], mp, bool(conf["readonly"]))
+            ok, ro, used = mount_dev(want["dev"], want["fstype"], mp, bool(conf["readonly"]), conf["fs"])
             if ok:
                 want["ro"] = ro
+                want["fstype"] = used or want["fstype"]
                 log("card 2: %s (%s%s) mounted on %s" % (want["dev"], want["fstype"], ", read-only" if ro else "", mp))
             else:
                 log("card 2: could not mount %s (%s)" % (want["dev"], want["fstype"]))
@@ -383,22 +430,34 @@ def locked_sync():
             lock.close()
 
 
+def card_present():
+    return bool(candidate_disks())
+
+
 def watch(interval=2.0):
-    """There is no udev here: poll the slots and sync on boot and whenever a card shows up or goes away."""
+    """There is no udev here: poll the slots and sync on boot and whenever a card shows up or goes away.
+    A card that is in the slot but not mounted yet (still initialising, partitions not exposed, slow first read) keeps being
+    retried for about two minutes instead of the old three polls."""
     last = None
-    retry = 0
+    retry_at = 0.0
+    tries = 0
     while True:
         sig = signature()
+        now = time.time()
         want_sync = sig != last
-        if not want_sync and retry > 0:
-            retry -= 1
-            want_sync = retry == 0
+        if want_sync:
+            tries = 0
+        elif retry_at and now >= retry_at:
+            want_sync = True
         if want_sync:
             sh(["udevadm", "settle", "--timeout=3"], 5)
             locked_sync()
             last = sig
-            # a freshly inserted card can take a moment to expose its partitions: look again a few polls later
-            retry = 3
+            if status() is None and card_present() and tries < 40:
+                tries += 1
+                retry_at = time.time() + min(2.0 + tries * 1.5, 10.0)
+            else:
+                retry_at = 0.0
         time.sleep(interval)
 
 

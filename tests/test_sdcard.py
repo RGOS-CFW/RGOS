@@ -1,4 +1,5 @@
 import os, re, sys, tempfile, unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "rgos"))
@@ -48,6 +49,58 @@ class SecondCardFolders(unittest.TestCase):
     def test_session_starts_the_card_watcher(self):
         with open(os.path.join(ROOT, "rgos", "rgos-session"), encoding="utf-8") as f:
             self.assertIn("sdcard.py watch", f.read())
+
+
+class CardDetection(unittest.TestCase):
+    def _img(self, boot):
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(boot.ljust(2048, b"\0"))
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def test_sniff_exfat(self):
+        self.assertEqual(sdcard.sniff_fs(self._img(b"\xeb\x76\x90EXFAT   ")), "exfat")
+
+    def test_sniff_fat32(self):
+        b = bytearray(512)
+        b[82:90] = b"FAT32   "
+        b[510:512] = b"\x55\xaa"
+        self.assertEqual(sdcard.sniff_fs(self._img(bytes(b))), "vfat")
+
+    def test_sniff_ext4(self):
+        b = bytearray(2048)
+        b[1080:1082] = b"\x53\xef"
+        self.assertEqual(sdcard.sniff_fs(self._img(bytes(b))), "ext4")
+
+    def test_sniff_garbage(self):
+        self.assertEqual(sdcard.sniff_fs(self._img(b"")), "")
+
+    def test_exfat_card_found_even_when_blkid_is_silent(self):
+        # the RG35XXH-labelled exFAT card: blkid says nothing, the superblock sniff must still pick it
+        conf = dict(sdcard.DEFAULTS)
+        img = self._img(b"\xeb\x76\x90EXFAT   ")
+        with mock.patch.object(sdcard, "partitions", return_value=[(img, 64 * 2048)]), \
+             mock.patch.object(sdcard, "sh", return_value=(2, "")):
+            got = sdcard.pick_partition("mmcblk1", conf)
+        self.assertEqual((got["dev"], got["fstype"]), (img, "exfat"))
+
+    def test_unrecognised_partition_is_still_tried(self):
+        conf = dict(sdcard.DEFAULTS)
+        img = self._img(b"nothing here")
+        with mock.patch.object(sdcard, "partitions", return_value=[(img, 64 * 2048)]), \
+             mock.patch.object(sdcard, "sh", return_value=(2, "")):
+            self.assertEqual(sdcard.pick_partition("mmcblk1", conf)["fstype"], "auto")
+
+    def test_boot_labels_and_swap_are_never_picked(self):
+        conf = dict(sdcard.DEFAULTS)
+        with mock.patch.object(sdcard, "partitions", return_value=[("/dev/x1", 64 * 2048), ("/dev/x2", 64 * 2048)]), \
+             mock.patch.object(sdcard, "probe", side_effect=[{"TYPE": "vfat", "LABEL": "RGOS"}, {"TYPE": "swap"}]):
+            self.assertIsNone(sdcard.pick_partition("mmcblk1", conf))
+
+    def test_session_starts_watcher_before_portmaster_copy(self):
+        with open(os.path.join(ROOT, "rgos", "rgos-session"), encoding="utf-8") as f:
+            t = f.read()
+        self.assertLess(t.index("sdcard.py watch"), t.index("preinstalled PortMaster"))
 
 
 if __name__ == "__main__":
