@@ -71,9 +71,9 @@ class PinCoresTests(unittest.TestCase):
             want = git(t, "rev-parse", "HEAD")
             env = {"N64_REPO": t, "NGP_REPO": t}
             self.assertEqual(pin.current_commit("N64_REF", env), want)
-            self.assertEqual(pin.current_commit("NGP_REF", env), want)     # refs/heads/master
+            self.assertEqual(pin.current_commit("NGP_REF", env), want)
             with self.assertRaises(RuntimeError):
-                pin.current_commit("SATURN_REF", {"SATURN_REPO": t})          # no yabasanshiro branch there
+                pin.current_commit("SATURN_REF", {"SATURN_REPO": t})
 
 
 if __name__ == "__main__":

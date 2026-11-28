@@ -60,7 +60,7 @@ class HelperTests(unittest.TestCase):
         lw, lh = 720, 480
         rect = self.ov.bar_geometry(lw, lh)
         for rot in (0, 90, 180, 270):
-            fw, fh = self.ov.logical_size(lw, lh, rot)          # framebuffer size for this rotation
+            fw, fh = self.ov.logical_size(lw, lh, rot)
             x, y, w, h = self.ov.to_fb_rect(rect, lw, lh, rot)
             self.assertGreaterEqual(x, 0)
             self.assertGreaterEqual(y, 0)
@@ -69,7 +69,6 @@ class HelperTests(unittest.TestCase):
             self.assertEqual(w * h, rect[2] * rect[3])
 
     def test_rotation_maps_a_corner_like_a_clockwise_turn(self):
-        # upright bottom-left pixel (0, lh-1) of a 720x480 screen lands at (0, 0) after turning clockwise 90
         self.assertEqual(self.ov.to_fb_rect((0, 479, 1, 1), 720, 480, 90)[:2], (0, 0))
         self.assertEqual(self.ov.to_fb_rect((0, 0, 1, 1), 720, 480, 180)[:2], (719, 479))
         self.assertEqual(self.ov.to_fb_rect((0, 0, 1, 1), 720, 480, 270)[:2], (0, 719))
@@ -97,20 +96,20 @@ class OverlayTests(unittest.TestCase):
         self.ov.show(55)
         self.assertTrue(self.scr.rows[0].startswith(b"B55"))
         self.clk.t += 1.0
-        self.assertTrue(self.ov.tick())                      # the hold restarted with the second press
+        self.assertTrue(self.ov.tick())
         self.clk.t += 1.0
         self.assertFalse(self.ov.tick())
         self.assertEqual(self.scr.rows, orig)
 
     def test_program_repaint_under_the_bar_is_covered_again_and_kept_on_hide(self):
         self.ov.show(40)
-        self.scr.rows = [b"zzzz", b"zzzz"]                   # the game drew a new frame over the bar
+        self.scr.rows = [b"zzzz", b"zzzz"]
         self.assertTrue(self.ov.tick())
-        self.assertTrue(self.scr.rows[0].startswith(b"B40"))  # bar put back on top of the new frame
-        self.scr.rows = [b"yyyy", b"yyyy"]                   # another frame
+        self.assertTrue(self.scr.rows[0].startswith(b"B40"))
+        self.scr.rows = [b"yyyy", b"yyyy"]
         self.clk.t += self.mod.HOLD + 0.1
         self.assertFalse(self.ov.tick())
-        self.assertEqual(self.scr.rows, [b"yyyy", b"yyyy"])   # not overwritten with stale pixels
+        self.assertEqual(self.scr.rows, [b"yyyy", b"yyyy"])
 
     def test_page_flip_does_not_restore_stale_pixels(self):
         self.ov.show(40)
@@ -169,14 +168,14 @@ class VolumeTargetTests(unittest.TestCase):
 
     def test_any_game_gets_the_overlay_plane_first(self):
         ov = load_overlay()
-        self.assertEqual(ov.volume_target(True, True, False, True), "drm")     # RetroArch
-        self.assertEqual(ov.volume_target(True, False, False, True), "drm")    # native port
+        self.assertEqual(ov.volume_target(True, True, False, True), "drm")
+        self.assertEqual(ov.volume_target(True, False, False, True), "drm")
 
     def test_without_a_plane_retroarch_uses_its_own_message_and_a_port_the_framebuffer(self):
         ov = load_overlay()
         self.assertEqual(ov.volume_target(True, True, True, True), "ra")
         self.assertEqual(ov.volume_target(True, False, True, True), "fb")
-        self.assertEqual(ov.volume_target(True, True, False, False), "ra")     # RGOS_OVERLAY_DRM=0
+        self.assertEqual(ov.volume_target(True, True, False, False), "ra")
         self.assertEqual(ov.volume_target(True, False, False, False), "fb")
 
     def test_no_game_means_the_framebuffer(self):

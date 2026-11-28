@@ -68,11 +68,9 @@ def _log(msg):
         pass
 
 
-# --------------------------------------------------------------------- key / config
-
 def _read_json(path, default):
     try:
-        with open(path, "r", encoding="utf-8-sig") as f:  # -sig: hand-edited files may start with a BOM
+        with open(path, "r", encoding="utf-8-sig") as f:
             d = json.load(f)
         return d if isinstance(d, type(default)) else default
     except (OSError, ValueError):
@@ -94,7 +92,7 @@ def key_file_path(roms_root):
 
 def _read_key_file(path):
     try:
-        with open(path, "r", encoding="utf-8-sig", errors="ignore") as f:  # -sig: Windows Notepad saves a BOM
+        with open(path, "r", encoding="utf-8-sig", errors="ignore") as f:
             return f.readline().strip()
     except OSError:
         return ""
@@ -107,7 +105,6 @@ def load_key(roms_root):
     key = str(load_conf().get("api_key", "")).strip()
     if valid_key(key):
         return key
-    # New location first, then the legacy ROMS-root file so existing setups keep working.
     for path in (key_file_path(roms_root), os.path.join(roms_root, KEY_FILE_NAME)):
         key = _read_key_file(path)
         if valid_key(key):
@@ -154,8 +151,6 @@ def shape_pref():
     return s if s in SHAPES else "portrait"
 
 
-# --------------------------------------------------------------------- local art index
-
 def art_dir(roms_root):
     return os.path.join(roms_root, "artwork")
 
@@ -163,7 +158,6 @@ def art_dir(roms_root):
 def stem_of(path):
     name = os.path.basename(path)
     stem = os.path.splitext(name)[0]
-    # a PICO-8 "game.p8.png" cart is called "game" (its artwork is game.png, not game.p8.png)
     return stem[:-3] if stem.lower().endswith(".p8") and name.lower().endswith(".png") else stem
 
 
@@ -213,8 +207,6 @@ class ArtIndex:
         return sum(1 for g in games if self.lookup(g["sid"], g["path"]))
 
 
-# --------------------------------------------------------------------- name matching
-
 def _norm(s):
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch)).lower()
@@ -230,7 +222,7 @@ def search_terms(title):
     t = re.sub(r"\s+", " ", t)
     bases = [t]
     m = re.match(r"^(.*?),\s*(The|A|An)(\s+-\s+.*|\s*:.*)?$", t)
-    if m:  # "Legend of Zelda, The - A Link to the Past" -> "The Legend of Zelda - A Link to the Past"
+    if m:
         bases.insert(0, ("%s %s%s" % (m.group(2), m.group(1), m.group(3) or "")).strip())
     terms = []
     for b in bases:
@@ -278,8 +270,6 @@ def pick_match(results, term):
     return (best, best_s) if best is not None and best_s >= MIN_MATCH else (None, 0.0)
 
 
-# --------------------------------------------------------------------- HTTP
-
 class ApiError(Exception):
     """kind: auth | tls | net | rate | server | other"""
 
@@ -296,10 +286,6 @@ def _ctx():
         _SSL[0] = ssl.create_default_context()
     return _SSL[0]
 
-
-# The root filesystem is read-only, and /etc/resolv.conf is only a symlink to the file the Wi-Fi
-# DHCP script writes. When that link is missing (or the lease carried no DNS), the C resolver has no
-# nameserver and every lookup fails, so artwork asks DNS itself as a fallback.
 
 def nameservers():
     out = []
@@ -318,7 +304,7 @@ def nameservers():
         try:
             socket.inet_aton(ns)
         except OSError:
-            continue  # IPv6 / junk: the fallback speaks IPv4 only
+            continue
         if ns.startswith("127.") or ns in seen:
             continue
         seen.add(ns)
@@ -493,8 +479,6 @@ def image_ext(data):
     return ""
 
 
-# --------------------------------------------------------------------- lookups
-
 def _override_id(v):
     """A SteamGridDB game id from a hand-edited overrides.json value, or None if it is not one."""
     if isinstance(v, bool):
@@ -575,8 +559,6 @@ def grid_info(g):
     return out
 
 
-# ---- descriptions (SteamGridDB has none, so Wikipedia's page summaries fill that gap)
-
 def _wiki_json(path):
     data = _open(WIKI_API + path, "", MAX_JSON_BYTES, 15)
     if data is None:
@@ -620,7 +602,7 @@ def find_description(title, canonical=""):
                 continue
             seen.add(pkey)
             if _norm(str(page.get("title", ""))).split(" ")[0] != _norm(name).split(" ")[0]:
-                continue  # first word must agree: cheap guard against unrelated pages
+                continue
             d = _wiki_json("/api/rest_v1/page/summary/" + urllib.parse.quote(pkey, safe=""))
             if isinstance(d, dict) and _is_game_page(d) and d.get("extract"):
                 url = ((d.get("content_urls") or {}).get("desktop") or {}).get("page", "")
@@ -662,8 +644,6 @@ def _write_atomic(path, data):
     os.replace(tmp, path)
 
 
-# --------------------------------------------------------------------- background scraper
-
 class Scraper:
     """Downloads artwork for a list of games on a background thread."""
 
@@ -682,7 +662,6 @@ class Scraper:
         return {"state": state, "total": 0, "done": 0, "found": 0, "missed": 0, "failed": 0,
                 "current": "", "msg": "", "version": 0}
 
-    # -- public
     def snapshot(self):
         with self._lock:
             return dict(self._s)
@@ -710,7 +689,6 @@ class Scraper:
         self._misses = {}
         self._save_misses()
 
-    # -- internals
     def _set(self, **kw):
         with self._lock:
             self._s.update(kw)
@@ -746,7 +724,7 @@ class Scraper:
     def _run(self, games, retry_misses):
         try:
             self._work(games, retry_misses)
-        except Exception as e:  # never let the thread die silently
+        except Exception as e:
             self._finish("error", "Unexpected error: %s" % e)
 
     def _work(self, games, retry_misses):
@@ -836,7 +814,7 @@ class Scraper:
         game_id = self._retry(lambda: find_game(self.key, g["title"], ov))
         if game_id is None:
             if existing and need_meta:
-                self._save_meta(g, {})  # user-supplied cover, nothing to look up: don't retry every run
+                self._save_meta(g, {})
             return existing
         dest, grid = existing, None
         if dest is None:
@@ -865,7 +843,7 @@ class Scraper:
                 if e.kind in ("auth", "tls"):
                     raise
                 _log("%s: description lookup failed (%s)" % (g["title"], e))
-                desc, url = None, ""  # leave the metadata unsaved so the next run retries
+                desc, url = None, ""
             if desc is not None:
                 if desc:
                     meta["description"], meta["description_source"] = desc, url or "Wikipedia"

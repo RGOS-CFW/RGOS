@@ -7,7 +7,7 @@ STATE_DIR = "/var/lib/bluetooth"
 SYSBT = "/sys/class/bluetooth"
 SYSSERIAL = "/sys/bus/serial"
 LOCK = os.environ.get("RGOS_BT_LOCK", "/run/rgos-bt-start.lock")
-KEY_MODULES = ("bluetooth", "hci_uart", "btrtl", "btbcm", "btusb")  # a failed modprobe of one of these explains a missing adapter
+KEY_MODULES = ("bluetooth", "hci_uart", "btrtl", "btbcm", "btusb")
 BLUETOOTHD = ["/usr/libexec/bluetooth/bluetoothd", "/usr/lib/bluetooth/bluetoothd", "/usr/sbin/bluetoothd"]
 MODULES = ["bluetooth", "rfcomm", "bnep", "hidp", "uhid", "hid-generic", "hid-sony", "hid-playstation", "hid-nintendo",
            "btrtl", "btbcm", "btintel", "btmtk", "btqca", "hci_uart", "btusb"]
@@ -389,7 +389,6 @@ class Manager:
     def _refresh(self):
         self.on = powered()
         if self.on is None and time.time() - self.last_retry > 60:
-            # no adapter / bluetoothd yet: the boot-time attempt may have lost a race, so try the whole bring-up again
             self.last_retry = time.time()
             self.say("Looking for the Bluetooth adapter...", 90)
             start()

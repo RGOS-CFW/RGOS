@@ -29,7 +29,7 @@ import sys
 import tempfile
 
 MIB = 1 << 20
-ALIGN = 2048          # sectors (1 MiB)
+ALIGN = 2048
 FAT32_MIN_CLUSTERS = 65525
 
 
@@ -60,11 +60,10 @@ def tree_bytes(root, cluster):
     """Space the files need on a FAT volume whose clusters are `cluster` bytes (every file and directory rounds up)."""
     total = 0
     for dp, dn, fn in os.walk(root):
-        total += cluster            # the directory itself
+        total += cluster
         for f in fn:
             sz = os.lstat(os.path.join(dp, f)).st_size
             total += align_up(sz, cluster) if sz else 0
-        # long file names take extra 32-byte directory entries
         total += align_up(32 * 3 * (len(fn) + len(dn)), cluster)
     return total
 
@@ -74,7 +73,7 @@ def pick_geometry(used, headroom):
     for spc in (8, 4, 2, 1):
         cluster = spc * 512
         need = used_for(used, cluster) + headroom
-        fat = 2 * 4 * (need // cluster + 2)             # two FATs, 4 bytes per cluster
+        fat = 2 * 4 * (need // cluster + 2)
         size = align_up(need + fat + 64 * 512 + 2 * MIB, MIB)
         if size // cluster >= FAT32_MIN_CLUSTERS + 64:
             return size, spc
@@ -117,7 +116,6 @@ def plan_layout(parts, new_p1_sectors, label):
             layout.append((p, start, p["size"]))
             cursor = start + p["size"]
     end = max(s + z for _, s, z in layout)
-    # GPT keeps a backup header + 32 sectors of entries at the very end of the disk
     total = align_up(end + 34, ALIGN) if label == "gpt" else end
     return layout, total
 
@@ -174,7 +172,6 @@ def main():
     work = tempfile.mkdtemp(prefix="rgos-compact-", dir=os.path.dirname(img))
     loop = mnt_old = mnt_new = fat = None
     try:
-        # ---- 1. read the old boot partition
         loop = run("losetup", "-Pfr", "--show", img, capture=True).strip()
         p1dev = "%sp1" % loop
         old_label = run("blkid", "-s", "LABEL", "-o", "value", p1dev, capture=True, check=False).strip()
@@ -190,14 +187,12 @@ def main():
         used = {spc * 512: tree_bytes(mnt_old, spc * 512) for spc in (8, 4, 2, 1)}
         headroom = a.headroom_mb * MIB
         fs_bytes, spc = pick_geometry(used, headroom)
-        # never grow: if the stock partition is already smaller than the computed size there is nothing to gain
         if fs_bytes >= p1["size"] * ss:
             print("   the boot partition is already as small as it gets; leaving the image alone")
             return 0
         print("   boot partition content %d MiB -> new FAT32 %d MiB (%d-byte clusters, %d MiB headroom)"
               % (used[spc * 512] // MIB, fs_bytes // MIB, spc * 512, a.headroom_mb))
 
-        # ---- 2. new FAT32 in a file
         fat = os.path.join(work, "boot.fat")
         with open(fat, "wb") as f:
             f.truncate(fs_bytes)
@@ -208,7 +203,6 @@ def main():
         mnt_new = os.path.join(work, "new")
         os.makedirs(mnt_new)
         run("mount", "-o", "loop,rw,noatime", fat, mnt_new)
-        # FAT has no owners or modes: copy contents and time stamps only
         run("cp", "-r", "--no-preserve=mode,ownership", "--preserve=timestamps", mnt_old + "/.", mnt_new + "/")
         run("sync")
         run("umount", mnt_new)
@@ -222,7 +216,6 @@ def main():
             if rc not in (0,):
                 sys.exit("the new boot file system did not pass fsck.vfat (exit %d)" % rc)
 
-        # ---- 3. new layout
         layout, total_sectors = plan_layout(parts, fs_bytes // ss, label)
         new_size = total_sectors * ss
         if new_size >= old_total:
@@ -232,9 +225,7 @@ def main():
         newimg = os.path.join(work, "compact.img")
         with open(img, "rb") as src, open(newimg, "wb") as dst:
             dst.truncate(new_size)
-            # everything before partition 1 (bootloader, GPT/MBR area): byte for byte
             copy_range(src, dst, 0, 0, p1["start"] * ss)
-            # the other partitions move, content unchanged
             for p, start, size in layout:
                 if p is p1 or any(p is b for b in before):
                     continue
@@ -242,15 +233,12 @@ def main():
             with open(fat, "rb") as f:
                 copy_range(f, dst, 0, p1["start"] * ss, fs_bytes)
 
-        # ---- 4. partition table
         script = sfdisk_script(tab, layout)
         run("sfdisk", "--no-reread", "--no-tell-kernel", newimg, stdin=script)
         if label == "dos":
-            # keep any boot code that lived in the first 440 bytes of the MBR
             with open(img, "rb") as src, open(newimg, "r+b") as dst:
                 dst.write(src.read(440))
 
-        # ---- 5. check the result before replacing anything
         chk = run("sfdisk", "-d", newimg, capture=True)
         if "label: %s" % label not in chk:
             sys.exit("the new image lost its %s partition table:\n%s" % (label, chk))

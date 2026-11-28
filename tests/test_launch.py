@@ -124,7 +124,7 @@ class NativePortTests(unittest.TestCase):
             lines = f.read().splitlines()
         self.assertEqual(lines[0], "[older output trimmed]")
         self.assertEqual(lines[-1], "old output 199999")
-        self.assertTrue(lines[1].startswith("old output "))  # cut on a line boundary
+        self.assertTrue(lines[1].startswith("old output "))
 
     def test_small_native_log_is_left_alone(self):
         with open(self.launch.NATIVE_LOG, "w") as f:

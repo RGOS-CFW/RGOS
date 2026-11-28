@@ -26,7 +26,7 @@ class RomSizeTests(unittest.TestCase):
         self.assertNotIn("size", games[0])
         self.assertEqual(menu.rom_size(games[0]), 1234)
         os.remove(rom)
-        self.assertEqual(menu.rom_size(games[0]), 1234)  # remembered, not stat'ed again
+        self.assertEqual(menu.rom_size(games[0]), 1234)
 
     def test_missing_file_is_zero(self):
         self.assertEqual(menu.rom_size({"path": "/nope/x.gba"}), 0)

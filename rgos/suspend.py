@@ -11,18 +11,18 @@ import hwctl
 KEY_POWER = 116
 EVFMT = struct.Struct("llHHi")
 EVIOCGBIT_KEY = (2 << 30) | (96 << 16) | (ord("E") << 8) | (0x20 + 1)
-WAKE_GUARD_S = 1.0          # presses this soon after a resume are the wake press itself, not a new sleep
+WAKE_GUARD_S = 1.0
 
 
 class PowerKeys:
     def __init__(self, sys_root="/sys", dev_root="/dev/input"):
         self.sys, self.dev = sys_root, dev_root
-        self.fds = {}       # fd -> sysfs path of the event node
+        self.fds = {}
 
     def scan(self):
         for p in sorted(glob.glob(os.path.join(self.sys, "class/input/event*"))):
             path = os.path.join(self.dev, os.path.basename(p))
-            if any(v[0] == path for v in self.fds.values()):     # fds values are (dev path, sysfs path) tuples
+            if any(v[0] == path for v in self.fds.values()):
                 continue
             try:
                 fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
@@ -132,7 +132,7 @@ class SleepManager:
             pass
         if self.real_suspend_ok():
             self.lp.prefer_deep_sleep()
-            if hwctl.wr(self._state(), "mem"):          # blocks until the wake press; returns on resume
+            if hwctl.wr(self._state(), "mem"):
                 return self.wake(time.monotonic())
         self.lp.enter(full=True)
         return "soft"

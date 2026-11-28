@@ -12,7 +12,7 @@ from tests import helpers
 from tests.test_launch import load_launch
 
 sys.path.insert(0, helpers.RGOS)
-import portexit  # noqa: E402
+import portexit
 
 
 def ev(code, value):
@@ -87,8 +87,8 @@ class ComboTests(WatcherCase):
             with open("/proc/%d/stat" % child) as f:
                 state = f.read().rsplit(")", 1)[1].split()[0]
         except OSError:
-            state = "X"  # gone
-        self.assertIn(state, ("X", "Z"))  # exited (a zombie only waits for its parent to reap it)
+            state = "X"
+        self.assertIn(state, ("X", "Z"))
 
 
 class FindTests(unittest.TestCase):

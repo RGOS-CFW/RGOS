@@ -43,11 +43,10 @@ BOOT = os.environ.get("RGOS_BOOT_MNT", "/boot")
 ROMS = os.environ.get("RGOS_ROMS", "/media/roms")
 RUN = os.environ.get("RGOS_RUN", "/run/rgos")
 LOG_FILE = os.environ.get("RGOS_INSTALL_LOG", "/var/log/rgos-installer.log")
-DEVICE_FILE = os.environ.get("RGOS_DEVICE_FILE", "/etc/rgos-device")      # the console (H700: found at boot from the device tree)
-CHIPSET_FILE = os.environ.get("RGOS_CHIPSET_FILE", "/etc/rgos-chipset")   # what the image was built for; payloads are matched against it
+DEVICE_FILE = os.environ.get("RGOS_DEVICE_FILE", "/etc/rgos-device")
+CHIPSET_FILE = os.environ.get("RGOS_CHIPSET_FILE", "/etc/rgos-chipset")
 ROMS_SCRIPT = os.environ.get("RGOS_ROMS_SCRIPT", "/opt/rgos/rgos-roms")
 
-# File systems offered for a new ROMS partition: id -> (menu label, one-line hint, what blkid reports once it is formatted)
 ROMS_FORMATS = ("fat32", "exfat", "ext4")
 DEFAULT_ROMS_FORMAT = "exfat"
 FORMAT_LABELS = {"fat32": "FAT32", "exfat": "exFAT", "ext4": "ext4"}
@@ -55,7 +54,7 @@ FORMAT_HINTS = {"fat32": "Works everywhere. Files are limited to 4 GB.",
                 "exfat": "Recommended. Windows, Mac and Linux, big files.",
                 "ext4": "Linux only. Windows cannot read it without extra software."}
 FORMAT_BLKID = {"fat32": "vfat", "exfat": "exfat", "ext4": "ext4"}
-ROMS_FS_FILE = "rgos-roms-fs"   # on the boot partition: the choice, read by rgos-roms if the installer is interrupted
+ROMS_FS_FILE = "rgos-roms-fs"
 
 PAYLOAD = "rgos-payload"
 MANIFEST = "manifest.json"
@@ -64,18 +63,17 @@ STATE_FILE = "rgos-install-state.json"
 OPTIONS_FILE = "rgos-install.txt"
 LOG_COPY = "rgos-install-log.txt"
 FORMAT = 1
-MARGIN = 32 << 20           # free space that must be left on ROMS after everything is unpacked
-EXIT_REBOOT = 10            # exit status of rgos-installer: installed, reboot now
-EXIT_POWEROFF = 20          # exit status of rgos-installer: the person chose "Power off" on the welcome screen (same code as menu.py's EXIT_POWER)
-DEVICES = ("h700-ddr3", "h700-ddr4", "rg-rotate", "miniloong")   # build.sh chipsets (payload manifests)
-CONSOLES = ("rg34xxsp", "rg35xxh", "rg35xxsp", "rg-rotate", "miniloong")   # what /etc/rgos-device can say
+MARGIN = 32 << 20
+EXIT_REBOOT = 10
+EXIT_POWEROFF = 20
+DEVICES = ("h700-ddr3", "h700-ddr4", "rg-rotate", "miniloong")
+CONSOLES = ("rg34xxsp", "rg35xxh", "rg35xxsp", "rg-rotate", "miniloong")
 CANVAS = {"rg-rotate": (720, 720), "rg34xxsp": (720, 480), "rg35xxh": (720, 540), "rg35xxsp": (720, 540), "miniloong": (720, 540)}
 DEVICE_NAMES = {"rg-rotate": "Anbernic RG Rotate", "h700-ddr3": "Allwinner H700 (DDR3)", "h700-ddr4": "Allwinner H700 (DDR4)",
                 "miniloong": "MiniLoong Pocket 1"}
 CONSOLE_NAMES = {"rg-rotate": "Anbernic RG Rotate", "rg34xxsp": "Anbernic RG34XXSP",
                  "rg35xxh": "Anbernic RG35XX H", "rg35xxsp": "Anbernic RG35XX SP", "miniloong": "MiniLoong Pocket 1"}
 SHARED_DIRS = ("artwork", "bios", "config", "cores", "firmware", "music", "saves", "screenshots", "splash", "states", "update")
-# NOT created here: rgos-data. rgos-session copies the boot partition's settings there only when the folder is missing.
 
 ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 ARCHIVE_RE = re.compile(r"^[A-Za-z0-9._-]{1,96}\.(tar|tar\.gz|tgz)$")
@@ -341,7 +339,7 @@ def partition_roms(boot=None, fmt=None):
     m = re.match(r"^(/dev/mmcblk\d+)p1$", src)
     if not m:
         raise InstallError("RG OS is not running from an SD card (boot partition: %s), so the card cannot be partitioned" % (src or "unknown"))
-    try:  # remembered on the card so rgos-roms still honours the choice if the installer is interrupted and RG OS boots anyway
+    try:
         with open(os.path.join(boot, ROMS_FS_FILE), "w") as f:
             f.write(fmt + "\n")
     except OSError as e:
@@ -448,7 +446,6 @@ class Installer:
         self.current = -1
         self.sum_w = sum(s["weight"] for s in steps)
 
-    # -- state shown on screen ---------------------------------------------------------------------------------------
     def snapshot(self):
         with self.lock:
             return {"steps": [dict(s) for s in self.steps], "current": self.current, "fraction": self.fraction,
@@ -497,7 +494,6 @@ class Installer:
         except OSError:
             pass
 
-    # -- the install ---------------------------------------------------------------------------------------------------
     def run(self):
         if self.error:
             self._fail(self.error)
@@ -507,7 +503,7 @@ class Installer:
         except InstallError as e:
             self._fail(str(e))
             return False
-        except Exception as e:  # a bug must show on screen, not leave the card half installed with a blank display
+        except Exception as e:
             log(traceback.format_exc())
             self._fail("unexpected error: %s" % e)
             return False
@@ -537,7 +533,6 @@ class Installer:
 
     def _run(self):
         log("installer start: build %s, device %s, components %s" % (self.man["id"], self.device, [c["id"] for c in self.comps]))
-        # 1. partition + format + mount
         self._begin(0, "Creating the ROMS partition (%s)" % FORMAT_LABELS[self.fmt], True)
         dev = self.partition()
         self.mount(dev)
@@ -549,12 +544,10 @@ class Installer:
         if free < need:
             raise InstallError("the ROMS partition is too small: %d MB free, %d MB needed" % (free >> 20, need >> 20))
         self._end(0)
-        # 2. folders
         i = 1
         self._begin(i, "roms/, saves/, states/, bios/ ...")
         make_folders(self.roms)
         self._end(i)
-        # 3. components
         done = self._state()
         for c in self.comps:
             i += 1
@@ -578,7 +571,6 @@ class Installer:
             done.add(c["id"])
             self._save_state(done)
             self._end(i)
-        # 4. finish
         i += 1
         self._begin(i, "Writing the install record", True)
         self._finish(done)

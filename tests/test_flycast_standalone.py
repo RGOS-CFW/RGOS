@@ -32,11 +32,11 @@ class CoreTableTests(unittest.TestCase):
     def test_standalone_is_found_by_its_executable_only(self):
         d = tempfile.mkdtemp()
         self.assertEqual(cores.standalone_path("flycast_standalone", [d]), "")
-        fake_exe(d, mode=0o644)  # not executable
+        fake_exe(d, mode=0o644)
         self.assertEqual(cores.standalone_path("flycast_standalone", [d]), "")
         path = fake_exe(d)
         self.assertEqual(cores.standalone_path("flycast_standalone", [d]), path)
-        self.assertEqual(cores.standalone_path("flycast", [d]), "")  # libretro names are not standalone names
+        self.assertEqual(cores.standalone_path("flycast", [d]), "")
         self.assertEqual(cores.standalone_path("mgba", [d]), "")
 
     def test_installed_cores_lists_the_standalone_emulator_when_present(self):
@@ -86,7 +86,7 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(self.launch.core_file("flycast_standalone"), "")
         exe = fake_exe(self.bin_dir)
         self.assertEqual(self.launch.core_file("flycast_standalone"), exe)
-        self.assertEqual(self.launch.core_file("flycast", dirs=[self.bin_dir]), "")  # libretro lookup still wants *_libretro.so
+        self.assertEqual(self.launch.core_file("flycast", dirs=[self.bin_dir]), "")
 
     def test_users_choice_of_standalone_is_used_and_a_missing_one_falls_back(self):
         state = {"emulators": {"dreamcast": "flycast_standalone"}}
@@ -94,7 +94,7 @@ class LaunchTests(unittest.TestCase):
         compat = lambda sid, cores=None: []
         with mock.patch.object(self.launch, "CORE_DIRS", [os.path.join(self.tmp, "libretro")]):
             fake_exe(os.path.join(self.tmp, "libretro"), "flycast_libretro.so")
-            self.assertEqual(self.launch.pick_core("dreamcast", state, default, compat), "flycast")  # no executable yet
+            self.assertEqual(self.launch.pick_core("dreamcast", state, default, compat), "flycast")
             fake_exe(self.bin_dir)
             self.assertEqual(self.launch.pick_core("dreamcast", state, default, compat), "flycast_standalone")
 
@@ -116,7 +116,7 @@ class LaunchTests(unittest.TestCase):
 
     def test_bios_added_after_flycast_made_its_empty_data_folder_is_still_linked(self):
         data = os.path.join(self.launch.ROMS_ROOT, "config", "data", "flycast", "data")
-        os.makedirs(data)  # what Flycast leaves behind after a run without a BIOS
+        os.makedirs(data)
         bios = os.path.join(self.launch.ROMS_ROOT, "bios", "dc")
         os.makedirs(bios)
         self._env()
@@ -184,7 +184,7 @@ class BuildScriptTests(unittest.TestCase):
             text = fh.read()
         purge = text.index("apt-get purge -y --auto-remove gcc")
         check = text.index("ldd /usr/local/bin/flycast 2>&1 | grep")
-        self.assertGreater(check, purge)  # the repair must run after the purge, not before it
+        self.assertGreater(check, purge)
         self.assertIn("libzip5", text[check:])
 
 

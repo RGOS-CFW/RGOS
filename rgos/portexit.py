@@ -67,14 +67,13 @@ class ExitWatcher(threading.Thread):
             time.sleep(0.05)
         if self.alive():
             self.log("port ignored SIGTERM; sending SIGKILL")
-        self._killpg(signal.SIGKILL)  # also reaps stragglers that outlived the leader
+        self._killpg(signal.SIGKILL)
 
     def run(self):
         down, since = set(), None
         try:
             while not self._stop_evt.is_set() and self.fds:
                 try:
-                    # Only the hold timer needs fast wakeups; otherwise sleep until a pad event arrives.
                     ready, _, _ = select.select(self.fds, [], [], 0.1 if down >= {BTN_SELECT, BTN_START} else 0.5)
                 except (OSError, ValueError):
                     break

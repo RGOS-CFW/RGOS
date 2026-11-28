@@ -11,7 +11,7 @@ from unittest import mock
 from tests import helpers
 
 sys.path.insert(0, helpers.RGOS)
-import gamemenu as gm  # noqa: E402
+import gamemenu as gm
 
 
 def load_launch():
@@ -50,7 +50,7 @@ class ModelTests(unittest.TestCase):
         m.press("down")
         self.assertIsNone(m.press("ok"))
         self.assertEqual(m.confirm, "restart")
-        self.assertEqual(m.sel, 0)                       # defaults to Cancel
+        self.assertEqual(m.sel, 0)
         self.assertEqual(m.header()[1], "Restart game?")
         self.assertIsNone(m.press("back"))
         self.assertIsNone(m.confirm)
@@ -91,7 +91,7 @@ class InputTests(unittest.TestCase):
         self.assertEqual(gm.translate(1, gm.BTN_B, 1), "back")
         self.assertEqual(gm.translate(1, gm.BTN_MODE, 1), "close")
         self.assertEqual(gm.translate(1, gm.DPAD_DOWN, 1), "down")
-        self.assertIsNone(gm.translate(1, gm.BTN_A, 0))   # releases do nothing
+        self.assertIsNone(gm.translate(1, gm.BTN_A, 0))
         self.assertIsNone(gm.translate(3, gm.ABS_HAT0Y, 0))
 
     def test_tap_opens_on_release(self):
@@ -109,9 +109,9 @@ class InputTests(unittest.TestCase):
         t.feed(1, gm.BTN_MODE, 1, 10.0)
         t.feed(1, gm.BTN_B, 1, 10.05)
         self.assertFalse(t.feed(1, gm.BTN_MODE, 0, 10.1))
-        self.assertFalse(t.feed(1, gm.BTN_MODE, 0, 10.2))   # stray release without a press
+        self.assertFalse(t.feed(1, gm.BTN_MODE, 0, 10.2))
         t.feed(1, gm.BTN_MODE, 1, 12.0)
-        self.assertTrue(t.feed(1, gm.BTN_MODE, 0, 12.1))    # and the next clean tap still works
+        self.assertTrue(t.feed(1, gm.BTN_MODE, 0, 12.1))
 
 
 class Recorder:
@@ -188,7 +188,7 @@ class ControlTests(unittest.TestCase):
 
     def test_kind_guessed_when_flag_is_empty(self):
         c, _, _ = self.make({})
-        self.assertEqual(c.kind, "retroarch")            # the stub finds a retroarch pid
+        self.assertEqual(c.kind, "retroarch")
 
 
 class FakeCanvas:
@@ -250,9 +250,9 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(result, "resume")
         self.assertEqual(log[0], "open")
         draws = [x for k, x in (e for e in log if isinstance(e, tuple) and e[0] == "draw")]
-        self.assertEqual(draws[0], 300)                  # starts fully off screen
-        self.assertEqual(draws.count(0) >= 1, True)      # reaches fully in
-        self.assertLess(log.index("close"), log.index(("perform", "resume")))   # pixels restored before the game runs
+        self.assertEqual(draws[0], 300)
+        self.assertEqual(draws.count(0) >= 1, True)
+        self.assertLess(log.index("close"), log.index(("perform", "resume")))
         self.assertEqual(udp.cmds, ["GET_STATUS", "PAUSE_TOGGLE", "PAUSE_TOGGLE"])
 
     def test_save_keeps_the_menu_open(self):
@@ -313,7 +313,7 @@ class LayoutTests(unittest.TestCase):
                         self.assertTrue(0 <= x <= w and 0 <= y < h, o)
                         self.assertLessEqual(x + measure(o[2], o[4], o[5]), w + 2, o)
                 last_row = max(o[1][1] for o in ops if o[0] == "text" and o[2] in [t for _, t in m.items()])
-                self.assertLess(last_row + 24 * s, h - 40 * s)  # the rows stay clear of the footer
+                self.assertLess(last_row + 24 * s, h - 40 * s)
 
     def test_status_and_confirm_text(self):
         m = gm.MenuModel("retroarch", "Sonic")
@@ -401,8 +401,8 @@ class RetroArchPanelTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("RGOS_GAMEMENU_RGUI", None)
             self.assertFalse(gm.use_rgui("retroarch", False))
-            self.assertTrue(gm.use_rgui("retroarch", True))        # no plane was available
-            self.assertFalse(gm.use_rgui("native", True))          # ports never use RGUI
+            self.assertTrue(gm.use_rgui("retroarch", True))
+            self.assertFalse(gm.use_rgui("native", True))
         with mock.patch.dict(os.environ, {"RGOS_GAMEMENU_RGUI": "1"}):
             self.assertTrue(gm.use_rgui("retroarch", False))
             self.assertFalse(gm.use_rgui("native", False))
@@ -418,7 +418,7 @@ class RetroArchPanelTests(unittest.TestCase):
         with mock.patch.object(gm, "DrmMenuScreen", side_effect=RuntimeError("none")), \
                 mock.patch.object(gm, "FbMenuScreen", return_value=fb):
             with self.assertRaises(gm.NoPlane):
-                gm.make_screen("retroarch")                         # a framebuffer panel would be behind the game
+                gm.make_screen("retroarch")
             self.assertIs(gm.make_screen("native"), fb)
         with mock.patch.dict(os.environ, {"RGOS_GAMEMENU_DRM": "0"}), \
                 mock.patch.object(gm, "DrmMenuScreen") as drm:
@@ -432,6 +432,6 @@ class RetroArchPanelTests(unittest.TestCase):
         self.assertLess(d.index("use_rgui(info.get(\"kind\"), plane_bad)"), d.index("make_screen(info.get(\"kind\"))"))
         self.assertIn("except NoPlane:", d)
         self.assertIn("plane_bad = True", d)
-        self.assertIn("plane_bad = False", d)                       # reset when the game ends
+        self.assertIn("plane_bad = False", d)
         self.assertNotIn("RGOS_GAMEMENU_FB", src)
 

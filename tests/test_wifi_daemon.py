@@ -48,14 +48,14 @@ class DisableThenEnable(unittest.TestCase):
 
     def test_link_is_brought_up_again_after_wifi_was_switched_off(self):
         d = wifictl.Daemon()
-        self.step(d)                       # connected
+        self.step(d)
         self.assertEqual(d.last_state, "connected")
         self.conf["enabled"] = False
-        self.step(d)                       # switched off: link goes down
+        self.step(d)
         self.assertIn(["ip", "link", "set", "wlan0", "down"], self.cmds)
         self.cmds.clear()
         self.conf["enabled"] = True
-        self.step(d)                       # switched on again
+        self.step(d)
         self.assertIn(["ip", "link", "set", "wlan0", "up"], self.cmds)
         self.assertIn(["rfkill", "unblock", "wifi"], self.cmds)
 

@@ -27,21 +27,19 @@ THEME_FILE = os.environ.get("RGOS_THEME_FILE", os.path.join(RUN_DIR, "theme"))
 FB_DEV = os.environ.get("RGOS_FB_DEV", "/dev/fb0")
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 HOLD = float(os.environ.get("RGOS_OVERLAY_HOLD", "1.5") or 1.5)
-BOOT_QUIET = 15.0            # seconds after start in which an unchanged volume (boot-time republish) is not announced
-FAST, SLOW = 1 / 30.0, 0.1   # poll interval while the bar is visible / while idle
+BOOT_QUIET = 15.0
+FAST, SLOW = 1 / 30.0, 0.1
 FBIOGET_VSCREENINFO, FBIOGET_FSCREENINFO = 0x4600, 0x4602
 DEFAULT_THEME = {"BG": (13, 15, 26), "PANEL": (24, 28, 46), "ACCENT": (255, 99, 71), "TEXT": (232, 235, 245)}
 GAME_FLAG = os.environ.get("RGOS_GAME_FLAG", os.path.join(RUN_DIR, "ingame"))
 RA_ADDR = ("127.0.0.1", int(os.environ.get("RGOS_RA_PORT", "55355") or 55355))
 USE_DRM = os.environ.get("RGOS_OVERLAY_DRM", "1") != "0"
-BAR_W, BAR_H, BASE_W = 260, 44, 720       # bar size and the canvas width it was designed for (the launcher's)
+BAR_W, BAR_H, BASE_W = 260, 44, 720
 
 
 def log(*a):
     print(time.strftime("%H:%M:%S"), *a, flush=True)
 
-
-# ---- pure helpers -------------------------------------------------------------------------------------------------
 
 def parse_volume(text):
     try:
@@ -149,8 +147,6 @@ def to_fb_rect(rect, lw, lh, rotate):
     return x, y, w, h
 
 
-# ---- the overlay state machine (screen access is injected, so it can be tested without a framebuffer) ----------------
-
 class Overlay:
     def __init__(self, screen, clock=time.monotonic):
         self.screen, self.clock = screen, clock
@@ -168,7 +164,7 @@ class Overlay:
         if self.key != key or self.saved is None:
             self.saved = cur
         elif self.drawn is not None and cur != self.drawn:
-            self.saved = cur       # the program repainted underneath us: that is the picture to restore later
+            self.saved = cur
         self.key = key
         self.drawn = scr.compose(self.saved, self.pct)
         scr.write(self.drawn)
@@ -195,8 +191,6 @@ class Overlay:
         self.saved = self.drawn = self.key = None
         self.until = 0.0
 
-
-# ---- the real framebuffer ------------------------------------------------------------------------------------------
 
 class FbScreen:
     def __init__(self, dev=FB_DEV):
@@ -343,8 +337,6 @@ def load_drm():
     return importlib.import_module("drmplane")
 
 
-# ---- daemon --------------------------------------------------------------------------------------------------------
-
 def run():
     start = time.monotonic()
     ov, last, drm_bar, drm_bad = None, read_volume(), None, False
@@ -368,7 +360,7 @@ def run():
                 if not quiet:
                     where = volume_target(game_running(), retroarch_running(), drm_bad)
                     if where == "drm":
-                        try:                              # a hardware overlay plane above the game's DRM output: top layer
+                        try:
                             drm_bar = drm_bar or DrmBar(ov.screen, load_drm())
                             drm_bar.show(v[0], HOLD)
                         except Exception as e:
@@ -379,7 +371,7 @@ def run():
                             drm_bar = None
                             where = volume_target(True, retroarch_running(), drm_bad)
                     if where == "ra":
-                        ra_message(volume_text(v[0]))     # no plane: RetroArch draws the bar itself, over its own picture
+                        ra_message(volume_text(v[0]))
                     elif where == "fb":
                         ov.show(v[0])
             busy = ov.tick()
@@ -387,7 +379,7 @@ def run():
                 busy = drm_bar.tick() or busy
                 if not drm_bar.until:
                     drm_bar = None if not game_running() else drm_bar
-        except Exception as e:           # a bad frame must never kill the overlay; rebuild the screen access next time
+        except Exception as e:
             log("overlay error: %r" % e)
             try:
                 os.close(ov.screen.fd)

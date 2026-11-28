@@ -61,8 +61,8 @@ class HomeIntroTests(unittest.TestCase):
         menu.home_intro("rgos", 100.0)
         self.assertAlmostEqual(menu.home_intro("rgos", 100.1), 0.1)
         self.assertAlmostEqual(menu.home_intro("rgos", 100.2), 0.2)
-        self.assertAlmostEqual(menu.home_intro("rgos", 101.0), 0.0)   # 0.8 s without a frame: entrance replays
-        self.assertAlmostEqual(menu.home_intro("xmb", 101.05), 0.0)   # other launcher: its own entrance
+        self.assertAlmostEqual(menu.home_intro("rgos", 101.0), 0.0)
+        self.assertAlmostEqual(menu.home_intro("xmb", 101.05), 0.0)
         self.assertAlmostEqual(menu.home_intro("xmb", 101.15), 0.1)
 
 
@@ -75,7 +75,7 @@ class RingTests(unittest.TestCase):
             now += 1 / 60.0
             speed, rem = menu._ring_step(100, 40, 1 / 60.0, now)
             far = max(far, menu._RING["p"][0])
-        self.assertGreater(far, 100.0)          # slight overshoot, like RG Classic
+        self.assertGreater(far, 100.0)
         self.assertLess(far, 110.0)
         self.assertEqual((speed, rem), (0.0, 0.0))
         self.assertEqual(menu._RING["p"], [100.0, 40.0])
@@ -91,12 +91,12 @@ class RingTests(unittest.TestCase):
 class XmbFxTests(unittest.TestCase):
     def test_tracks_category_and_item_changes(self):
         fx = menu.xmb_fx(1, 0, 10.0, 0.0)
-        self.assertGreater(fx["sel_t"], 5)                     # nothing pulses on the first frame
+        self.assertGreater(fx["sel_t"], 5)
         fx = menu.xmb_fx(1, 2, 11.0, 1.0)
-        self.assertAlmostEqual(fx["sel_t"], 0.0)               # item moved
+        self.assertAlmostEqual(fx["sel_t"], 0.0)
         self.assertGreater(fx["cat_t"], 5)
         fx = menu.xmb_fx(2, 0, 11.2, 1.2)
-        self.assertAlmostEqual(fx["cat_t"], 0.0)               # category moved (item resets with it)
+        self.assertAlmostEqual(fx["cat_t"], 0.0)
         self.assertAlmostEqual(fx["sel_t"], 0.0)
 
 
@@ -111,7 +111,7 @@ class DrawSmokeTests(unittest.TestCase):
                 el = menu.home_intro("xmb", now)
                 fx = menu.xmb_fx(1 + (step > 60), 0 if step < 30 else 2, now, el)
                 menu.draw_xmb_home(c, f, f, 1.0, 1 + (step > 60), items, 0.0, min(1.0, step / 20.0), fx)
-            menu.draw_xmb_home(c, f, f, 1.0, 1, items, 0.0, 1.0)   # no fx: plain draw still works
+            menu.draw_xmb_home(c, f, f, 1.0, 1, items, 0.0, 1.0)
 
     def test_ring_shine_and_embers_draw(self):
         with mock.patch.object(menu, "pygame", fake_pygame()):

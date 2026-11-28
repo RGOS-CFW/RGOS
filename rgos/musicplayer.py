@@ -22,10 +22,10 @@ import time
 
 EXTS = (".mp3", ".ogg", ".oga", ".wav", ".flac", ".mod", ".xm", ".it", ".s3m")
 MAX_TRACKS = 4000
-SEEK_STEP = 10.0        # seconds per Left / Right press
-SEEK_SETTLE = 0.3       # the real seek happens once the presses stop, so a held button does not hammer the decoder
-RESTART_AFTER = 3.0     # "previous" restarts the song when it has played longer than this
-VOLUME = 1.0            # mixer volume; the hardware volume buttons stay the master control
+SEEK_STEP = 10.0
+SEEK_SETTLE = 0.3
+RESTART_AFTER = 3.0
+VOLUME = 1.0
 MIXER_RATE = 44100
 REPEAT_MODES = ("off", "all", "one")
 
@@ -35,8 +35,6 @@ def music_dir(roms_root):
 
 
 def _natural(s):
-    # re.split with a capture group alternates text / digits, so the digit runs sit at the odd indexes. Going by
-    # position (not str.isdigit) keeps characters like "²" or "①", which isdigit() accepts but int() rejects, as text.
     return [int(p) if i % 2 else p for i, p in enumerate(re.split(r"(\d+)", s.lower()))]
 
 
@@ -73,8 +71,6 @@ def viz_bars(t, n, energy):
         out.append(max(0.0, min(1.0, v * energy)))
     return out
 
-
-# ---- tags --------------------------------------------------------------------------------------------------------
 
 def _synchsafe(b):
     return (b[0] & 127) << 21 | (b[1] & 127) << 14 | (b[2] & 127) << 7 | (b[3] & 127)
@@ -122,11 +118,11 @@ def _id3v2(f, want_art):
     if ver not in (2, 3, 4):
         return out
     src, limit = f, size
-    if flags & 0x80 and ver < 4:   # whole tag unsynchronised: undo it, then read the frames from memory
+    if flags & 0x80 and ver < 4:
         body = f.read(size).replace(b"\xff\x00", b"\xff")
         src, limit = io.BytesIO(body), len(body)
     pos = 0
-    if flags & 0x40 and ver >= 3:   # extended header
+    if flags & 0x40 and ver >= 3:
         raw = src.read(4)
         if len(raw) < 4:
             return out
@@ -153,9 +149,9 @@ def _id3v2(f, want_art):
             fflags = h[9] if ver >= 3 else 0
             usable = not (fflags & 0x80 or fflags & 0x40) if ver == 3 else not (fflags & 0x0C)
             if usable and ver == 4:
-                if fflags & 0x01:   # data length indicator
+                if fflags & 0x01:
                     data = data[4:]
-                if fflags & 0x02:   # per-frame unsynchronisation
+                if fflags & 0x02:
                     data = data.replace(b"\xff\x00", b"\xff")
             if usable and data:
                 if key:
@@ -181,7 +177,6 @@ def _id3v1(f, size):
     return {"title": cut(b[3:33]), "artist": cut(b[33:63]), "album": cut(b[63:93])}
 
 
-# (MPEG version, layer) -> bitrates in kbit/s for the header's bitrate index 1..14
 _MP3_BR = {(1, 1): [32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448],
            (1, 2): [32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384],
            (1, 3): [32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
@@ -220,7 +215,7 @@ def _mp3_duration(f, start, size):
     while 0 <= i < len(buf) - 4:
         fr = _mp3_frame(buf[i:i + 4])
         nxt = i + fr["length"] if fr else 0
-        if fr and not (nxt + 4 <= len(buf) and _mp3_frame(buf[nxt:nxt + 4]) is None):   # the next frame must line up too
+        if fr and not (nxt + 4 <= len(buf) and _mp3_frame(buf[nxt:nxt + 4]) is None):
             side = (17 if fr["mono"] else 32) if fr["mpeg1"] else (9 if fr["mono"] else 17)
             off = i + 4 + (2 if fr["crc"] else 0) + side
             frames = 0
@@ -388,8 +383,6 @@ def read_meta(path, art=False):
     return meta
 
 
-# ---- library -----------------------------------------------------------------------------------------------------
-
 class Track:
     __slots__ = ("path", "name", "title", "artist", "album", "duration", "tagged", "bad")
 
@@ -441,8 +434,6 @@ class Library:
                 time.sleep(0.002)
 
 
-# ---- cover pictures ----------------------------------------------------------------------------------------------
-
 class ArtLoader:
     """Cover pictures decoded and cropped to a square on a worker thread. ask(path) returns the surface once it is
     ready, and None while it loads or when the file has no picture."""
@@ -474,7 +465,7 @@ class ArtLoader:
                 sq = img.subsurface(((w - s) // 2, (h - s) // 2, s, s))
                 try:
                     surf = self.pg.transform.smoothscale(sq, (self.size, self.size))
-                except ValueError:   # palette images cannot be smooth-scaled
+                except ValueError:
                     surf = self.pg.transform.scale(sq, (self.size, self.size))
         except Exception:
             surf = None
@@ -484,8 +475,6 @@ class ArtLoader:
                 self._done.pop(next(iter(self._done)))
             self._busy.discard(path)
 
-
-# ---- transport ---------------------------------------------------------------------------------------------------
 
 class Player:
     """Plays Track objects through pygame's mixer.music.
@@ -502,16 +491,15 @@ class Player:
         self.rng = rng or random.Random()
         self.tracks = []
         self.cur = None
-        self.state = "stopped"      # stopped / playing / paused
+        self.state = "stopped"
         self.shuffle = False
         self.repeat = "all"
-        self.hold = False           # the player screen is open: the launcher's background music keeps out
+        self.hold = False
         self.msg, self.msg_until = "", 0.0
         self._order, self._opos = [], -1
         self._t0 = self._paused_at = 0.0
         self._seek_to, self._seek_at = None, 0.0
 
-    # -- state ---------------------------------------------------------------------------------------------------
     @property
     def active(self):
         return self.state != "stopped"
@@ -536,11 +524,10 @@ class Player:
         d = self.cur.duration if self.cur is not None else None
         return min(pos, d) if d else pos
 
-    # -- queue ---------------------------------------------------------------------------------------------------
     def set_tracks(self, tracks):
         same = len(tracks) == len(self.tracks) and all(a is b for a, b in zip(tracks, self.tracks))
         self.tracks = tracks
-        if not same:   # a re-scan that found nothing new must not reshuffle a round in progress
+        if not same:
             self._build_order(self.cur)
 
     def _build_order(self, first):
@@ -562,14 +549,12 @@ class Player:
         self._build_order(self.cur)
         return self.shuffle
 
-    # -- mixer ---------------------------------------------------------------------------------------------------
     def _ensure_mixer(self):
         m = self.mixer
         info = m.get_init()
         if not info:
             m.init(MIXER_RATE, -16, 2, 4096)
         elif isinstance(info, (tuple, list)) and info[0] < MIXER_RATE:
-            # the launcher opens the mixer at 22 kHz for its background music; play real music at CD rate
             m.quit()
             m.init(MIXER_RATE, -16, 2, 4096)
 
@@ -599,7 +584,6 @@ class Player:
             except Exception:
                 pass
 
-    # -- transport -----------------------------------------------------------------------------------------------
     def play(self, track):
         """Start this song now (the A button on a list row)."""
         if track not in self._order or self.shuffle:
@@ -641,7 +625,7 @@ class Player:
                 if auto and self.repeat != "all":
                     self.stop()
                     return False
-                if pos >= n and self.shuffle and n > 1:   # a new round: reshuffle, but not the same opener
+                if pos >= n and self.shuffle and n > 1:
                     last = self._order[-1]
                     self.rng.shuffle(self._order)
                     if self._order[0] is last:

@@ -4,8 +4,6 @@ LOG=/var/log/rgos-roms.log
 ROMS_GUID="5E0D5A1C-52F0-4C6B-9D3E-524F4D530003"
 say() { echo "$(date +%T 2>/dev/null) $*" >> "$LOG"; }
 
-# file system for a NEW (blank) ROMS partition: $RGOS_ROMS_FS (set by the installer), else the word in /boot/rgos-roms-fs, else exfat.
-# A partition that already holds a file system is never reformatted, so this only matters the first time.
 fs="${RGOS_ROMS_FS:-}"
 [ -n "$fs" ] || fs=$(head -n 1 /boot/rgos-roms-fs 2>/dev/null)
 fs=$(printf '%s' "$fs" | tr -d ' \r\n' | tr 'A-Z' 'a-z')
@@ -78,10 +76,6 @@ fi
 
 fstype=$(blkid -p -o value -s TYPE "$part" 2>/dev/null)
 
-# Wipe flag: every freshly flashed image carries /boot/rgos-wipe-roms (build.sh), the old ROMS partition behind it survives the
-# flash, so the first boot after a flash erases it. The flag is removed BEFORE anything is erased and the wipe is skipped when it
-# cannot be removed (read-only boot partition), so a failure can never turn into "wipe on every boot". Offline updates never
-# write this file, so they keep your data.
 WIPE=/boot/rgos-wipe-roms
 if [ -f "$WIPE" ]; then
     rm -f "$WIPE" 2>/dev/null; sync
@@ -91,7 +85,6 @@ if [ -f "$WIPE" ]; then
         say "$part is mounted: NOT wiping it"
     elif [ -n "$fstype" ]; then
         say "wipe flag found: erasing $part (it held '$fstype')"
-        # keep the installer's choice if there is one, else the file system the partition already had
         if [ -z "${RGOS_ROMS_FS:-}" ]; then
             case "$fstype" in vfat) fs=fat32 ;; ext4) fs=ext4 ;; exfat) fs=exfat ;; esac
         fi

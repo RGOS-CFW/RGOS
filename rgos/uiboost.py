@@ -14,7 +14,7 @@ import os
 import time
 
 SYS_ROOT = os.environ.get("RGOS_SYSFS", "/sys")
-HOLD_S = 4.0  # stay boosted this long after the last input
+HOLD_S = 4.0
 
 
 def _read(path):
@@ -36,9 +36,9 @@ class UiBoost:
         if enabled is None:
             enabled = os.environ.get("RGOS_UI_BOOST", "1") != "0" and os.environ.get("RGOS_WINDOWED") != "1"
         self.enabled, self.root, self.hold, self.clock = enabled, root, hold, clock
-        self.saved = {}      # node -> governor to put back
+        self.saved = {}
         self.until = 0.0
-        self.nodes = None    # discovered on first use
+        self.nodes = None
 
     @property
     def active(self):

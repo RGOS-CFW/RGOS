@@ -64,9 +64,9 @@ class BringUpTests(unittest.TestCase):
     def test_reprobe_only_touches_unbound_serdev_devices(self):
         d = tempfile.mkdtemp(prefix="rgos-serial-")
         self.addCleanup(shutil.rmtree, d, True)
-        os.makedirs(os.path.join(d, "devices", "serial0"))        # the controller itself: skipped
-        os.makedirs(os.path.join(d, "devices", "serial0-0"))      # unbound slave: gets probed
-        os.makedirs(os.path.join(d, "devices", "serial1-0"))      # already has a driver: left alone
+        os.makedirs(os.path.join(d, "devices", "serial0"))
+        os.makedirs(os.path.join(d, "devices", "serial0-0"))
+        os.makedirs(os.path.join(d, "devices", "serial1-0"))
         os.symlink(d, os.path.join(d, "devices", "serial1-0", "driver"))
         open(os.path.join(d, "drivers_probe"), "w").close()
         with mock.patch.object(btctl, "SYSSERIAL", d):

@@ -15,10 +15,9 @@ from PIL import Image
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(HERE, "bootlogo", "rgos-logo.png")
-# native panel size of each device
 SIZES = {"rg34xxsp": (720, 480), "rg35xxh": (640, 480), "rg35xxsp": (640, 480), "rg-rotate": (720, 720), "miniloong": (960, 720)}
-FEATHER = 0.16  # width of the fade at the tile edge, share of the tile size
-FILL = 0.84  # logo tile height as a share of the panel's shorter side
+FEATHER = 0.16
+FILL = 0.84
 
 
 def basis(u, v):
@@ -47,7 +46,6 @@ def render(tile, coefs, size):
     bg = np.clip(basis(u, v) @ coefs, 0, 255).round().astype(np.uint8)
     img = Image.fromarray(bg, "RGB")
     t = tile.resize((th, th), Image.LANCZOS)
-    # feather the tile into the gradient so no edge shows and the wave lines fade out instead of stopping dead
     ramp = np.clip(np.minimum(np.arange(th), th - 1 - np.arange(th)) / (th * FEATHER), 0, 1)
     ramp = ramp * ramp * (3 - 2 * ramp)
     a = np.asarray(t.getchannel("A"), dtype=np.float64) * np.minimum.outer(ramp, ramp)

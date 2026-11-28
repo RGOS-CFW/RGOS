@@ -28,19 +28,12 @@ import zipfile
 DEFAULT_URL = "https://buildbot.libretro.com/nightly/linux/aarch64/latest"
 CONF_FILE = os.environ.get("RGOS_CORE_CONF", "/etc/rgos/coreinstall.json")
 CORES_CONF = os.environ.get("RGOS_CORES_CONF", "/etc/rgos/cores.conf")
-# core name (as in cores.SYSTEM_CORE_COMPATIBILITY) -> the cores.conf setting that pins it (same map as core_ref_var in tools/cores-lib.sh)
 REF_VAR = {"mednafen_ngp": "NGP_REF", "genesis_plus_gx": "GENESIS_REF", "pcsx_rearmed": "PSX_REF", "dolphin": "GC_REF",
            "flycast": "DC_REF", "flycast_standalone": "DC_REF", "mupen64plus_next": "N64_REF", "yabasanshiro": "SATURN_REF",
            "fake08": "PICO8_REF", "retro8": "PICO8_ALT_REF", "stella2014": "STELLA_REF", "atari800": "ATARI800_REF",
            "prosystem": "PROSYSTEM_REF", "mame2003_plus": "MAME2003_REF", "mame": "MAME_REF"}
 REF_RE = re.compile(r"^[A-Za-z0-9._/@+-]*$")
-# Cores that must not be offered: dolphin needs its Sys data folder, which only the RG Rotate and H700 images carry, and
-# flycast_standalone is a program, not a libretro core (there is nothing to download from the buildbot).
 EXCLUDE = frozenset(("dolphin", "flycast_standalone"))
-# Cores whose libretro buildbot build asks for desktop OpenGL. RetroArch on this image is a GLES build, so these start and
-# die at once ("Requesting OpenGL context, but RetroArch is compiled against OpenGLES"). The image's build.sh builds a GLES
-# Flycast; downloading the buildbot one only puts a core on the card that cannot run (and hides the real problem).
-# A mirror set in coreinstall.json / RGOS_CORE_URL is trusted: it may carry GLES builds.
 DESKTOP_GL_ONLY = frozenset(("flycast",))
 MAX_ZIP = 300 << 20
 MAX_SO = 600 << 20

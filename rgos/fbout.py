@@ -30,7 +30,7 @@ def fit_rect(src, dst):
     return ((dw - w) // 2, (dh - h) // 2, w, h)
 
 
-BAND_ROWS = 16  # canvas rows per dirty band, at least
+BAND_ROWS = 16
 
 
 def band_plan(src, dst, min_rows=BAND_ROWS):
@@ -95,8 +95,8 @@ class FbOut:
         self.vsync = os.environ.get("RGOS_FB_VSYNC", "1") != "0"
         self.page = 0
         self.last = None
-        self.bands = [None, None]   # per page: hash of every band of the frame that page holds
-        self.last_bands = None      # hashes of the frame shown last
+        self.bands = [None, None]
+        self.last_bands = None
         self.plan = None
         self.cache_key = None
         self.cache = None
@@ -232,7 +232,7 @@ class FbOut:
             base += self.yoff * self.line
         try:
             runs, i = [], 0
-            while i < len(changed):  # neighbouring bands go out in one write
+            while i < len(changed):
                 j = i
                 while j + 1 < len(changed) and changed[j + 1] == changed[j] + 1:
                     j += 1
@@ -254,7 +254,6 @@ class FbOut:
         self._flip(back)
 
     def _present_full(self, canvas):
-        # .raw copied the whole frame (1+ MB) several times per frame; views read the pixels in place.
         buf = canvas.get_buffer()
         mv = self._view(buf)
         try:
@@ -266,7 +265,7 @@ class FbOut:
         if h == self.last:
             return
         self.last = h
-        self.bands, self.last_bands = [None, None], None  # a whole-frame write: band bookkeeping starts over
+        self.bands, self.last_bands = [None, None], None
         self.surf.blit(self._scaled(canvas), (0, 0))
         buf = self.surf.get_buffer()
         raw = self._view(buf)

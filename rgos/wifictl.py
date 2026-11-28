@@ -452,7 +452,7 @@ class Daemon:
             self.children_stop()
             run(["ip", "link", "set", iface, "down"])
             write_status({"state": "off", "iface": iface})
-            self.last_state = "off"  # not "connected": switching back on must unblock rfkill and bring the link up again
+            self.last_state = "off"
             return
         if self.last_state != "connected":
             run(["rfkill", "unblock", "wifi"])

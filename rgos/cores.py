@@ -7,8 +7,6 @@ def user_core_dir():
     return os.path.join(os.environ.get("RGOS_ROMS", "/media/roms"), "cores")
 
 
-# Standalone emulators: not libretro cores but programs RG OS starts itself. They appear in the Emulators list under a
-# pseudo-core name and count as "installed" when their executable is found. {pseudo-core: executable name}
 STANDALONE = {"flycast_standalone": "flycast"}
 
 

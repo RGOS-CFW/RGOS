@@ -74,7 +74,6 @@ class Rg35xxspRetroArchConfigTests(unittest.TestCase):
         self.assertEqual(self.cfg.get("input_analog_dpad_mode"), "0")
 
     def test_only_the_left_stick_axes_are_bound_for_dpad_to_joystick(self):
-        # no physical stick, but the virtual pad has axes 0/1 and "DPAD to joystick" moves them
         self.assertEqual([self.cfg.get("input_player1_l_%s_axis" % a) for a in ("x_plus", "x_minus", "y_plus", "y_minus")],
                          ["+0", "-0", "+1", "-1"])
 
@@ -142,7 +141,6 @@ class ChipsetBuildTests(unittest.TestCase):
 
     def test_chipset_names_are_accepted_in_any_case(self):
         import subprocess
-        # no root and no tools needed: --help style output stops at argument parsing only for a bad name, so check the parser text
         b = read("build.sh")
         self.assertIn("h700-ddr3|h700ddr3)", b)
         self.assertIn("h700-ddr4|h700ddr4)", b)

@@ -281,7 +281,7 @@ class FileManager:
                 if not os.path.lexists(src):
                     continue
                 result = (move_item if cut else copy_item)(src, dst)
-                if cut and result == src:  # already in this folder: nothing moved
+                if cut and result == src:
                     continue
                 n += 1
             if cut:

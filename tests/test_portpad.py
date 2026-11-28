@@ -8,8 +8,8 @@ import unittest
 from tests import helpers
 
 sys.path.insert(0, helpers.RGOS)
-import portpad  # noqa: E402
-from tests.test_launch import load_launch  # noqa: E402
+import portpad
+from tests.test_launch import load_launch
 
 
 def parse(line):
@@ -32,7 +32,6 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(m["platform"], "Linux")
 
     def test_right_stick_only_when_analog_is_enabled(self):
-        # the left stick is always mapped: "DPAD to joystick" drives it on every device
         m = parse(portpad.mapping_line(False))[2]
         self.assertEqual((m["leftx"], m["lefty"]), ("a0", "a1"))
         self.assertNotIn("rightx", m)
@@ -147,7 +146,7 @@ class EnvSizeTests(unittest.TestCase):
         self.assertLess(len(env["SDL_GAMECONTROLLERCONFIG"]), portpad.MAX_ENV_BYTES + 200)
         self.assertIn(portpad.sdl_guid(), env["SDL_GAMECONTROLLERCONFIG"])
         with open(env["SDL_GAMECONTROLLERCONFIG_FILE"]) as f:
-            self.assertGreater(len(f.read()), portpad.MAX_ENV_BYTES)  # the file keeps every line
+            self.assertGreater(len(f.read()), portpad.MAX_ENV_BYTES)
 
 
 if __name__ == "__main__":

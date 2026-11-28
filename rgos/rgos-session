@@ -76,7 +76,7 @@ audio_report() {
   dmesg 2>/dev/null | grep -iE 'snd|asoc|alsa|audio|agdsp|audcp|vbc|codec|mcdt|agcp|aw873|mailbox|firmware|deferred|sprd.*(fail|err)' \
     | grep -vE 'name : FE_|stream_name : FE_|asoc_sprd_card_dai_link_of: parse for codec failed|sub_parse_of parse phandle .codec. failed' | tail -n 120
 }
-audio_report > /var/log/rgos-audio.log 2>&1 &   # log only (dmesg/lsmod/sysfs walks); do not hold up boot
+audio_report > /var/log/rgos-audio.log 2>&1 &
 if ! grep -q '\[' /proc/asound/cards 2>/dev/null; then
   ( for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
       sleep 5; load_audio_modules
@@ -89,12 +89,8 @@ fi
 if ! mountpoint -q /boot; then for d in /dev/mmcblk*p1; do [ -b "$d" ] && mount -t vfat "$d" /boot 2>/dev/null && break; done; fi
 python3 /opt/rgos/rgos-update boot 2>>/var/log/rgos-update.log
 [ $? -eq 10 ] && { sync; reboot -f; sleep 60; }
-# Restore the saved HDMI resolution cap after an update replaces extlinux.conf. The change applies next boot.
 python3 /opt/rgos/hdmictl.py boot >>/var/log/rgos-hdmi.log 2>&1
 fixperms
-# first-boot installer: an installer image carries /boot/rgos-payload; until /boot/rgos-installed.json exists the installer partitions the
-# card, unpacks PortMaster / the cores / the folder tree and asks for a reboot (it exits 0 when there is nothing to do). It opens on an
-# Install / Power off screen: exit 20 means Power off was chosen, so the console is switched off without touching the card
 if [ -f /boot/rgos-payload/manifest.json ] && [ ! -f /boot/rgos-installed.json ]; then
     python3 /opt/rgos/rgos-installer 2>>/var/log/rgos-installer.log
     inst_rc=$?
@@ -144,10 +140,7 @@ if ! mountpoint -q /media/roms && mountpoint -q /boot && mkdir -p /boot/roms 2>/
       && mkdir -p /media/roms/update /media/roms/roms/gb /media/roms/roms/gbc /media/roms/roms/gba 2>/dev/null \
       && echo "ROMS: using /boot/roms on the FAT partition (no ext4 ROMS partition)" >> /var/log/rgos-state.log
 fi
-# second SD slot: mount whatever card is in it on /media/roms2 and create roms/<system> on it. Started here (right after the primary
-# ROMS is mounted, before the slow PortMaster copy) so the card is ready at boot; it keeps polling for cards inserted later
 python3 /opt/rgos/sdcard.py watch >> /var/log/rgos-sdcard.log 2>&1 &
-# preinstalled PortMaster: copy the rootfs seed onto ROMS once; never touch an existing install (PortMaster updates itself there)
 if mountpoint -q /media/roms && [ -f /opt/rgos/seed/PortMaster/PortMaster.sh ] && [ ! -e /media/roms/roms/ports/PortMaster ]; then
     if mkdir -p /media/roms/roms/ports 2>/dev/null && rm -rf /media/roms/roms/ports/.PortMaster.tmp \
        && cp -R /opt/rgos/seed/PortMaster /media/roms/roms/ports/.PortMaster.tmp 2>>/var/log/rgos-state.log \
@@ -165,11 +158,6 @@ mountpoint -q /dev/pts || mount -t devpts devpts /dev/pts 2>/dev/null
 [ -e /dev/stdout ] || ln -s /proc/self/fd/1 /dev/stdout 2>/dev/null
 [ -e /dev/stderr ] || ln -s /proc/self/fd/2 /dev/stderr 2>/dev/null
 [ -e /var/run ] || ln -s /run /var/run 2>/dev/null
-# Screen orientation. The MiniLoong Pocket 1 panel is scanned out in portrait (the framebuffer is taller than wide) while the
-# console is held in landscape, so everything drawn upright showed up turned 90 degrees clockwise. RGOS_FB_ROTATE is how many
-# degrees clockwise the framebuffer content has to be turned to look upright on the screen; fbout, rgos-overlay and gamemenu all read
-# it, and rgos-launch derives RetroArch's video_rotation from it. If the picture is upside down or still sideways, put 0, 90, 180
-# or 270 in rgos-rotate.txt on the boot partition (no rebuild needed).
 if [ -z "$RGOS_FB_ROTATE" ]; then
     case "$(cat /etc/rgos-device 2>/dev/null)" in miniloong) RGOS_FB_ROTATE=270 ;; esac
     if [ -f /boot/rgos-rotate.txt ]; then

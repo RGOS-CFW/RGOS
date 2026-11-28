@@ -26,7 +26,6 @@ def text_frame(text):
     return b"\x00" + text.encode("latin-1")
 
 
-# MPEG-1 layer 3, 128 kbit/s, 44.1 kHz, stereo, no padding, no CRC: 417 bytes per frame
 HDR = b"\xff\xfb\x90\x00"
 FRAME = HDR + bytes(417 - 4)
 PNG = b"\x89PNG\r\n\x1a\n" + b"fakepicturebytes"
@@ -80,11 +79,11 @@ class TagTests(unittest.TestCase):
         self.assertEqual(mp.read_meta(p, art=True)["art"], PNG)
 
     def test_id3v1_is_the_fallback(self):
-        v1 = b"TAG" + b"Old Song".ljust(30, b"\0") + b"Old Band".ljust(30, b"\0") + b"Old LP".ljust(30, b"\0") + bytes(35)   # year + comment + genre: 128 bytes in all
+        v1 = b"TAG" + b"Old Song".ljust(30, b"\0") + b"Old Band".ljust(30, b"\0") + b"Old LP".ljust(30, b"\0") + bytes(35)
         p = write(os.path.join(tempfile.mkdtemp(), "o.mp3"), FRAME * 10 + v1)
         m = mp.read_meta(p)
         self.assertEqual((m["title"], m["artist"], m["album"]), ("Old Song", "Old Band", "Old LP"))
-        self.assertAlmostEqual(m["duration"], 10 * 417 * 8 / 128000.0, places=2)   # the 128 tag bytes are not audio
+        self.assertAlmostEqual(m["duration"], 10 * 417 * 8 / 128000.0, places=2)
 
     def test_damaged_files_give_empty_tags_instead_of_raising(self):
         d = tempfile.mkdtemp()
@@ -104,15 +103,15 @@ class TagTests(unittest.TestCase):
         write(os.path.join(d, "a.mp3"), FRAME * 4)
         lib = mp.Library(d)
         lib.rescan()
-        self.assertEqual([t.name for t in lib.tracks], ["a", "b"])       # listed at once, tags follow
+        self.assertEqual([t.name for t in lib.tracks], ["a", "b"])
         for _ in range(200):
             if all(t.tagged for t in lib.tracks):
                 break
             import time
             time.sleep(0.01)
-        self.assertEqual([t.label for t in lib.tracks], ["a", "Beta"])   # no title tag -> the file name
+        self.assertEqual([t.label for t in lib.tracks], ["a", "Beta"])
         again = lib.rescan()
-        self.assertIs(again[0], lib.tracks[0])                           # a re-scan keeps the Track objects
+        self.assertIs(again[0], lib.tracks[0])
 
 
 class FakeMusic:
@@ -206,7 +205,7 @@ class PlayerTests(unittest.TestCase):
             p.seek(10)
         self.assertAlmostEqual(p.position(), 50.0)
         p.tick()
-        self.assertEqual(self.mixer.music.pos_calls, [])          # still settling: no decoder call per press
+        self.assertEqual(self.mixer.music.pos_calls, [])
         self.t[0] += mp.SEEK_SETTLE + 0.01
         p.tick()
         self.assertEqual(self.mixer.music.pos_calls, [50.0])
@@ -298,7 +297,7 @@ class PlayerTests(unittest.TestCase):
         p.play(self.tracks[0])
         self.assertTrue(p.engaged)
         p.toggle()
-        self.assertTrue(p.engaged)           # paused still owns the mixer
+        self.assertTrue(p.engaged)
         p.stop()
         self.assertFalse(p.engaged)
 
@@ -308,7 +307,7 @@ class PlayerTests(unittest.TestCase):
         p.enter()
         self.assertFalse(self.mixer.music.busy)
         p.play(self.tracks[0])
-        p.enter()                            # already playing the user's song: leave it alone
+        p.enter()
         self.assertTrue(self.mixer.music.busy)
 
     def test_toggle_from_stopped_starts_the_first_song(self):

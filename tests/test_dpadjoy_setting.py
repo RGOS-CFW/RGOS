@@ -5,7 +5,7 @@ from unittest import mock
 from tests import helpers
 
 menu = helpers.load_menu()
-DEFAULT_PATH = menu.DPAD_JOY            # before any test patches it
+DEFAULT_PATH = menu.DPAD_JOY
 
 
 class SettingsRowTests(unittest.TestCase):
@@ -27,7 +27,7 @@ class SettingsRowTests(unittest.TestCase):
         self.assertTrue(menu.dpad_joy_on())
         self.assertTrue(menu.set_dpad_joy(False))
         self.assertFalse(os.path.exists(self.path))
-        self.assertTrue(menu.set_dpad_joy(False))           # already off is fine
+        self.assertTrue(menu.set_dpad_joy(False))
 
     def test_unwritable_location_reports_failure(self):
         blocker = os.path.join(os.path.dirname(self.path), "a-file")

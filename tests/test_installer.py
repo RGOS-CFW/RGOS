@@ -19,8 +19,8 @@ from tests import helpers
 ROOT = helpers.ROOT
 sys.path.insert(0, os.path.join(ROOT, "rgos"))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
-import installer  # noqa: E402
-import mkpayload  # noqa: E402
+import installer
+import mkpayload
 
 
 def read(*p):
@@ -174,7 +174,6 @@ class Install(Card):
                   "states/psx", "saves/gc"):
             self.assertTrue(os.path.isdir(self.p(*d.split("/"))), d)
         self.assertFalse(os.path.exists(self.p("saves", "ports")))
-        # rgos-session only copies the boot settings to ROMS when this folder is missing: the installer must not pre-create it
         self.assertFalse(os.path.exists(self.p("rgos-data")))
         with open(os.path.join(self.boot, installer.DONE_FILE)) as f:
             stamp = json.load(f)
@@ -488,8 +487,8 @@ class Wiring(unittest.TestCase):
         r = read("rgos", "rgos-roms")
         for needle in ("mkfs.vfat -F 32", "mkfs.ext4", "mkfs.exfat", "RGOS_ROMS_FS", "/boot/rgos-roms-fs"):
             self.assertIn(needle, r)
-        self.assertIn("exfat", r.split("case \"$fs\" in", 1)[1].split("esac", 1)[0])   # unknown value -> exFAT, as before
-        self.assertIn("already holds", r)                                                  # an existing file system is never reformatted
+        self.assertIn("exfat", r.split("case \"$fs\" in", 1)[1].split("esac", 1)[0])
+        self.assertIn("already holds", r)
 
     def test_rgos_roms_still_recognises_its_partition_whatever_the_format(self):
         r = read("rgos", "rgos-roms")
@@ -621,19 +620,19 @@ class Screen(unittest.TestCase):
         mi = ui.menu_input
         self.assertEqual(mi(0, ui.EV_KEY, ui.KEY_DOWN, 1), (1, None))
         self.assertEqual(mi(1, ui.EV_KEY, ui.KEY_UP, 1), (0, None))
-        self.assertEqual(mi(0, ui.EV_KEY, ui.KEY_UP, 1), (1, None))       # wraps round
+        self.assertEqual(mi(0, ui.EV_KEY, ui.KEY_UP, 1), (1, None))
         self.assertEqual(mi(1, ui.EV_KEY, ui.KEY_RIGHT, 1), (0, None))
-        self.assertEqual(mi(0, ui.EV_ABS, ui.ABS_HAT0Y, 1), (1, None))   # hat axes work like the D-pad keys
+        self.assertEqual(mi(0, ui.EV_ABS, ui.ABS_HAT0Y, 1), (1, None))
         self.assertEqual(mi(1, ui.EV_ABS, ui.ABS_HAT0X, -1), (0, None))
-        self.assertEqual(mi(0, ui.EV_ABS, ui.ABS_HAT0Y, 0), (0, None))   # hat released: nothing
+        self.assertEqual(mi(0, ui.EV_ABS, ui.ABS_HAT0Y, 0), (0, None))
         self.assertEqual(mi(0, ui.EV_KEY, ui.BTN_A, 1), (0, "install"))
         self.assertEqual(mi(1, ui.EV_KEY, ui.BTN_A, 1), (1, "poweroff"))
         self.assertEqual(mi(1, ui.EV_KEY, ui.BTN_START, 1), (1, "poweroff"))
 
     def test_welcome_ignores_releases_and_other_buttons(self):
         ui = load_ui()
-        self.assertEqual(ui.menu_input(0, ui.EV_KEY, ui.BTN_A, 0), (0, None))      # release
-        self.assertEqual(ui.menu_input(0, ui.EV_KEY, ui.BTN_B, 1), (0, None))      # B does nothing here
+        self.assertEqual(ui.menu_input(0, ui.EV_KEY, ui.BTN_A, 0), (0, None))
+        self.assertEqual(ui.menu_input(0, ui.EV_KEY, ui.BTN_B, 1), (0, None))
         self.assertEqual(ui.menu_input(1, ui.EV_KEY, ui.KEY_DOWN, 0), (1, None))
 
     def test_format_popup_offers_fat32_exfat_ext4_in_that_order(self):
@@ -647,9 +646,9 @@ class Screen(unittest.TestCase):
         fi = ui.format_input
         self.assertEqual(fi(1, ui.EV_KEY, ui.KEY_DOWN, 1), (2, None))
         self.assertEqual(fi(1, ui.EV_KEY, ui.KEY_UP, 1), (0, None))
-        self.assertEqual(fi(0, ui.EV_KEY, ui.KEY_UP, 1), (2, None))        # wraps round
+        self.assertEqual(fi(0, ui.EV_KEY, ui.KEY_UP, 1), (2, None))
         self.assertEqual(fi(2, ui.EV_KEY, ui.KEY_RIGHT, 1), (0, None))
-        self.assertEqual(fi(0, ui.EV_ABS, ui.ABS_HAT0Y, 1), (1, None))     # hat axes work like the D-pad keys
+        self.assertEqual(fi(0, ui.EV_ABS, ui.ABS_HAT0Y, 1), (1, None))
         self.assertEqual(fi(1, ui.EV_ABS, ui.ABS_HAT0X, -1), (0, None))
         self.assertEqual(fi(1, ui.EV_ABS, ui.ABS_HAT0Y, 0), (1, None))
         self.assertEqual(fi(0, ui.EV_KEY, ui.BTN_A, 1), (0, "fat32"))
@@ -688,7 +687,7 @@ class Screen(unittest.TestCase):
         self.assertLess(src.index("draw_format_popup, fmt_sel"), src.index("    start(inst)\n"))
         self.assertLess(src.index("return installer.EXIT_POWEROFF"), src.index("draw_format_popup, fmt_sel"))
         self.assertIn("installer.Installer(fmt=fmt)", src)
-        self.assertEqual(src.count("installer.Installer(fmt=fmt)"), 2)   # first run and the "try again" retry both keep the choice
+        self.assertEqual(src.count("installer.Installer(fmt=fmt)"), 2)
 
     def test_installing_starts_only_after_install_is_chosen(self):
         """Power off must return before the Installer thread is ever started, so the card is untouched."""
@@ -734,7 +733,7 @@ class ConsoleScreen(unittest.TestCase):
         self.assertGreater(early, 0)
         f.update(105.0, False, False)
         self.assertGreater(len(f.lines), early)
-        for now in (112.0, 130.0, 300.0):     # installer still busy: keeps printing, never finishes
+        for now in (112.0, 130.0, 300.0):
             f.update(now, False, False)
             self.assertFalse(f.complete)
         n = len(f.lines)
@@ -743,7 +742,7 @@ class ConsoleScreen(unittest.TestCase):
 
     def test_it_finishes_only_when_installed_and_the_time_is_up(self):
         ui, f = self.feed(duration=12.0)
-        f.update(104.0, True, False)           # installer already done but the show is not over
+        f.update(104.0, True, False)
         self.assertFalse(f.complete)
         self.assertIsNone(f.final_at)
         f.update(112.5, True, False)
@@ -791,7 +790,7 @@ class ConsoleScreen(unittest.TestCase):
         src = read("rgos", "rgos-installer")
         loop = src[src.index("    start(inst)\n"):]
         self.assertIn("show_console(feed, snap, t, countdown)", loop)
-        self.assertEqual(loop.count("ConsoleFeed("), 2)     # first run and the "try again" retry
+        self.assertEqual(loop.count("ConsoleFeed("), 2)
 
 
 
@@ -855,10 +854,10 @@ class MotionTests(unittest.TestCase):
             if settled_at is None and mo.ring["p"][0] == 200.0 and mo.ring["v"][0] == 0.0:
                 settled_at = i
         self.assertGreater(peak, 200.0)
-        self.assertLess(peak, 200.0 * 1.08)           # about 5% overshoot, never wild
+        self.assertLess(peak, 200.0 * 1.08)
         self.assertIsNotNone(settled_at)
         self.assertLess(settled_at / 60.0, 1.5)
-        self.assertFalse(self.step(mo))               # at rest: the last frame asked for nothing
+        self.assertFalse(self.step(mo))
         mo.ring_step(200, 0)
         self.assertFalse(self.step(mo))
 
@@ -867,7 +866,7 @@ class MotionTests(unittest.TestCase):
         self.step(mo, 0.05)
         mo.ring_step(0, 0)
         for _ in range(200):
-            self.step(mo, 5.0)                        # tick() caps dt at 50 ms
+            self.step(mo, 5.0)
             mo.ring_step(300, 120)
             self.assertLess(abs(mo.ring["p"][0]), 600)
             self.assertLess(abs(mo.ring["p"][1]), 300)
@@ -877,12 +876,12 @@ class MotionTests(unittest.TestCase):
         self.assertFalse(self.step(mo))
         mo.busy()
         self.assertTrue(self.step(mo))
-        self.assertFalse(self.step(mo))               # asked once, so only one fast frame follows
+        self.assertFalse(self.step(mo))
 
     def test_val_glides_without_overshoot_and_snaps_on_first_use(self):
         mo = self.mo()
         self.step(mo)
-        self.assertEqual(mo.val("a", 5.0), 5.0)       # first use: no glide from zero
+        self.assertEqual(mo.val("a", 5.0), 5.0)
         last = 5.0
         for _ in range(200):
             self.step(mo)
@@ -892,7 +891,7 @@ class MotionTests(unittest.TestCase):
             last = v
         self.assertEqual(last, 9.0)
         self.assertFalse(self.step(mo))
-        self.now[0] += 2.0                            # not drawn for a while: snaps instead of gliding from the old value
+        self.now[0] += 2.0
         mo.tick(self.now[0])
         self.assertEqual(mo.val("a", 1.0), 1.0)
 
@@ -904,7 +903,7 @@ class MotionTests(unittest.TestCase):
             self.step(mo)
             mo.since("x")
         self.assertGreater(mo.since("x"), 0.4)
-        self.now[0] += 1.0                            # screen not drawn for a second -> starts over
+        self.now[0] += 1.0
         mo.tick(self.now[0])
         self.assertAlmostEqual(mo.since("x"), 0.0, places=3)
         quiet = self.mo(settled=True)
@@ -919,8 +918,8 @@ class MotionTests(unittest.TestCase):
             mo.since("welcome")
             if mo._flag:
                 busy_until = i
-        self.assertGreater(busy_until, 60 * 1.0)      # runs for the whole 1.0 s entrance...
-        self.assertLess(busy_until, 60 * (self.um.INTRO_S + 0.7))   # ...and stops shortly after
+        self.assertGreater(busy_until, 60 * 1.0)
+        self.assertLess(busy_until, 60 * (self.um.INTRO_S + 0.7))
 
     def test_changed_counts_from_the_first_call_and_restarts_on_a_new_value(self):
         mo = self.mo()
@@ -941,20 +940,20 @@ class MotionTests(unittest.TestCase):
             self.step(mo)
             seen.append(mo.button(mock.MagicMock(), (0, 0, 200, 200), (80, 70, 20), 18, 6, True, "t"))
         his = [h for h, _ in seen]
-        self.assertEqual(his, sorted(his))            # only ever rises
+        self.assertEqual(his, sorted(his))
         self.assertEqual(seen[-1], (1.0, self.um.LIFT_PX))
-        self.assertTrue(0.0 < his[2] < 1.0)           # eased, not a jump
+        self.assertTrue(0.0 < his[2] < 1.0)
         _, lift_row = mo.button(mock.MagicMock(), (0, 0, 500, 52), (80, 70, 20), 12, 3, True, "row")
-        self.assertEqual(lift_row, 0)                 # short rows do not lift (same rule as the launcher)
+        self.assertEqual(lift_row, 0)
 
     def test_pop_glides_up_and_fades_in_then_draws_plainly(self):
         mo = self.mo()
         canvas, calls = mock.MagicMock(), []
         paint = lambda surf, x, y: calls.append((surf, x, y))
         mo.pop(canvas, (100, 200, 150, 150), 0.0, paint)
-        self.assertEqual(calls, [])                   # not started: nothing drawn
+        self.assertEqual(calls, [])
         mo.pop(canvas, (100, 200, 150, 150), 0.5, paint)
-        self.assertEqual(calls[-1][1:], (6, 14))      # drawn on its own surface, then blitted lower and translucent
+        self.assertEqual(calls[-1][1:], (6, 14))
         dest = canvas.blit.call_args[0][1]
         self.assertEqual(dest, (94, 186 + int(0.5 * 28)))
         mo.pop(canvas, (100, 200, 150, 150), 1.0, paint)
@@ -967,14 +966,14 @@ class MotionTests(unittest.TestCase):
         mo.transition(canvas, "a")
         self.assertFalse(self.step(mo))
         mo.transition(canvas, "a")
-        self.assertFalse(self.step(mo))               # same screen: no fade
-        mo.transition(canvas, "b")                    # screen changed
+        self.assertFalse(self.step(mo))
+        mo.transition(canvas, "b")
         n = 0
-        while self.step(mo) and n < 100:              # frames that ask for full rate while the fade runs
+        while self.step(mo) and n < 100:
             mo.transition(canvas, "b")
             n += 1
         self.assertAlmostEqual(n / 60.0, self.um.FADE_S, delta=0.05)
-        mo.transition(canvas, "b", 0.35)              # a different duration only applies to the next change
+        mo.transition(canvas, "b", 0.35)
         self.assertFalse(self.step(mo))
 
     def test_the_welcome_screen_animates_through_its_entrance_and_comes_to_rest(self):
@@ -991,8 +990,8 @@ class MotionTests(unittest.TestCase):
         self.assertTrue(canvas.blit.called)
         self.assertEqual(mo.ring["p"], [mo.ring["p"][0], mo.ring["p"][1]])
         boxes = ui.button_boxes((720, 480), 184)
-        self.assertEqual(mo.ring["p"], [float(boxes[1][0]), float(boxes[1][1] - self.um.LIFT_PX)])   # the ring ended on tile 1
-        self.assertIn(False, moving_at_rest)          # idle between shines: the loop may drop its frame rate
+        self.assertEqual(mo.ring["p"], [float(boxes[1][0]), float(boxes[1][1] - self.um.LIFT_PX)])
+        self.assertIn(False, moving_at_rest)
 
     def test_the_ring_starts_on_the_selected_tile_and_hops_to_the_next(self):
         ui = load_ui()
@@ -1006,9 +1005,9 @@ class MotionTests(unittest.TestCase):
         self.step(mo)
         ui.draw_welcome(self.pg, canvas, (720, 480), fonts, 1, "", mo)
         mid = list(mo.ring["p"])
-        self.assertGreater(mid[0], start[0])          # already moving toward the right tile...
+        self.assertGreater(mid[0], start[0])
         boxes = ui.button_boxes((720, 480), 184)
-        self.assertLess(mid[0], boxes[1][0])          # ...but not there yet: it glides, it does not jump
+        self.assertLess(mid[0], boxes[1][0])
 
     def test_the_format_popup_rises_in_and_every_row_has_its_own_highlight(self):
         ui = load_ui()
@@ -1024,7 +1023,7 @@ class MotionTests(unittest.TestCase):
                 ui.draw_format_popup(self.pg, canvas, (720, 480), fonts, sel, "rg34xxsp", mo)
         self.assertEqual({k for k in mo.btn if isinstance(k, tuple) and k[0] == "fmt"}, {("fmt", 0), ("fmt", 1), ("fmt", 2)})
         self.assertGreater(mo.btn[("fmt", 2)][0], 0.0)
-        self.assertLess(mo.btn[("fmt", 1)][0], 1.0)   # the row that lost the selection is easing back
+        self.assertLess(mo.btn[("fmt", 1)][0], 1.0)
 
     def test_console_progress_glides_to_the_real_value(self):
         ui = load_ui()
@@ -1046,7 +1045,7 @@ class MotionTests(unittest.TestCase):
         self.assertIn("draw_fn(pygame, canvas, (W, H), fonts, *args, mo=mo)", src)
         self.assertIn("mo.transition(canvas, key, fade)", src)
         self.assertIn("draw_console(pygame, canvas, (W, H), mono, feed, snap, t, countdown, mo=mo)", src)
-        self.assertNotIn("pads.wait(0.2)", src)       # the old fixed 5 fps menu loop
+        self.assertNotIn("pads.wait(0.2)", src)
         self.assertNotIn("pads.wait(0.1)", src)
         self.assertEqual(src.count("pads.wait(pace"), 3)
         self.assertIn("finally:\n        boost.restore()", src)

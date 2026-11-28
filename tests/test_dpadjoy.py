@@ -70,8 +70,8 @@ class DpadRemapTests(Env):
         self.assertEqual(self.feed(k(UP, 1)), [(ABS, hub.ABS_Y, -FULL)])
         self.assertEqual(self.feed(k(UP, 0)), [(ABS, hub.ABS_Y, 0)])
         self.assertEqual(self.feed(k(RIGHT, 1)), [(ABS, hub.ABS_X, FULL)])
-        self.assertEqual(self.feed(k(LEFT, 1)), [(ABS, hub.ABS_X, 0)])      # opposite directions cancel
-        self.assertEqual(self.feed(k(DOWN, 1)), [(ABS, hub.ABS_Y, FULL)])   # X is neutral, so no diagonal scaling
+        self.assertEqual(self.feed(k(LEFT, 1)), [(ABS, hub.ABS_X, 0)])
+        self.assertEqual(self.feed(k(DOWN, 1)), [(ABS, hub.ABS_Y, FULL)])
 
     def test_diagonal_stays_on_the_unit_circle(self):
         self.setting_on()
@@ -89,29 +89,28 @@ class DpadRemapTests(Env):
 
     def test_not_applied_outside_a_game(self):
         self.setting_on()
-        self.assertEqual(self.feed(k(UP, 1)), [k(UP, 1)])         # launcher keeps its D-pad
+        self.assertEqual(self.feed(k(UP, 1)), [k(UP, 1)])
         self.assertEqual(self.step(), [])
 
     def test_game_start_and_end_swap_a_held_direction(self):
         self.setting_on()
         self.assertEqual(self.feed(k(UP, 1)), [k(UP, 1)])
-        # same input frame, so the order inside it does not matter
-        self.assertCountEqual(self.game(), [k(UP, 0), (ABS, hub.ABS_Y, -FULL)])   # key released, stick takes over
-        self.assertCountEqual(self.game(False), [(ABS, hub.ABS_Y, 0), k(UP, 1)])  # and back
+        self.assertCountEqual(self.game(), [k(UP, 0), (ABS, hub.ABS_Y, -FULL)])
+        self.assertCountEqual(self.game(False), [(ABS, hub.ABS_Y, 0), k(UP, 1)])
 
     def test_turning_the_setting_off_mid_game_hands_a_held_direction_back(self):
         self.setting_on()
         self.game()
         self.feed(k(LEFT, 1))
         self.assertCountEqual(self.setting_on(False), [(ABS, hub.ABS_X, 0), k(LEFT, 1)])
-        self.assertEqual(self.feed(k(LEFT, 0)), [k(LEFT, 0)])                # and the release is a plain key again
+        self.assertEqual(self.feed(k(LEFT, 0)), [k(LEFT, 0)])
 
     def test_a_real_stick_still_works_and_dpad_wins_while_pushed(self):
         self.setting_on()
         self.game()
         self.assertEqual(self.feed((ABS, hub.ABS_X, 5000)), [(ABS, hub.ABS_X, 5000)])
         self.assertEqual(self.feed(k(LEFT, 1)), [(ABS, hub.ABS_X, -FULL)])
-        self.assertEqual(self.feed(k(LEFT, 0)), [(ABS, hub.ABS_X, 5000)])    # back to the real stick
+        self.assertEqual(self.feed(k(LEFT, 0)), [(ABS, hub.ABS_X, 5000)])
 
     def test_stick_values_pass_through_when_off(self):
         self.game()
@@ -126,8 +125,8 @@ class ComboTests(Env):
 
     def test_menu_then_select_is_swallowed_and_released_quietly(self):
         self.game()
-        self.assertEqual(self.feed(k(MODE, 1)), [k(MODE, 1)])           # first key goes through (hotkey stays usable)
-        self.assertEqual(self.feed(k(SELECT, 1), dt=0.05), [])           # Select never reaches the game
+        self.assertEqual(self.feed(k(MODE, 1)), [k(MODE, 1)])
+        self.assertEqual(self.feed(k(SELECT, 1), dt=0.05), [])
         self.assertEqual(self.feed(k(SELECT, 0), dt=0.1), [])
         self.assertEqual(self.feed(k(MODE, 0), dt=0.01), [k(MODE, 0)])
 
@@ -158,11 +157,11 @@ class ComboTests(Env):
         self.game()
         self.press_both()
         self.assertEqual(self.step(hub.COMBO_HOLD_S - 0.2), [])
-        self.assertTrue(os.path.exists(self.setting))                    # not yet
+        self.assertTrue(os.path.exists(self.setting))
         self.step(0.3)
         self.assertFalse(os.path.exists(self.setting))
         self.assertEqual(self.buzzes, [hub.BUZZ_OFF])
-        self.assertEqual(len(hub.BUZZ_OFF), 3)                           # on, off, on = two pulses
+        self.assertEqual(len(hub.BUZZ_OFF), 3)
 
     def test_releasing_after_a_hold_does_not_turn_it_back_on(self):
         self.setting_on()
@@ -202,7 +201,7 @@ class ComboTests(Env):
     def test_a_failed_save_does_not_buzz(self):
         self.game()
         blocker = os.path.join(os.path.dirname(self.setting), "a-file")
-        open(blocker, "w").close()                       # a path below a regular file can never be created
+        open(blocker, "w").close()
         with mock.patch.object(hub, "DPADJOY", os.path.join(blocker, "dpad-joystick")):
             self.press_both()
             self.feed(k(SELECT, 0), k(MODE, 0), dt=0.1)
@@ -289,10 +288,10 @@ class GameMenuTests(unittest.TestCase):
             return pe.read(0)
 
         self.assertEqual(push(-30000), ["up"])
-        self.assertEqual(push(-32767), [])             # still held: no repeat
+        self.assertEqual(push(-32767), [])
         self.assertEqual(push(0), [])
         self.assertEqual(push(30000), ["down"])
-        self.assertEqual(push(100, -100), [])          # inside the dead zone
+        self.assertEqual(push(100, -100), [])
         os.close(w)
         pe.fds.clear()
         os.close(r)

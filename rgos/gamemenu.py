@@ -38,23 +38,21 @@ EVFMT = struct.Struct("llHHi")
 EV_KEY, EV_ABS = 1, 3
 BTN_A, BTN_B, BTN_START, BTN_MODE = 0x130, 0x131, 0x13B, 0x13C
 DPAD_UP, DPAD_DOWN, ABS_HAT0Y = 0x220, 0x221, 0x11
-ABS_Y, STICK_ON = 0x01, 16384        # "DPAD to joystick" turns D-pad presses into left-stick Y: past half = up / down
+ABS_Y, STICK_ON = 0x01, 16384
 EVIOCGRAB = 0x40044590
 
-BASE_W = 720                 # canvas width the sizes below were designed for (same as rgos-overlay)
-PANEL_W, SHADOW = 300, 18    # panel and soft edge shadow, in BASE_W pixels
-SLIDE_S, FPS = 0.28, 30.0    # slide duration and frame rate
-TAP_MAX_S = 0.8              # a Menu press longer than this is a hold, not a tap
-COMBO_QUIET_S = TAP_MAX_S + 1.0   # a Menu tap this soon after the hub swallowed Menu+Select belongs to that combo
-GRACE_S = 3.0                # SIGTERM -> SIGKILL grace when stopping a game
+BASE_W = 720
+PANEL_W, SHADOW = 300, 18
+SLIDE_S, FPS = 0.28, 30.0
+TAP_MAX_S = 0.8
+COMBO_QUIET_S = TAP_MAX_S + 1.0
+GRACE_S = 3.0
 DEFAULT_THEME = {"BG": (13, 15, 26), "PANEL": (24, 28, 46), "ACCENT": (255, 99, 71), "TEXT": (232, 235, 245)}
 
 
 def log(*a):
     print(time.strftime("%H:%M:%S"), *a, flush=True)
 
-
-# ---- pure helpers -------------------------------------------------------------------------------------------------
 
 def clamp(v, lo=0.0, hi=1.0):
     return max(lo, min(hi, v))
@@ -146,8 +144,6 @@ def combo_recent(path=None, now=None):
     return age < COMBO_QUIET_S
 
 
-# ---- the menu model -----------------------------------------------------------------------------------------------
-
 class MenuModel:
     """Items, selection and the confirm step. press() returns an action id or None."""
 
@@ -206,8 +202,6 @@ class MenuModel:
         return None
 
 
-# ---- drawing: layout is a list of backend-neutral ops, so the device (pygame) and the demo (PIL) draw the same menu --
-
 def icon_ops(kind, cx, cy, r, col, s):
     lw = max(2, int(2 * s))
     if kind == "resume":
@@ -228,7 +222,7 @@ def icon_ops(kind, cx, cy, r, col, s):
     if kind.endswith("!"):
         return [("line", (cx - r * .8, cy), (cx - r * .25, cy + r * .6), col, lw + 1),
                 ("line", (cx - r * .25, cy + r * .6), (cx + r * .85, cy - r * .6), col, lw + 1)]
-    return [("line", (cx - r * .7, cy - r * .7), (cx + r * .7, cy + r * .7), col, lw + 1),   # exit: a cross
+    return [("line", (cx - r * .7, cy - r * .7), (cx + r * .7, cy + r * .7), col, lw + 1),
             ("line", (cx - r * .7, cy + r * .7), (cx + r * .7, cy - r * .7), col, lw + 1)]
 
 
@@ -254,12 +248,12 @@ def layout(model, w, h, s, theme, measure, pos=1.0, now=0.0):
     row_h, gap, y = int(46 * s), int(6 * s), int(106 * s)
     dim = mix(TEXT, PANEL, .38)
     for i, (ident, text) in enumerate(model.items()):
-        e = ease_out((pos - 0.2 - 0.08 * i) / 0.5)          # rows glide in one after another while the panel opens
+        e = ease_out((pos - 0.2 - 0.08 * i) / 0.5)
         dx = int((1.0 - e) * 44 * s)
         rx, rw = x - int(12 * s) + dx, inner + int(12 * s)
         on = i == model.sel
         if on:
-            ops.append(("rrect", (rx, y, rw, row_h), mix(PANEL, ACCENT, .22) + (244,), int(10 * s)))   # opaque mix: draw ops set pixels, they do not blend
+            ops.append(("rrect", (rx, y, rw, row_h), mix(PANEL, ACCENT, .22) + (244,), int(10 * s)))
             ops.append(("rrect", (rx, y + int(row_h * .2), max(3, int(4 * s)), int(row_h * .6)), tuple(ACCENT), 2))
         col = TEXT if on else dim
         ops += icon_ops(ident, rx + int(28 * s), y + row_h // 2, int(9 * s), ACCENT if on else dim, s)
@@ -320,8 +314,6 @@ class PygameCanvas:
         return sf
 
 
-# ---- controlling the game -----------------------------------------------------------------------------------------
-
 def read_game(path=None):
     """The ingame flag as a dict, or None when no game is running."""
     path = path or GAME_FLAG
@@ -374,12 +366,11 @@ class GameControl:
         self.kind = kind if kind in ("retroarch", "native") else ("retroarch" if pids(("retroarch",)) else "native")
         self.we_paused = False
 
-    # pause / resume
     def pause(self):
         if self.kind == "retroarch":
             reply = self.udp("GET_STATUS", True) or ""
             if "PAUSED" in reply.upper().split("CONTENTLESS")[0]:
-                self.we_paused = False        # the user had it paused already: leave it that way
+                self.we_paused = False
             else:
                 self.udp("PAUSE_TOGGLE")
                 self.we_paused = True
@@ -405,7 +396,6 @@ class GameControl:
         except OSError:
             return False
 
-    # actions
     def perform(self, action):
         if action == "resume":
             self.resume()
@@ -475,8 +465,6 @@ class GameControl:
             run()
 
 
-# ---- one open/close cycle ------------------------------------------------------------------------------------------
-
 class RetroArchMenu:
     """Fallback in-game menu for RetroArch: its own menu (RGUI), opened and closed with the MENU_TOGGLE command.
 
@@ -541,13 +529,13 @@ class MenuSession:
                 dirty = False
             elif now - last > 0.15:
                 last = now
-                if self.screen.repainted():       # the program painted over us (a paused RetroArch redraws now and then)
+                if self.screen.repainted():
                     self.screen.rebase()
                     dirty = True
 
     def run(self):
         self.control.pause()
-        self.sleep(0.08)                          # let the frame the game was drawing finish
+        self.sleep(0.08)
         self.screen.open()
         result = "resume"
         try:
@@ -564,8 +552,6 @@ class MenuSession:
                 self.control.resume()
         return result
 
-
-# ---- the real framebuffer (reuses rgos-overlay's framebuffer access) -----------------------------------------------
 
 def load_overlay():
     loader = importlib.machinery.SourceFileLoader("rgos_overlay", os.path.join(HERE, "rgos-overlay"))
@@ -636,7 +622,7 @@ class DrmMenuScreen(FbMenuScreen):
             sys.path.insert(0, here)
         import drmplane
         self.drm = drmplane.DrmOverlay()
-        self.rect = self.fb.rect                      # panel rectangle in panel pixels (set by FbMenuScreen)
+        self.rect = self.fb.rect
 
     def open(self):
         pass
@@ -687,8 +673,6 @@ def use_rgui(kind, plane_bad):
     return kind == "retroarch" and (plane_bad or bool(os.environ.get("RGOS_GAMEMENU_RGUI")))
 
 
-# ---- daemon --------------------------------------------------------------------------------------------------------
-
 def open_pads():
     import portexit
     return portexit.open_events(portexit.find_pad_events(SYS_INPUT, DEV_INPUT, HUB_NAME))
@@ -731,16 +715,15 @@ class PadEvents:
             return names
         for fd in ready:
             data = read_pad(fd)
-            if data is None:                      # pad vanished while the menu is open
+            if data is None:
                 try:
                     os.close(fd)
                 except OSError:
                     pass
-                self.fds.remove(fd)               # in place: the daemon shares this list and will reopen the hub
+                self.fds.remove(fd)
                 continue
             for etype, code, value in parse_events(data):
                 if etype == EV_ABS and code == ABS_Y:
-                    # D-pad presses arrive as left-stick Y while DPAD to joystick is on: one step per push
                     d = -1 if value < -STICK_ON else (1 if value > STICK_ON else 0)
                     if d != self.ydir:
                         self.ydir = d
@@ -751,8 +734,6 @@ class PadEvents:
                 if n:
                     names.append(n)
         if not self.fds:
-            # No pad left means no way to close the menu: the game would stay paused behind it. "close" twice
-            # backs out of a confirm step, then resumes.
             return ["close", "close"]
         return names
 
@@ -762,7 +743,7 @@ def open_menu(info, pads, screen):
     model = MenuModel(control.kind, info.get("title", ""))
     pe = PadEvents(pads)
     pe.grab(True)
-    pe.read(0)                                    # drop what was buffered before the grab
+    pe.read(0)
     session = MenuSession(screen, control, model, pe.read, alive=lambda: read_game() is not None)
     try:
         log("menu open (%s: %s)" % (control.kind, model.title))
@@ -787,7 +768,7 @@ def daemon():
                     pass
             pads = []
             ra_menu.reset()
-            plane_bad = False                     # try the plane again for the next game
+            plane_bad = False
             time.sleep(0.5)
             continue
         if not pads:
@@ -802,7 +783,7 @@ def daemon():
             continue
         for fd in ready:
             data = read_pad(fd)
-            if data is None:                      # pad vanished: drop it so the next pass reopens the hub
+            if data is None:
                 try:
                     os.close(fd)
                 except OSError:
@@ -817,9 +798,9 @@ def daemon():
                     try:
                         screen = screen or make_screen(info.get("kind"))
                         open_menu(info, pads, screen)
-                        screen = None             # the plane is released after every menu; open it fresh next time
+                        screen = None
                     except NoPlane:
-                        plane_bad = True          # no plane for RetroArch: this tap (and the rest of the game) opens RGUI
+                        plane_bad = True
                         screen = None
                         log("retroarch menu %s (no overlay plane)" % ("opened" if ra_menu.toggle() else "closed"))
                     except Exception as e:

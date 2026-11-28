@@ -16,15 +16,15 @@ BTNMAP = "/var/lib/rgos/button-map.json"
 SWAPAB = "/var/lib/rgos/swap-ab"
 KEYS_PROBE, KEYS_RAW = "/run/rgos/keys.probe", "/run/rgos/keys.raw"
 STICKS_RAW = "/run/rgos/sticks.raw"
-DPADJOY = "/var/lib/rgos/dpad-joystick"      # exists = "DPAD to joystick" is ON (Settings, or the Menu+Select combo)
-INGAME = "/run/rgos/ingame"                  # written by rgos-launch while a game runs
-COMBO_FLAG = "/run/rgos/combo-swallow"       # touched when Menu+Select is swallowed; gamemenu.py then ignores that Menu tap
+DPADJOY = "/var/lib/rgos/dpad-joystick"
+INGAME = "/run/rgos/ingame"
+COMBO_FLAG = "/run/rgos/combo-swallow"
 BTN_SELECT, BTN_MODE = 0x13a, 0x13c
-COMBO_HOLD_S = 1.0                           # Menu+Select held this long turns DPAD to joystick off; a shorter press turns it on
+COMBO_HOLD_S = 1.0
 DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT = 0x220, 0x221, 0x222, 0x223
-DIAGONAL = 0.7071                            # both directions held: stay on the unit circle like a real stick
-BUZZ_ON = [0.15]                             # one pulse: DPAD to joystick on
-BUZZ_OFF = [0.12, 0.10, 0.12]                # two pulses: DPAD to joystick off
+DIAGONAL = 0.7071
+BUZZ_ON = [0.15]
+BUZZ_OFF = [0.12, 0.10, 0.12]
 STICK_DEADZONE = 0.04
 CANON_KEYS = [0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x138, 0x139, 0x13a, 0x13b, 0x13c, 0x13d, 0x13e,
               0x220, 0x221, 0x222, 0x223]
@@ -87,7 +87,7 @@ EV_FF, FF_RUMBLE = 0x15, 0x50
 UI_SET_ABSBIT = _IOW("U", 103, 4)
 UI_ABS_SETUP = _IOW("U", 4, 28)
 ANALOG_AXES = (0x00, 0x01, 0x03, 0x04)
-LEFT_STICK_AXES = (0x00, 0x01)               # always present, so DPAD to joystick can drive them on any device
+LEFT_STICK_AXES = (0x00, 0x01)
 ABS_X, ABS_Y = 0x00, 0x01
 ASTICK = 32767
 
@@ -577,12 +577,12 @@ class DpadJoy:
         self.feedback, self.clock = feedback or (lambda pattern: None), clock
         self.on, self.ingame, self.next_check = False, False, 0.0
         self.pad = {c: False for c in (DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT)}
-        self.sent = set()                    # D-pad keys currently held down in the virtual pad
-        self.phys = {ABS_X: 0, ABS_Y: 0}     # last value of a real stick
-        self.axis = {ABS_X: 0, ABS_Y: 0}     # what the virtual pad currently reports
+        self.sent = set()
+        self.phys = {ABS_X: 0, ABS_Y: 0}
+        self.axis = {ABS_X: 0, ABS_Y: 0}
         self.mod = {BTN_SELECT: False, BTN_MODE: False}
-        self.held = set()                    # Menu / Select presses that were swallowed (their release is too)
-        self.combo = None                    # [pressed at, already fired]
+        self.held = set()
+        self.combo = None
         self.was_active = False
 
     @property
@@ -768,7 +768,7 @@ class KeyProbe:
 
 
 def run():
-    restore_hidden()  # a hub that was killed earlier may have left its raw pad hidden
+    restore_hidden()
     iconf = load_input_conf()
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
@@ -776,7 +776,7 @@ def run():
         write_status("hub: disabled in input.json")
         log("disabled in input.json; leaving the raw input devices alone")
         while not STOP:
-            time.sleep(1)  # not 3600: since PEP 475 a signal handler does not cut time.sleep short
+            time.sleep(1)
         return 0
     os.makedirs("/run/rgos", exist_ok=True)
     spec = iconf.get("sources") or "auto"
@@ -967,7 +967,7 @@ def run():
                     out += EVFMT.pack(0, 0, t, c, v)
                 out += EVFMT.pack(0, 0, EV_SYN, 0, 0)
             if sleeper is not None and sleeper.asleep:
-                out = bytearray()   # asleep: swallow every pad event until the next power press
+                out = bytearray()
             if out:
                 try:
                     os.write(ufd, bytes(out))

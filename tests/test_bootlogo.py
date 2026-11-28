@@ -37,8 +37,8 @@ class Bmp2FbTests(unittest.TestCase):
         px = [[(1, 2, 3), (4, 5, 6), (7, 8, 9)], [(10, 11, 12), (13, 14, 15), (16, 17, 18)]]
         w, h, raw = bmp2fb.convert(make_bmp(3, 2, px))
         self.assertEqual((w, h, len(raw)), (3, 2, 24))
-        self.assertEqual(raw[:8], bytes((3, 2, 1, 0, 6, 5, 4, 0)))      # first screen row = first row of the picture
-        self.assertEqual(raw[12:16], bytes((12, 11, 10, 0)))           # second screen row
+        self.assertEqual(raw[:8], bytes((3, 2, 1, 0, 6, 5, 4, 0)))
+        self.assertEqual(raw[12:16], bytes((12, 11, 10, 0)))
 
     def test_top_down_bmp_gives_the_same_result(self):
         px = [[(1, 2, 3), (4, 5, 6), (7, 8, 9)], [(10, 11, 12), (13, 14, 15), (16, 17, 18)]]

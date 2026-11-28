@@ -18,7 +18,6 @@ ET_EXEC, ET_DYN = 2, 3
 PT_INTERP = 3
 MACHINES = {EM_386: "x86 (32-bit)", EM_ARM: "ARM (32-bit)", EM_X86_64: "x86-64", EM_AARCH64: "ARM64", EM_RISCV: "RISC-V"}
 
-# Files in a ports folder that are never programs, even if one sneaks an ELF header in.
 SKIP_EXT = (".so", ".txt", ".md", ".json", ".cfg", ".ini", ".conf", ".log", ".png", ".jpg", ".jpeg", ".gif", ".zip", ".7z",
             ".tar", ".gz", ".xz", ".pdf", ".dat", ".pak", ".wav", ".ogg", ".mp3", ".mp4", ".bak", ".tmp", ".py", ".lua",
             ".xml", ".csv", ".db", ".sav", ".srm", ".state", ".sf2", ".ttf", ".otf", ".dll", ".exe", ".bat")
@@ -29,11 +28,9 @@ LOADERS = {
     EM_ARM: ("/lib/ld-linux-armhf.so.3", "/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3", "/lib/ld-linux.so.3",
              "/lib/ld-musl-armhf.so.1"),
 }
-# Loader file names a port may carry itself.
 LOADER_NAMES = {EM_AARCH64: ("ld-linux-aarch64.so.1", "ld-musl-aarch64.so.1"),
                 EM_ARM: ("ld-linux-armhf.so.3", "ld-linux.so.3", "ld-musl-armhf.so.1")}
 
-# Sub folders ports use for their own libraries. Architecture-specific names are only used for a matching binary.
 LIB_DIRS_COMMON = ("", "lib", "libs", "lib64", "lib/gl4es", "libs/gl4es")
 LIB_DIRS_ARCH = {EM_AARCH64: ("lib.aarch64", "libs.aarch64", "lib/aarch64", "libs/aarch64", "lib/aarch64-linux-gnu",
                               "lib64/aarch64", "aarch64/lib", "aarch64/libs", "aarch64"),
@@ -204,7 +201,6 @@ def plan(path, extra_lib_dirs=(), chmod=True):
     if dirs:
         res["env"]["LD_LIBRARY_PATH"] = ":".join(dirs)
     if chmod and make_executable(path) and (info["machine"] == HOST or loader):
-        # a 32-bit program whose interpreter path does not exist cannot be exec'd even with the bit set
         if not info["interp"] or os.path.isfile(info["interp"]):
             res["cmd"] = [path]
             return res

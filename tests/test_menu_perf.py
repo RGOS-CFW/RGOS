@@ -64,7 +64,6 @@ class DetailCoverTests(unittest.TestCase):
     def test_loads_once_settled_then_serves_from_cache(self):
         self.assertEqual(menu._detail_cover("/art/a.png", 152, 130, load=True), "scaled-cover")
         self.assertEqual(self.pg.image.load.call_count, 1)
-        # cached covers appear instantly even mid-scroll, and are not decoded again
         self.assertEqual(menu._detail_cover("/art/a.png", 152, 130, load=False), "scaled-cover")
         self.assertEqual(menu._detail_cover("/art/a.png", 152, 130), "scaled-cover")
         self.assertEqual(self.pg.image.load.call_count, 1)
@@ -93,9 +92,9 @@ class FrameProfilerTests(unittest.TestCase):
     def test_reports_average_slow_count_and_worst_split(self):
         p = self.make()
         for _ in range(9):
-            p.frame(0.001, 0.004, 0.002, 0.003, "xmb/games")  # 10 ms
-        p.frame(0.002, 0.080, 0.010, 0.008, "xmb/games")  # 100 ms
-        self.assertEqual(self.out, [])  # nothing until the interval has passed
+            p.frame(0.001, 0.004, 0.002, 0.003, "xmb/games")
+        p.frame(0.002, 0.080, 0.010, 0.008, "xmb/games")
+        self.assertEqual(self.out, [])
         self.t[0] = 5.1
         p.frame(0.001, 0.004, 0.002, 0.003, "xmb/games")
         self.assertEqual(len(self.out), 1)

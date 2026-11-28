@@ -18,7 +18,6 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from scipy.ndimage import gaussian_filter
 
-# name: (width, height, layout, pitch, font scale)
 DEVICES = {
     "rg34xxsp": (720, 480, "row", 24, 1.00),
     "rg35xxh": (720, 540, "stack", 24, 1.07),
@@ -42,29 +41,28 @@ GLYPH = {
     "S": [".XXXX", "X....", "X....", ".XXX.", "....X", "....X", "XXXX."],
 }
 
-K = PITCH / 30.0               # everything that was tuned at pitch 30 scales with this
+K = PITCH / 30.0
 CELL = PITCH - 4
 
-# glyph placement: (letter index, word row, column offset of the letter inside its row)
 if LAYOUT == "row":
-    PLACE = [(0, 0, 0), (1, 0, 6), (2, 0, 14), (3, 0, 20)]   # RG, 3 blank columns, OS
+    PLACE = [(0, 0, 0), (1, 0, 6), (2, 0, 14), (3, 0, 20)]
     COLS, ROWS_N = 25, 7
 else:
-    PLACE = [(0, 0, 0), (1, 0, 6), (2, 1, 0), (3, 1, 6)]     # RG over OS
+    PLACE = [(0, 0, 0), (1, 0, 6), (2, 1, 0), (3, 1, 6)]
     COLS, ROWS_N = 11, 15
 LETTERS = "RGOS"
-ROW_Y = {0: 0, 1: 8}                                         # blank row between stacked words
+ROW_Y = {0: 0, 1: 8}
 
 LOGO_W = COLS * PITCH - (PITCH - CELL)
 LOGO_H = ROWS_N * PITCH - (PITCH - CELL)
 LOGO_X = (SW - LOGO_W) // 2
 
 TAG = "EMULATION FIRMWARE FOR RETRO HANDHELDS"
-TAG_GAP, BAR_GAP = 54, 32      # logo bottom -> tagline -> bar (same spacing as the Rotate)
+TAG_GAP, BAR_GAP = 54, 32
 BAR_W, BAR_H = (400 if LAYOUT == "row" else 360), 14
 BAR_CELLS = 24
 BLOCK_H = LOGO_H + TAG_GAP + BAR_GAP + BAR_H
-LOGO_Y = max(70, (SH - BLOCK_H) // 2 - SH // 40)             # block centred, nudged up a little
+LOGO_Y = max(70, (SH - BLOCK_H) // 2 - SH // 40)
 TAG_Y = LOGO_Y + LOGO_H + TAG_GAP
 BAR_X, BAR_Y = (SW - BAR_W) // 2, TAG_Y + BAR_GAP
 
@@ -94,7 +92,6 @@ def smooth(x):
     return x * x * (3 - 2 * x)
 
 
-# ---- static layers ---------------------------------------------------------
 yy, xx = np.mgrid[0:SH, 0:SW].astype(np.float32)
 r = np.hypot(xx - SW / 2, yy - SH * 0.47) / (max(SW, SH) * 0.72)
 BG = np.zeros((SH, SW, 3), np.float32)
@@ -108,8 +105,7 @@ BG += grid[..., None] * np.array([2.0, 3.0, 6.0], np.float32) * np.clip(1.2 - r,
 SCAN = np.ones((SH, SW, 1), np.float32)
 SCAN[1::3] = 0.93
 
-# logo cells: index map + colour + per-cell timing
-cells = []   # (x, y, colour, letter_index, col, row, reveal, rand)
+cells = []
 idx_map = -np.ones((SH, SW), np.int32)
 rng = random.Random(7)
 for letter, row, col0 in PLACE:
@@ -119,7 +115,6 @@ for letter, row, col0 in PLACE:
                 continue
             cx = LOGO_X + (col0 + gx) * PITCH
             cy = LOGO_Y + (ROW_Y[row] + gy) * PITCH
-            # colour runs cyan -> white -> magenta across the letters, left to right
             t = (letter + gx / 4.0) / 4.0
             col = grad(t)
             reveal = 1.85 + letter * 0.20 + rng.random() * 0.45
@@ -133,7 +128,6 @@ CELL_RAND = np.array([c[7] for c in cells], np.float32)
 CELL_X = np.array([c[0] + CELL / 2 for c in cells], np.float32)
 CELL_Y = np.array([c[1] + CELL / 2 for c in cells], np.float32)
 
-# cell shading: slightly brighter top edge, softer bottom edge
 shade = np.ones((SH, SW), np.float32)
 inside = idx_map >= 0
 ly = (yy - LOGO_Y) % PITCH
@@ -144,7 +138,7 @@ shade = shade[..., None]
 F_LOG = ImageFont.truetype(MONO, round(15 * FS))
 F_TAG = ImageFont.truetype(MONO, round(16 * FS))
 F_VER = ImageFont.truetype(MONO, 12)
-CH = F_LOG.getlength("M")   # log column width
+CH = F_LOG.getlength("M")
 
 
 def text_layer(draw_fn):
@@ -159,7 +153,6 @@ def draw_log(d, t):
     for text, tag, t0 in LOG:
         if t < t0:
             break
-        # type-on over ~0.18 s
         k = min(1.0, (t - t0) / 0.18)
         shown = text[: int(len(text) * k + 0.999)]
         if tag is None:
@@ -202,7 +195,6 @@ def frame(n):
     t = n / FPS
     img = BG * smooth(t / 0.3)
 
-    # CRT-on line flash at the very start
     if 0.04 < t < 0.30:
         k = (t - 0.04) / 0.26
         h = max(1, int(2 + 40 * smooth(k)))
@@ -212,13 +204,11 @@ def frame(n):
 
     fade = 1.0 - smooth((t - 5.33) / 0.5)
 
-    # boot log (gone by ~1.83 s)
     if 0.5 <= t < 1.83:
         lg = text_layer(lambda d: draw_log(d, t))
         out = 1.0 - smooth((t - 1.68) / 0.15)
         img = img + lg * out
 
-    # logo
     lt = t - 0.0
     alpha = np.zeros(N, np.float32)
     pop = np.zeros(N, np.float32)
@@ -227,7 +217,6 @@ def frame(n):
         if dt < 0:
             continue
         if dt < 0.22:
-            # glitchy settle: flicker on/off with decaying probability
             f = (math.sin((dt * 60 + CELL_RAND[i] * 30)) > -0.2 + dt * 3)
             alpha[i] = 0.45 if f else 0.0
             pop[i] = 0.9 * (1 - dt / 0.22)
@@ -235,7 +224,6 @@ def frame(n):
             alpha[i] = 1.0
             pop[i] = 0.35 * max(0.0, 1 - (dt - 0.22) / 0.3)
 
-    # diagonal white sheen sweep ~3.35 - 3.8 s
     sheen = np.zeros(N, np.float32)
     if 3.35 <= t <= 3.85:
         k = (t - 3.35) / 0.5
@@ -254,19 +242,16 @@ def frame(n):
         g2 = gaussian_filter(logo, sigma=(28 * K, 28 * K, 0))
         img = img + logo * 0.92 + g1 * 0.95 + g2 * 0.85
 
-    # tagline + bar
     if t >= 3.3:
         tb = text_layer(lambda d: (draw_tag(d, t), draw_bar(d, t)))
         img = img + tb
         img = img + gaussian_filter(tb, sigma=(6, 6, 0)) * 0.25
 
-    # version
     if t > 3.4:
         vv = text_layer(lambda d: d.text((SW - 50, SH - 28), "v1.0", font=F_VER, fill=(70, 82, 105)))
         img = img + vv * 0.8
 
     img = img * SCAN * fade
-    # light film grain, steady enough not to shimmer the JPEG too much
     img = np.clip(img, 0, 255)
     return Image.fromarray(img.astype(np.uint8))
 

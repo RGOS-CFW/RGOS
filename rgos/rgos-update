@@ -49,8 +49,6 @@ STALE_RE = re.compile(r"\.(tar|tar\.gz|tgz)\.(applied|failed)$", re.I)
 RUN = os.environ.get("RGOS_UPDATE_RUN", "/run/rgos/update")
 LOG_FILE = os.environ.get("RGOS_UPDATE_LOG", "/var/log/rgos-update.log")
 TTY = os.environ.get("RGOS_UPDATE_TTY", "/dev/tty1")
-# an update is matched against the chipset the image was built for (/etc/rgos-chipset: h700-ddr3, h700-ddr4, rg-rotate, miniloong);
-# /etc/rgos-device (the console) is only the fallback for images built before chipsets existed
 DEVICE_FILE = os.environ.get("RGOS_DEVICE_FILE", "/etc/rgos-chipset")
 LEGACY_DEVICE_FILE = None if "RGOS_DEVICE_FILE" in os.environ else "/etc/rgos-device"
 BOOT_MNT = os.environ.get("RGOS_BOOT_MNT", "/boot")
@@ -181,7 +179,6 @@ def _subdir(base, name):
         return None
 
 
-# the first four are the chipsets build.sh makes; the console names only keep tars of older builds out of the way
 DEVICES = ("h700-ddr3", "h700-ddr4", "rg-rotate", "miniloong", "rg34xxsp", "rg35xxh", "rg35xxsp")
 
 
@@ -304,7 +301,7 @@ class Progress:
 
     def add(self, n):
         self.done += n
-        pct = min(99, self.done * 100 // self.total)      # 100% only once everything is written and synced
+        pct = min(99, self.done * 100 // self.total)
         if pct != self.last:
             self._show(pct)
 
@@ -481,19 +478,16 @@ def apply_tar(tar, bootdir):
     _cleanup(bootdir)
     reclaim_stale_tars(bootdir)
     free = lambda: (lambda st: st.f_bavail * st.f_frsize)(os.statvfs(bootdir))
-    # smallest first: kernel / dtb / initrd are staged normally, the big SYSTEM image goes last
     order = sorted(payload, key=lambda n: (payload[n].size, n))
     need = sum(m.size for m in payload.values()) + MARGIN
     inplace = set()
     if free() < need:
-        for name in BOOT_FILES:                      # old .prev copies are only a rollback convenience: drop them first
+        for name in BOOT_FILES:
             try:
                 os.remove(os.path.join(bootdir, name + ".prev"))
             except OSError:
                 pass
     if free() < need:
-        # Not enough room to keep old + new side by side. Work out which files have to replace the old copy in place.
-        # Everything is verified from the tar first, so the old files are never deleted for a damaged update.
         inplace = plan_inplace(order, {n: payload[n].size for n in payload},
                                {n: _old_size(bootdir, n) for n in payload}, free())
         say("  boot partition is small: replacing %s in place" % (", ".join(sorted(inplace)) or "nothing"))
@@ -513,7 +507,7 @@ def apply_tar(tar, bootdir):
             m = payload[name]
             log("  staging %s (%d KiB)" % (name, m.size >> 10))
             if name in inplace:
-                for ext in ("", ".prev"):            # no room for two copies: the old one goes now, the new one is verified already
+                for ext in ("", ".prev"):
                     try:
                         os.remove(os.path.join(bootdir, name + ext))
                     except OSError:
@@ -579,8 +573,6 @@ def apply_tar(tar, bootdir):
         os.sync()
         raise UpdateError("installation failed; " + ("rollback incomplete, check the *.prev files" if errors else "previous boot files restored"))
     os.sync()
-    # The update is installed (new files in place, build id written, everything synced): only now are the old copies deleted.
-    # Until this point they were the rollback; a failure above restores them and never reaches this line.
     for name in order:
         try:
             os.remove(os.path.join(bootdir, name + ".prev"))
@@ -644,11 +636,9 @@ def cmd_boot():
                     result, rc = "build %s installed" % uid, 10
             except UpdateError as e:
                 result = "FAILED: %s" % e
-            except Exception as e:           # a bug or an odd tar must never leave the ROMS partition mounted or crash the boot
+            except Exception as e:
                 log("unexpected error: %r" % (e,))
                 result = "FAILED: unexpected %s: %s" % (type(e).__name__, e)
-        # A tar on the boot partition itself is as big as SYSTEM: keeping it as .applied would use up the free space the next
-        # update (and copying the next tar there) needs. The result line in update/rgos-update.log is the record.
         drop = suffix == ".applied" and bool(boot) and on_same_fs(tar, boot[0])
         if drop:
             result += " (tar deleted from the boot partition to keep its free space)"

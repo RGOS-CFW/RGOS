@@ -20,11 +20,11 @@ import math
 import random
 import time
 
-SPRING_K, SPRING_C = 784.0, 39.0     # ~28 rad/s, damping ratio 0.7 -> ~5% overshoot (rgclassic.SPRING_K / SPRING_C)
+SPRING_K, SPRING_C = 784.0, 39.0
 ANIM_STEPS, ANIM_SPEED, LIFT_PX = 24, 16.0, 4
-INTRO_S = 1.0                        # the entrance of a screen takes about this long (menu.HOME_INTRO_S)
-FADE_S = 0.18                        # popup / screen crossfade (menu._VT "fade")
-SHINE_EVERY, SHINE_SWEEP = 2.8, 0.7  # a shine sweeps the focused tile for SHINE_SWEEP seconds every SHINE_EVERY
+INTRO_S = 1.0
+FADE_S = 0.18
+SHINE_EVERY, SHINE_SWEEP = 2.8, 0.7
 
 
 def c01(v):
@@ -71,16 +71,15 @@ class Motion:
         self.dt = 1 / 30
         self.moving = False
         self._flag = False
-        self.av = {}                 # key -> [value, velocity, last drawn]
-        self.btn = {}                # key -> [highlight 0..1, base while selected, base while not]
-        self.seen = {}               # key -> [entrance start, last drawn]
-        self.marks = {}              # key -> [value, when it last changed]
+        self.av = {}
+        self.btn = {}
+        self.seen = {}
+        self.marks = {}
         self.ring = {"p": None, "v": [0.0, 0.0]}
         self.embers = None
         self._faces, self._shadows, self._rings, self._shines, self._masks = {}, {}, {}, {}, {}
         self.vt = {"key": None, "t0": 0.0, "dur": 0.0, "bufs": None}
 
-    # ---- the clock ----------------------------------------------------------------------------------------------
     def tick(self, now=None):
         """Start a frame. Returns True if something was moving in the previous one (run at full frame rate)."""
         now = self.clock() if now is None else now
@@ -131,7 +130,6 @@ class Motion:
             self._flag = True
         return el
 
-    # ---- buttons -------------------------------------------------------------------------------------------------
     def _face(self, w, h, base, radius):
         key = (w, h, base, radius)
         surf = self._faces.get(key)
@@ -221,7 +219,6 @@ class Motion:
         tmp.blit(self._mask(w, h, radius), (0, 0), special_flags=pg.BLEND_RGBA_MIN)
         surf.blit(tmp, (x, y))
 
-    # ---- the focus ring ------------------------------------------------------------------------------------------
     def ring_step(self, tx, ty):
         """Damped spring glide of the focus ring to (tx, ty) (menu._ring_step). Integrated in steps of at most 8 ms so a long
         frame cannot make it unstable. Returns (speed, distance left)."""
@@ -236,7 +233,7 @@ class Motion:
                 v[a] += ((g - p[a]) * SPRING_K - v[a] * SPRING_C) * h
                 p[a] += v[a] * h
         if math.hypot(tx - p[0], ty - p[1]) < 0.002 and math.hypot(v[0], v[1]) < 0.02:
-            p[0], p[1], v[0], v[1] = float(tx), float(ty), 0.0, 0.0    # settled: snap so the loop can go idle
+            p[0], p[1], v[0], v[1] = float(tx), float(ty), 0.0, 0.0
         rem, speed = math.hypot(tx - p[0], ty - p[1]), math.hypot(v[0], v[1])
         if rem > 0.0 or speed > 0.0:
             self._flag = True
@@ -261,7 +258,6 @@ class Motion:
         x, y = self.ring["p"]
         c.blit(s, (int(x + 0.5) - 6, int(y + 0.5) - 6))
 
-    # ---- embers --------------------------------------------------------------------------------------------------
     def draw_embers(self, c):
         """Three layers of slow embers in the accent colour drifting up behind everything (menu.home_embers)."""
         pg = self.pg
@@ -285,7 +281,6 @@ class Motion:
                 sz = u * (2 if lay == 2 else 1)
                 pg.draw.rect(c, mix(self.c["BG"], self.c["ACCENT"], min(1.0, k)), (x, y, sz, sz))
 
-    # ---- entrance of a tile --------------------------------------------------------------------------------------
     def pop(self, canvas, rect, p, paint):
         """Entrance of one tile: it glides up 28 px and fades in. `paint(surf, x, y)` draws it with its top left at x, y;
         p is the progress 0..1 (menu: out_cubic((el - 0.05 - 0.06 * i) / 0.42))."""
@@ -299,13 +294,12 @@ class Motion:
             tmp.set_alpha(int(255 * p))
             canvas.blit(tmp, (bx - 6, by - 14 + int((1.0 - p) * 28)))
 
-    # ---- fade between screens ------------------------------------------------------------------------------------
     def transition(self, canvas, key, dur=FADE_S):
         """Call at the end of every frame with the screen's name. When the name changes, the old screen fades into the new
         one (menu._VT "fade"), so opening or closing a popup, or going on to the install console, never jumps."""
         pg, vt = self.pg, self.vt
         if vt["bufs"] is None:
-            vt["bufs"] = tuple(pg.Surface(self.size) for _ in range(3))     # last frame, previous screen, this frame
+            vt["bufs"] = tuple(pg.Surface(self.size) for _ in range(3))
         buf, old, new = vt["bufs"]
         if vt["key"] is None:
             vt["key"] = key

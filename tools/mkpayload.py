@@ -23,7 +23,7 @@ import sys
 import tarfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "rgos"))
-import installer  # noqa: E402
+import installer
 
 
 def sha256(path):

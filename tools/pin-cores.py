@@ -17,7 +17,6 @@ import sys
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GH = "https://github.com/"
-# setting -> (repo variable, default repo, ref to ask git about). Same repos as build.sh / build-cores.sh.
 SOURCES = {
     "NGP_REF": ("NGP_REPO", GH + "libretro/beetle-ngp-libretro.git", "refs/heads/master"),
     "GENESIS_REF": ("GENESIS_REPO", GH + "libretro/Genesis-Plus-GX.git", "HEAD"),
@@ -34,7 +33,7 @@ SOURCES = {
     "MAME2003_REF": ("MAME2003_REPO", GH + "libretro/mame2003-plus-libretro.git", "HEAD"),
     "MAME_REF": ("MAME_REPO", GH + "libretro/mame.git", "HEAD"),
 }
-COMMENT_COL = 20   # the "# description" column of an empty setting in cores.conf; a long hash pushes it right
+COMMENT_COL = 20
 LINE_RE = re.compile(r"^(?P<key>[A-Z0-9_]+_REF)(?P<eq>\s*=)\s*(?P<val>[^\s#]*)(?P<rest>.*)$")
 
 

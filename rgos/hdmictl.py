@@ -110,7 +110,7 @@ def apply_extlinux(mode, path=None, name=DEFAULT_CONNECTOR):
         with open(path, newline="") as f:
             old = f.read()
         if not re.search(r"(?im)^[ \t]*append\b", old):
-            return None  # nothing to patch: report failure rather than a silent "unchanged"
+            return None
         new = patch_extlinux_text(old, mode, name)
         if new == old:
             return False

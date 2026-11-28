@@ -55,7 +55,7 @@ def smoothscale(src, size):
     out = Surf(size)
     cols = [[[src.data[(r * src.w + c) * 4 + b] for r in range(src.h)] for c in range(src.w)] for b in range(4)]
     for b in range(4):
-        rows_scaled = [_shrink(cols[b][c], h) for c in range(src.w)]          # [c][row]
+        rows_scaled = [_shrink(cols[b][c], h) for c in range(src.w)]
         for y in range(h):
             line = _shrink([rows_scaled[c][y] for c in range(src.w)], w)
             for x in range(w):
@@ -129,7 +129,6 @@ class PresentTests(unittest.TestCase):
         a = frame(cw, ch, 1)
         fb.present(a)
         self.assertEqual(self.screen(fb), self.reference(a, xres, yres))
-        # change only the rows of one band: the output must equal a whole-frame conversion, written in one small run
         bs, _bd = fbout.band_plan((cw, ch), (xres, yres))
         b = Surf((cw, ch))
         b.data[:] = a.data
@@ -142,13 +141,13 @@ class PresentTests(unittest.TestCase):
         self.assertEqual(len(fb.writes), 1)
         self.assertLess(fb.writes[0][1], xres * yres * 4 // 2)
         fb.writes.clear()
-        fb.present(b)  # identical frame: nothing is written
+        fb.present(b)
         self.assertEqual(fb.writes, [])
         os.close(fb.fd)
         os.unlink(fb.path)
 
     def test_scaled_540_to_480_matches_whole_frame_scaling(self):
-        self.run_case(72, 72, 64, 64)  # same 9:8 row groups as 720x540 -> 640x480, small enough to test
+        self.run_case(72, 72, 64, 64)
 
     def test_unscaled_matches_and_writes_only_changed_rows(self):
         self.run_case(32, 64, 32, 64)
@@ -161,7 +160,6 @@ class PresentTests(unittest.TestCase):
             fb.present(fr)
             written = fb.page
             self.assertEqual(self.screen(fb, written), bytes(fr.data), i)
-        # a frame that repeats the one two presents ago needs nothing rewritten on its page
         fb.writes.clear()
         fb.present(frames[1])
         self.assertEqual(self.screen(fb, fb.page), bytes(frames[1].data))

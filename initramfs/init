@@ -7,9 +7,6 @@ mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null
 [ -c /dev/console ] && exec </dev/console >/dev/console 2>&1
 
-# Boot logo: paint bootlogo-<W>x<H>.raw (32-bit B,G,R,X rows, see tools/bmp2fb.py) onto the framebuffer as soon as it
-# exists, so the screen is never blank between U-Boot's logo and the first RG OS screen. Only touches a 32 bpp
-# framebuffer whose stride and width match the file; anything else is left alone.
 paint_logo() {
   fb=/sys/class/graphics/fb0
   [ -c /dev/fb0 ] && [ "$(cat $fb/bits_per_pixel 2>/dev/null)" = 32 ] || return 1
@@ -33,7 +30,6 @@ say()  { klog "$*"; echo "RG OS: $*"; }
 WANT=""
 for a in $(cat /proc/cmdline); do case "$a" in boot=*) WANT=${a#boot=} ;; esac; done
 
-# Make sure partition nodes exist even when devtmpfs is missing or slow: create them from /sys/class/block.
 mknod_blocks() {
   for s in /sys/class/block/*; do
     [ -f "$s/dev" ] || continue
@@ -44,9 +40,6 @@ mknod_blocks() {
   done
 }
 
-# A boot partition is the FAT partition that holds SYSTEM. After an interrupted update the file can be missing while a
-# SYSTEM.prev (the old, known-good image) or a fully written SYSTEM.new is still there, so those count too and are used
-# as a fallback instead of hanging here forever.
 SYSFILE=""
 pick_system() {
   [ -f /flash/SYSTEM ] && { SYSFILE=SYSTEM; return 0; }
@@ -73,12 +66,10 @@ find_boot() {
     [ -n "$hint" ] && try_dev "$hint" && return 0
   fi
   for d in /dev/mmcblk*p[0-9]* /dev/sd[a-z][0-9]* /dev/nvme*n*p[0-9]*; do try_dev "$d" && return 0; done
-  # last resort: a card formatted without a partition table (FAT straight on the disk)
   for d in /dev/mmcblk[0-9] /dev/sd[a-z] /dev/nvme[0-9]n[0-9]; do try_dev "$d" && return 0; done
   return 1
 }
 
-# Shown on screen while waiting, so a stuck boot says WHY instead of only "waiting...".
 diag() {
   echo "RG OS: boot partition not found yet. Details:"
   bd=""; for x in /dev/mmcblk* /dev/sd[a-z]* /dev/nvme*; do [ -b "$x" ] && bd="$bd ${x#/dev/}"; done

@@ -32,14 +32,11 @@ class PlanInplace(unittest.TestCase):
         self.assertEqual(plan({"SYSTEM": 700, "rgos-initrd.cpio": 9}, {"SYSTEM": 690, "rgos-initrd.cpio": 9}, 64), {"SYSTEM"})
 
     def test_growth_beyond_the_headroom_is_reported_with_numbers(self):
-        # new SYSTEM is 80 MiB bigger, only 64 MiB free: the old initrd copy is freed too, still short
         with self.assertRaises(U.UpdateError) as cm:
             plan({"SYSTEM": 770, "rgos-initrd.cpio": 9}, {"SYSTEM": 690, "rgos-initrd.cpio": 9}, 64)
         self.assertIn("MiB short", str(cm.exception))
 
     def test_earlier_files_are_switched_to_in_place_when_that_is_what_makes_it_fit(self):
-        # 64 free - 2 margin = 62; the 20 MiB kernel is staged (42 left). SYSTEM (130) with its own old 85 freed gives 127:
-        # still short, so the old kernel's 20 MiB must be freed first as well.
         got = plan({"KERNEL": 20, "SYSTEM": 130}, {"KERNEL": 20, "SYSTEM": 85}, 64)
         self.assertEqual(got, {"KERNEL", "SYSTEM"})
 

@@ -92,7 +92,6 @@ class KeyTests(unittest.TestCase):
         self.assertEqual(artwork.load_key(self.tmp), KEY)
 
     def test_key_file_with_utf8_bom_is_read(self):
-        # Windows Notepad prepends a BOM when saving "UTF-8"; the key must still validate
         os.makedirs(os.path.join(self.tmp, "rgos-data"))
         with open(os.path.join(self.tmp, "rgos-data", "steamgriddb-key.txt"), "wb") as f:
             f.write(b"\xef\xbb\xbf" + KEY.encode() + b"\r\n")
@@ -135,7 +134,6 @@ class KeyTests(unittest.TestCase):
 
 class ReadJsonTests(unittest.TestCase):
     def test_hand_edited_json_with_bom_is_read(self):
-        # overrides.json is meant to be edited from a PC; Notepad may add a BOM
         d = tempfile.mkdtemp(prefix="rgos-art-")
         p = os.path.join(d, "overrides.json")
         with open(p, "wb") as f:
@@ -257,7 +255,6 @@ class ScrapeTests(unittest.TestCase):
         mine = os.path.join(d, "Super Mario World.png")
         open(mine, "wb").write(b"mine")
         _sc, s = self.run_scraper([game(self.roms, "snes", "Super Mario World.sfc")])
-        # a game with no saved details is still visited so its metadata can be fetched, but the cover is left alone
         self.assertEqual(s["total"], 1)
         self.assertFalse(any(c.startswith("/grids/game/") for c in self.calls))
         self.assertEqual(open(mine, "rb").read(), b"mine")

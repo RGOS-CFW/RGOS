@@ -54,7 +54,7 @@ class DreamcastTests(unittest.TestCase):
         self.assertIn("dreamcast", sd.SYSTEM_DIRS)
         files = [b[0] for b in biosctl.BIOS["dreamcast"]]
         self.assertEqual(files, ["dc/dc_boot.bin", "dc/dc_flash.bin"])
-        self.assertTrue(all(b[3] == () for b in biosctl.BIOS["dreamcast"]))  # optional: Flycast has an HLE BIOS
+        self.assertTrue(all(b[3] == () for b in biosctl.BIOS["dreamcast"]))
 
     def test_scan_lists_discs_but_not_track_files(self):
         root = tempfile.mkdtemp()

@@ -51,7 +51,6 @@ class SaturnTests(unittest.TestCase):
             run = os.path.join(root, "run")
             os.makedirs(bios)
 
-            # Beetle's regional BIOS files must not disable YabaSanshiro's HLE BIOS.
             open(os.path.join(bios, "sega_101.bin"), "wb").close()
             self.assertFalse(launch.saturn_has_bios(root))
             path = launch.core_options("saturn", root, run, core="yabasanshiro")
@@ -62,14 +61,12 @@ class SaturnTests(unittest.TestCase):
             self.assertIn('yabasanshiro_resolution_mode = "original"', yaba)
             self.assertNotIn("polygon_generation_mode", yaba)
 
-            # Beetle must never receive unrelated YabaSanshiro options or a hardware-renderer safe retry.
             path = launch.core_options("saturn", root, run, safe=True, core="mednafen_saturn")
             with open(path) as f:
                 beetle = f.read()
             self.assertEqual(beetle, "")
             self.assertEqual(launch.video_attempts("saturn", core="mednafen_saturn"), [None])
 
-            # Yabause has its own option namespace and sensible two-thread default.
             path = launch.core_options("saturn", root, run, core="yabause")
             with open(path) as f:
                 yabause = f.read()

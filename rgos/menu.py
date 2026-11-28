@@ -161,18 +161,17 @@ class ThemedClassic(rgclassic.Classic):
         super().__init__(w, h)
 
     def _bake_bg(self):
-        # dither levels are baked once into an 8-bit surface; a theme change only swaps its palette
         lw, lh = rgclassic.LW, self.LH
         lv = rgclassic.dither_levels(lw, lh)
         self._idx = pygame.Surface((lw, lh), 0, 8)
         self._idx.set_palette([(i, i, i) for i in range(6)])
         buf = None
-        try:                                              # bulk-write the index bytes when rows are unpadded
+        try:
             if self._idx.get_pitch() != lw:
                 raise ValueError("padded rows")
             buf = self._idx.get_buffer()
             buf.write(lv, 0)
-            buf = None                                    # releases the surface lock
+            buf = None
         except Exception:
             buf = None
             i = 0
@@ -203,7 +202,6 @@ class ThemedClassic(rgclassic.Classic):
         lo, hi = (_mix(bg, (0, 0, 0), 0.55), _mix(bg, accent, 0.5)) if dark else (_mix(bg, (0, 0, 0), 0.08), _mix(bg, accent, 0.3))
         self._ramp = tuple(_mix(lo, hi, i / 5.0) for i in range(6))
         self._paint_bg()
-        # icon tones (1 fill, 2 shade, 3 outline): selected tile sits on the accent, others on the panel
         la = _lum(accent)
         on = text if abs(_lum(text) - la) * 1.5 >= abs(_lum(bg) - la) else bg
         c1 = _mix(text, panel, 0.2)
@@ -226,7 +224,6 @@ class ThemedClassic(rgclassic.Classic):
         return sf
 
     def text(self, t, x, y, col=None, sc=1, align=0, bold=False):
-        # the base class binds its default colour at import time, so resolve it here
         super().text(t, x, y, rgclassic.WHITE if col is None else col, sc, align, bold)
 
 DEFAULT_INPUT = {"debug": False}
@@ -383,8 +380,6 @@ def scan_roms():
                     dirs[:] = []
                 for f in files:
                     if not f.startswith(".") and (f.lower().endswith(exts) or (sid == "ports" and _native_binary(os.path.join(root, f)))):
-                        # "size" is not read here: a stat() per ROM made scanning a big library slow on an SD card, and only
-                        # the selected game's detail panel shows it (see rom_size)
                         games.append({"title": pretty(f), "path": os.path.join(root, f), "tag": tag, "core": core,
                                       "sid": sid, "card": card})
     games.sort(key=lambda g: (g["title"].lower(), g["tag"], g.get("card", 1)))
@@ -496,8 +491,6 @@ def save_state(st):
 
 def load_favorites():
     try:
-        # favorites.txt lives on the user-editable ROMS partition: tolerate a Windows BOM and non-UTF-8 bytes
-        # (a stray byte raised UnicodeDecodeError, which is not an OSError, and crashed the launcher at start)
         with open(FAVORITES_FILE, "r", encoding="utf-8-sig", errors="replace") as f:
             return list(dict.fromkeys(line.strip() for line in f if line.strip()))
     except OSError:
@@ -523,7 +516,7 @@ def save_favorites(paths):
         return False
 
 
-from cores import installed_cores, default_core, SYSTEM_CORE_COMPATIBILITY, compatible_cores, STANDALONE  # noqa: E402,F401
+from cores import installed_cores, default_core, SYSTEM_CORE_COMPATIBILITY, compatible_cores, STANDALONE
 
 
 CORE_NAMES = {"mgba": "mGBA", "gpsp": "gpSP", "vbam": "VBA-M", "gambatte": "Gambatte", "sameboy": "SameBoy", "gearboy": "Gearboy",
@@ -601,8 +594,6 @@ def _stick_count():
         return 2
 
 
-# GameCube (Dolphin) runs on the RG Rotate and on the Allwinner H700 consoles. The H700 is much weaker (4x Cortex-A53,
-# Mali-G31 MP2): only light games reach full speed there, so rgos-launch gives it its own cheaper core options.
 GC_DEVICES = ("rg-rotate", "rg34xxsp", "rg35xxh", "rg35xxsp")
 
 
@@ -628,8 +619,11 @@ def core_installer_rows():
     systems = [(sy[0], sy[1], sy[4]) for sy in ALL_SYSTEMS if sy[2] == "retroarch" and (sy[0] != "gc" or _gc_allowed())]
     rows = coreinstall.candidates(systems, SYSTEM_CORE_COMPATIBILITY, installed_cores(), CORE_NAMES)
     dest = coreinstall.core_dir(ROMS_ROOT)
-    for r in rows:      # "copy": has its own file on the ROMS card, so X can fetch it again (image cores are read-only)
+    for r in rows:
         r["copy"] = r["installed"] and coreinstall.has_copy(dest, r["core"])
+    pins = coreinstall.read_pins()
+    for r in rows:
+        r["version"] = coreinstall.short_ref(coreinstall.pinned_ref(r["core"], pins))
     return rows
 
 
@@ -749,7 +743,7 @@ def bg_cached(fn, interval):
     return get
 
 
-CLASSIC_UI = [False, 3]          # [active, pixel unit]; set every frame while the RG Classic launcher is selected
+CLASSIC_UI = [False, 3]
 _CLASSIC_BG = [None, None]
 
 
@@ -843,7 +837,6 @@ def _cl_outline(surf, col, rect, t, u):
 
 
 def _rect_shim(surf, col, rect, width=0, border_radius=0, *a, **kw):
-    # RG Classic has no rounded corners: popups, keys and bars all pick up the notched pixel corners
     if CLASSIC_UI[0] and border_radius and border_radius > 0:
         if width and width > 0:
             _cl_outline(surf, col, pygame.Rect(rect), width, CLASSIC_UI[1])
@@ -972,10 +965,6 @@ def anim_tick():
     return moving
 
 
-# ---- motion shared by the RG OS tile and RG XMB launchers (ported from RG Classic) ---------------------------------
-# entrance (staggered pop-in), a spring focus ring with hop / squash / ghost trail, shine and sparkle on the focus,
-# drifting embers, and per-item pulses. Everything is time based; _anim_clock[2] is raised while something moves so the
-# main loop runs at full frame rate and relaxes to the idle rate once it settles.
 _out_cubic, _out_back, _c01 = rgclassic._out_cubic, rgclassic._out_back, rgclassic._c01
 _AV = {}
 
@@ -993,7 +982,6 @@ def anim_val(key, target, omega=20.0):
     return st[0]
 
 
-# screen transitions: moving between menus slides + crossfades; popups / dropdowns crossfade
 _VT = {"last": None, "t0": 0.0, "dur": 0.0, "dir": 0, "kind": ""}
 TR_SLIDE = 44
 VT_DEPTH = {"home": 0, "systems": 1, "tools": 1, "music": 2, "settings": 1, "recents": 1, "favorites": 1, "kbd": 3}
@@ -1034,7 +1022,7 @@ def _ring_step(tx, ty, dt, now):
             v[a] += ((g - p[a]) * SPRING_K - v[a] * SPRING_C) * h
             p[a] += v[a] * h
     if math.hypot(tx - p[0], ty - p[1]) < 0.002 and math.hypot(v[0], v[1]) < 0.02:
-        p[0], p[1], v[0], v[1] = float(tx), float(ty), 0.0, 0.0   # settled: snap so the main loop can go idle
+        p[0], p[1], v[0], v[1] = float(tx), float(ty), 0.0, 0.0
     rem, speed = math.hypot(tx - p[0], ty - p[1]), math.hypot(v[0], v[1])
     if rem > 0.0 or speed > 0.0:
         _anim_clock[2] = True
@@ -1453,7 +1441,7 @@ def marquee(c, font, text, col, x, y, width, now):
         c.blit(surf, (x, y))
         return False
     gap, over = 48, surf.get_width() - width
-    cyc = (over + gap) / 40.0 + 2.4          # 40 px/s, with a pause at each end
+    cyc = (over + gap) / 40.0 + 2.4
     ph = now % cyc
     off = 0 if ph < 1.2 else min(over + gap, (ph - 1.2) * 40.0)
     keep = c.get_clip()
@@ -1469,10 +1457,6 @@ ICONS = {"games": icon_games, "recents": icon_recents, "favorites": icon_favorit
          "theme": icon_theme, "launcher": icon_launcher, "splash": icon_splash, "emulators": icon_emulators, "bios": icon_bios, "artwork": icon_artwork, "bmap": icon_bmap,
          "swapab": icon_swapab, "dpadjoy": icon_dpadjoy, "wifi": icon_wifi, "bluetooth": icon_bluetooth, "ssh": icon_ssh, "info": icon_info, "files": icon_files, "music": icon_music}
 
-
-# ---- per-system icons (RG XMB list) --------------------------------------------------------
-# Same convention as the icons above: drawn white-on-transparent around (cx, cy) inside a 96x96 box, `bg` cuts details out
-# of the body. Generic shapes (handheld, pad, cartridge, ...), deliberately not console logos.
 
 def _cross(c, bg, x, y, a=7, t=4):
     pygame.draw.rect(c, bg, (x - a, y - t // 2, 2 * a, t))
@@ -1670,7 +1654,6 @@ def icon_sys_gc(c, cx, cy, col, bg):
 
 
 def icon_sys_n64(c, cx, cy, col, bg):
-    # the console's "N" logo: two uprights joined by a diagonal, on a rounded tile
     pygame.draw.rect(c, col, (cx - 36, cy - 30, 72, 60), border_radius=14)
     pygame.draw.rect(c, bg, (cx - 21, cy - 18, 10, 36))
     pygame.draw.rect(c, bg, (cx + 11, cy - 18, 10, 36))
@@ -1678,20 +1661,19 @@ def icon_sys_n64(c, cx, cy, col, bg):
 
 
 def icon_sys_saturn(c, cx, cy, col, bg):
-    # the console's ringed planet: a ball with a tilted ring whose near half passes in front of it
     ring = [(cx + 40 * math.cos(k * math.pi / 18), cy + 12 * math.sin(k * math.pi / 18)) for k in range(36)]
     tilt = [(cx + (x - cx) * math.cos(-0.35) - (y - cy) * math.sin(-0.35),
              cy + (x - cx) * math.sin(-0.35) + (y - cy) * math.cos(-0.35)) for x, y in ring]
-    pygame.draw.polygon(c, col, tilt, 4)  # whole ring; the planet then covers its far half
+    pygame.draw.polygon(c, col, tilt, 4)
     pygame.draw.circle(c, col, (cx, cy), 21)
-    near = tilt[0:19]  # k = 0..18 is the lower half (y grows downwards), i.e. the half in front
+    near = tilt[0:19]
     pygame.draw.lines(c, bg, False, near, 10)
     pygame.draw.lines(c, col, False, near, 4)
 
 
 def icon_sys_dreamcast(c, cx, cy, col, bg):
     pygame.draw.circle(c, col, (cx, cy), 36)
-    for turn in (0.6, 0.6 + math.pi):  # two spiral arms, like the console's swirl
+    for turn in (0.6, 0.6 + math.pi):
         pygame.draw.lines(c, bg, False, [(cx + (5 + 25 * k / 40.0) * math.cos(k * 0.14 + turn),
                                           cy + (5 + 25 * k / 40.0) * math.sin(k * 0.14 + turn)) for k in range(41)], 4)
     pygame.draw.circle(c, bg, (cx, cy), 4)
@@ -1716,7 +1698,6 @@ def icon_sys_neogeo(c, cx, cy, col, bg):
 
 
 def icon_sys_pico8(c, cx, cy, col, bg):
-    # PICO-8 fantasy console: a rounded body, a square screen and a small 4x2 palette strip under it (not the real logo)
     pygame.draw.rect(c, col, (cx - 30, cy - 38, 60, 76), border_radius=9)
     pygame.draw.rect(c, bg, (cx - 23, cy - 31, 46, 46), border_radius=3)
     pygame.draw.rect(c, col, (cx - 19, cy - 27, 38, 38))
@@ -1748,11 +1729,7 @@ _XIT = {}
 _XBG = {}
 _XBG_RAW = [None]
 _XSILK = {}
-_XFRAME = [None, -1.0, None, None, -1.0]  # front surface, its time, in-flight redraw job, back surface, that job's time
-# The silk is redrawn in pure Python (~20+ ms on the H700). That used to land in a single frame, right as navigation
-# settled (or every few seconds while a direction was held), and showed up as a hitch. Now the redraw is time-sliced:
-# one ribbon bundle per frame into a back buffer that is swapped in when complete, and it is paused entirely while the
-# menu is animating or was just touched, so scrolling never pays for the silk. Idle it still refreshes at 15 fps.
+_XFRAME = [None, -1.0, None, None, -1.0]
 XMB_BG_INTERVAL = 1.0 / 15.0
 XMB_BG_MOVING_MAX = 8.0
 XMB_BG_SETTLE = 0.6
@@ -1879,8 +1856,6 @@ def xmb_bg(c, t, moving=False):
             if fr[3] is None:
                 fr[3] = g.copy()
             fr[2], fr[4] = _xmb_silk_steps(g, fr[3], t), t
-        # Advance an in-flight redraw: at rest as many bundles as fit in a small time budget (a fast CPU finishes in one
-        # frame, the H700 spreads it over a few); while navigating only one bundle per frame, and only once the frame is stale.
         if fr[2] is not None and (not moving or not 0.0 <= age < XMB_BG_MOVING_MAX):
             budget = 0.0 if moving else XMB_BG_BUDGET
             t0 = time.perf_counter()
@@ -1938,7 +1913,7 @@ def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade, fx=None):
         t = t * t * (3.0 - 2.0 * t)
         size = int(round((small + (big - small) * t) / 4.0)) * 4
         ip, ai, yo = 1.0, 1.0, 0
-        if el < 1.2:   # entrance: the categories drop in one after another with a little overshoot
+        if el < 1.2:
             ip = _out_cubic((el - 0.045 * i) / 0.40)
             if ip <= 0.02:
                 continue
@@ -1963,7 +1938,7 @@ def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade, fx=None):
         sel_t = max(0.0, 1.0 - abs(d))
         sel_t = sel_t * sel_t * (3.0 - 2.0 * sel_t)
         k = max(0, int(round(d)))
-        fi = _c01((fade - 0.06 * k) / 0.40)   # items slide in from the right, staggered, after a category change
+        fi = _c01((fade - 0.06 * k) / 0.40)
         fi = fi * fi * (3.0 - 2.0 * fi)
         if el < 1.6:
             ii = _c01((el - 0.28 - 0.05 * k) / 0.40)
@@ -1980,7 +1955,7 @@ def draw_xmb_home(c, f_row, f_small, cx_f, cat_i, items, vy, fade, fx=None):
         if sel_t > 0.05:
             pygame.draw.circle(c, xmb_tint(cxi, y, 0.08 * sel_t * al), (cxi, yi), int(isz * 0.62))
         c.blit(xmb_icon(it["icon"], isz, _mix(DIM, TEXT, sel_t), al), (cxi - isz // 2, yi - isz // 2))
-        if sel_t > 0.5 and fx:   # a chevron nudging toward the selected item
+        if sel_t > 0.5 and fx:
             mx = cxi - isz // 2 - 16
             pygame.draw.polygon(c, xmb_tint(mx, y, 0.55 * sel_t * al), [(mx, yi - 6), (mx, yi + 6), (mx + 8, yi)])
         tx = cxi + 40
@@ -2050,7 +2025,7 @@ def _lru_put(d, key, val, cap):
 _DETAIL_ART = {}
 
 
-DETAIL_SETTLE_S = 0.12  # the list's cover/details are only read from the card once the cursor rests this long
+DETAIL_SETTLE_S = 0.12
 
 
 def _detail_cover(path, w, h, load=True):
@@ -2255,7 +2230,7 @@ class ButtonMap:
                ("D-pad RIGHT", 0x223, False), ("MENU (home) button", 0x13c, True), ("L2 / left trigger", 0x138, True),
                ("R2 / right trigger", 0x139, True), ("L3 (click left stick)", 0x13d, True), ("R3 (click right stick)", 0x13e, True)]
     STICK_BTNS = (0x13d, 0x13e)
-    if _stick_count() == 1:   # one-stick device: no R3 click and no right stick to calibrate
+    if _stick_count() == 1:
         PROMPTS = PROMPTS[:-1]
         STICK_BTNS = (0x13d,)
     TIMEOUT, OPT_TIMEOUT, GAP = 25.0, 5.0, 0.5
@@ -2844,14 +2819,12 @@ def _on_term(_sig, _frm):
 def main():
     windowed = os.environ.get("RGOS_WINDOWED") == "1"
     try:
-        # Worker threads (ROM scan, cover decoding, status polls) hold the GIL for up to 5 ms at a time by default; the
-        # render loop waits that long every time it needs it back. 1 ms keeps a busy worker from costing whole frames.
         sys.setswitchinterval(float(os.environ.get("RGOS_SWITCH_S", "0.001")))
     except (ValueError, AttributeError):
         pass
     if not windowed:
         try:
-            signal.signal(signal.SIGTERM, _on_term)  # SIGTERM would skip atexit and leave the clocks pinned
+            signal.signal(signal.SIGTERM, _on_term)
         except ValueError:
             pass
     ensure_folders()
@@ -2900,7 +2873,7 @@ def main():
         all_games = scan_roms()
         save_scan_cache(all_games)
     else:
-        rescan.start()  # the cached list is shown now; the real scan replaces it as soon as it is done
+        rescan.start()
     _gcache = [None, {}]
 
     def games_of(sid):
@@ -3250,7 +3223,7 @@ def main():
     while code is None:
         if os.path.exists(SCREENOFF_FILE):
             inp.poll()
-            mp.tick()    # music keeps playing (and moves on to the next song) with the screen off
+            mp.tick()
             if not blanked:
                 canvas.fill((0, 0, 0))
                 present()
@@ -3262,7 +3235,7 @@ def main():
         mp.hold = view == "music"
         mp.tick()
         if not mp.engaged:
-            _music_tick()      # the launcher's background music stays out while the player owns the mixer
+            _music_tick()
         _asc = art["sc"]
         if _asc is not None:
             _now = time.monotonic()
@@ -3281,7 +3254,7 @@ def main():
             rescan.start()
         _scanned = rescan.take()
         if _scanned is not None and same_games(_scanned, all_games):
-            _scanned = None  # nothing changed: keep the list (and every cache keyed on it) instead of rebuilding
+            _scanned = None
         if _scanned is not None:
             cur_sid = vsys[sys_idx][0] if vsys else None
             all_games = _scanned
@@ -3527,7 +3500,7 @@ def main():
                 elif a == "x" and ci_rows and not ci_s["busy"]:
                     r = ci_rows[ci_idx]
                     if r["copy"]:
-                        ci.start([r["core"]], reinstall=True)     # download it again over the copy on the ROMS card
+                        ci.start([r["core"]], reinstall=True)
                     elif r["installed"]:
                         ci.say("%s is part of the system image" % r["name"])
                     else:
@@ -3863,7 +3836,7 @@ def main():
         if anim_moving:
             _BOOST.poke()
         _BOOST.tick()
-        xmb_look = launcher_id == "xmb" or view == "music"     # the music player always wears the PSP look
+        xmb_look = launcher_id == "xmb" or view == "music"
         XMB_UI[0] = xmb_look
         CLASSIC_UI[0], CLASSIC_UI[1] = launcher_id == "rgclassic" and view != "music", classic_unit()
         f_logo, f_big, f_row, f_small, f_tiny = PX_FONTS if CLASSIC_UI[0] else TT_FONTS
@@ -4041,7 +4014,7 @@ def main():
 
             for i, (hid, hname) in enumerate(HOME_ITEMS):
                 bx, by, sel = x0 + (i % HOME_COLS) * (bw + gap), top_y + (i // HOME_COLS) * (bh + gap), i == home_idx
-                pp_ = _out_cubic((el - 0.05 - 0.06 * i) / 0.42)   # entrance: tiles glide up and fade in, one after another
+                pp_ = _out_cubic((el - 0.05 - 0.06 * i) / 0.42)
                 if el >= 1.0 or pp_ >= 0.999:
                     paint_tile(canvas, bx, by, hid, hname, sel)
                 elif pp_ > 0.02:
@@ -4055,7 +4028,7 @@ def main():
                 draw_xmb_dropdown(canvas, f_small, dd, dd_options(dd["kind"]))
                 hint = "Up/Down Browse   A Select   B Cancel"
         elif view == "tools":
-            t_step = min(90, (H - top_y - 36) // len(TOOLS))      # the rows squeeze together on a short screen
+            t_step = min(90, (H - top_y - 36) // len(TOOLS))
             t_h = t_step - 8
             for i, (_tid, tname, tdesc, _tgt) in enumerate(TOOLS):
                 by, sel = top_y + i * t_step, i == tool_idx
@@ -4387,7 +4360,7 @@ def main():
                 i = lo_ci + slot
                 y, sel = int(top_c + (i - ci_fl) * 44), abs(i - ci_hi) < 0.5
                 canvas.blit(f_small.render(fit(f_small, r["name"], 200), True, TEXT if sel else DIM), (px + 20, y + 10))
-                canvas.blit(f_small.render(fit(f_small, ", ".join(r["systems"]), pw - 20 - 220 - 130), True, DIM), (px + 232, y + 10))
+                canvas.blit(f_small.render(fit(f_small, ", ".join(r["systems"]) + ("   [%s]" % r["version"] if r.get("version") else ""), pw - 20 - 220 - 130), True, DIM), (px + 232, y + 10))
                 if ci_s["busy"] and ci_s["core"] == r["core"]:
                     tag, tcol = "%d%%" % ci_s["pct"], ACCENT
                 elif r["installed"]:
@@ -4819,7 +4792,7 @@ def main():
 
         _vnow = time.monotonic()
         if view != "home":
-            _HOME_FX["last"] = _vnow   # coming back from a sub menu slides in; the tile entrance is only for a fresh start
+            _HOME_FX["last"] = _vnow
         _vk = (view, dd is not None, fm_pop["kind"] if (fm_pop and view == "files") else None)
         if _VT["last"] is None:
             _VT["last"] = _vk
@@ -4837,8 +4810,6 @@ def main():
             vt_new.blit(canvas, (0, 0))
             _e = _out_cubic(_vp)
             if _VT["kind"] == "slide":
-                # header and footer stay put; only the content area moves. The old screen stays underneath and the new
-                # one glides in over it (ease-out, fading in quickly), so there is never a dip to black or a gap.
                 _r = pygame.Rect(0, 66, W, H - 66 - 40)
                 _q = 1.0 - (1.0 - _vp) ** 5
                 canvas.set_clip(_r)
@@ -4866,7 +4837,7 @@ def main():
             pygame.mixer.music.stop()
     except Exception:
         pass
-    _BOOST.restore()  # a game launch records the current governors to restore them later
+    _BOOST.restore()
     if not windowed:
         fbout.set_graphics(False)
     pygame.quit()

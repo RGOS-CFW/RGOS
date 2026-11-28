@@ -14,7 +14,7 @@ Environment: RGOS_DRM_DEV (/dev/dri/card0).
 import ctypes, fcntl, mmap, os, struct
 
 DRM_DEV = os.environ.get("RGOS_DRM_DEV", "/dev/dri/card0")
-FOURCC_ARGB8888 = 0x34325241          # 'AR24'
+FOURCC_ARGB8888 = 0x34325241
 CAP_UNIVERSAL_PLANES, CAP_ATOMIC = 2, 3
 PLANE_OVERLAY = 0
 
@@ -64,7 +64,7 @@ class DrmOverlay:
         except OSError as e:
             raise DrmError("cannot open %s: %r" % (dev or DRM_DEV, e))
         try:
-            self._ioctl(IO_DROP_MASTER, 0, quiet=True)      # never keep master: the game must get/keep it
+            self._ioctl(IO_DROP_MASTER, 0, quiet=True)
             for cap in (CAP_UNIVERSAL_PLANES, CAP_ATOMIC):
                 self._ioctl(IO_SET_CLIENT_CAP, bytearray(struct.pack("<QQ", cap, 1)))
             self.crtc_id, self.crtc_index, self.size = self._active_crtc()
@@ -75,7 +75,6 @@ class DrmOverlay:
             self.close()
             raise
 
-    # -- low level -------------------------------------------------------------------------------------------
     def _ioctl(self, req, arg, quiet=False):
         try:
             fcntl.ioctl(self.fd, req, arg, True) if isinstance(arg, bytearray) else fcntl.ioctl(self.fd, req, arg)
@@ -101,7 +100,7 @@ class DrmOverlay:
             c = bytearray(104)
             struct.pack_into("<I", c, 12, cid)
             self._ioctl(IO_GETCRTC, c)
-            if struct.unpack_from("<I", c, 32)[0]:                     # mode_valid
+            if struct.unpack_from("<I", c, 32)[0]:
                 hd, vd = struct.unpack_from("<H", c, 36 + 4)[0], struct.unpack_from("<H", c, 36 + 14)[0]
                 if hd and vd:
                     return cid, i, (hd, vd)
@@ -168,8 +167,8 @@ class DrmOverlay:
                     kind = v
                 if name == "pixel blend mode":
                     blend = enums.get("Coverage")
-            rank = 0 if kind == PLANE_OVERLAY else 1               # an overlay plane, never the game's primary
-            if kind == 2 or "FB_ID" not in props:                  # cursor planes are too small / not ours
+            rank = 0 if kind == PLANE_OVERLAY else 1
+            if kind == 2 or "FB_ID" not in props:
                 continue
             if best is None or rank < best[0]:
                 best = (rank, pid, props, blend)
@@ -177,7 +176,6 @@ class DrmOverlay:
             raise DrmError("no free overlay plane that takes ARGB8888")
         return best[1], best[2], best[3]
 
-    # -- picture ---------------------------------------------------------------------------------------------
     def _free_buffer(self):
         if self.fb_id:
             self._ioctl(IO_RMFB, bytearray(struct.pack("<I", self.fb_id)), quiet=True)

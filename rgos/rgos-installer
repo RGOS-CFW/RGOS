@@ -29,12 +29,12 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import installer  # noqa: E402
-import uimotion  # noqa: E402
-import uiboost  # noqa: E402
+import installer
+import uimotion
+import uiboost
 
 BG, PANEL, ACCENT = (20, 19, 16), (36, 33, 27), (240, 184, 0)
-SEL_BG = (84, 70, 20)                       # the launcher's MustardOS selected-tile colour
+SEL_BG = (84, 70, 20)
 EDGE, PANEL_HI = (58, 54, 44), (52, 47, 36)
 TEXT, DIM, OK, BAD = (245, 238, 220), (158, 148, 118), (126, 217, 120), (255, 99, 71)
 BTN_A, BTN_B, BTN_START = 0x131, 0x130, 0x13b
@@ -42,11 +42,11 @@ KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT = 0x220, 0x221, 0x222, 0x223
 EV_KEY, EV_ABS, ABS_HAT0X, ABS_HAT0Y = 1, 3, 0x10, 0x11
 CHOICES = ("install", "poweroff")
 CHOICE_LABELS = {"install": "Install", "poweroff": "Power off"}
-FORMAT_CHOICES = installer.ROMS_FORMATS    # fat32, exfat, ext4: the rows of the popup, top to bottom
+FORMAT_CHOICES = installer.ROMS_FORMATS
 REBOOT_DELAY = 4.0
 CHOICE_SUBS = {"install": "Pick a storage format, then install RG OS", "poweroff": "Switch the console off, nothing is changed"}
-FRAME_FAST, FRAME_NORMAL, FRAME_IDLE = 1 / 60, 1 / 30, 1 / 15    # the launcher's rates: moving / just used / left alone
-CONSOLE_FADE = 0.35                         # the welcome screen fades into the install console this slowly
+FRAME_FAST, FRAME_NORMAL, FRAME_IDLE = 1 / 60, 1 / 30, 1 / 15
+CONSOLE_FADE = 0.35
 
 
 def colors():
@@ -182,9 +182,9 @@ def draw(pg, canvas, size, fonts, snap, t, countdown=None):
 CON_BG = (0, 0, 0)
 CON_COL = {"info": (40, 225, 80), "ok": (150, 255, 170), "warn": (235, 190, 40), "err": BAD, "dim": (0, 125, 45),
            "hex": (0, 165, 60)}
-CONSOLE_SECONDS = (10.0, 15.0)    # the fake exploit takes at least this long (picked at random per run)
-CONSOLE_KEEP = 300                # lines remembered; only the last screenful is ever drawn
-FINAL_GAP = 0.35                  # seconds between the closing lines
+CONSOLE_SECONDS = (10.0, 15.0)
+CONSOLE_KEEP = 300
+FINAL_GAP = 0.35
 
 
 def console_script(rng, device_name=""):
@@ -357,7 +357,6 @@ def draw_console(pg, canvas, size, font, feed, snap, t, countdown=None, mo=None)
         canvas.blit(font.render(label, True, CON_COL["ok"]), (pad, y))
         if int(t * 2) % 2 == 0:
             pg.draw.rect(canvas, CON_COL["ok"], (pad + font.size(label)[0], y + 2, max(6, font.size("M")[0]), lh - 4))
-    # the real install progress, as a thin bar above the footer text
     frac = max(0.0, min(1.0, snap.get("fraction", 0.0) or 0.0))
     if mo is not None:
         frac = max(0.0, min(1.0, mo.val("progress", frac, 8.0)))
@@ -444,7 +443,7 @@ def draw_format_popup(pg, canvas, size, fonts, sel, device="", mo=None):
         hl, _lift = mo.button(canvas, box, SEL_BG if on else PANEL, 12, 3, on, ("fmt", i))
         fg, sub = uimotion.mix(DIM, TEXT, hl), uimotion.mix(DIM, (200, 190, 160), hl)
         cx, cy = box[0] + 26, box[1] + (row_h - 8) // 2
-        pg.draw.circle(canvas, uimotion.mix(DIM, ACCENT, hl), (cx, cy), 9, 2)       # radio dot, fills as the row is selected
+        pg.draw.circle(canvas, uimotion.mix(DIM, ACCENT, hl), (cx, cy), 9, 2)
         if hl > 0:
             pg.draw.circle(canvas, ACCENT, (cx, cy), max(1, int(5 * hl)))
         canvas.blit(f_row.render(installer.FORMAT_LABELS[key], True, fg), (box[0] + 50, box[1] + 6))
@@ -483,7 +482,7 @@ def draw_icon(pg, canvas, kind, cx, cy, r, col):
                                            (cx + r, cy + int(r * 0.95)), (cx + r, cy + int(r * 0.15))], w)
     else:
         rect = (cx - r, cy - r + int(r * 0.15), 2 * r, 2 * r)
-        gap = 0.65  # radians left open at the top
+        gap = 0.65
         pg.draw.arc(canvas, col, rect, math.pi / 2 + gap, math.pi / 2 + 2 * math.pi - gap, w)
         pg.draw.line(canvas, col, (cx, cy - r), (cx, cy - int(r * 0.1)), w)
 
@@ -557,7 +556,7 @@ def show_headless(inst):
 
 
 def main():
-    boost = uiboost.UiBoost()      # CPU / GPU clocks up while the person uses the menu; always put back before leaving
+    boost = uiboost.UiBoost()
     try:
         return run(boost)
     finally:
@@ -587,7 +586,7 @@ def run(boost):
         mono = pygame.font.Font(mono_path, 14) if os.path.exists(mono_path) else pygame.font.Font(None, 20)
         pads = evpad.EvPads()
         mo = uimotion.Motion(pygame, (W, H), colors())
-    except Exception as e:  # pygame / framebuffer problem: install anyway
+    except Exception as e:
         installer.log("installer screen unavailable (%s); running without it" % e)
         return show_headless(inst)
 
@@ -633,7 +632,6 @@ def run(boost):
     def show_console(feed, snap, t, countdown):
         frame(lambda: draw_console(pygame, canvas, (W, H), mono, feed, snap, t, countdown, mo=mo), "console", CONSOLE_FADE)
 
-    # welcome screen: nothing on the card is touched until Install is chosen and a ROMS format has been picked
     sel = 0
     fmt_sel = FORMAT_CHOICES.index(installer.DEFAULT_ROMS_FORMAT)
     fmt = None
@@ -649,7 +647,6 @@ def run(boost):
             return installer.EXIT_POWEROFF
         if choice == "install":
             installer.log("person chose Install")
-            # popup: which file system for the ROMS partition? B returns to the welcome screen
             while True:
                 show(draw_format_popup, fmt_sel, installer.device_id())
                 pads.wait(pace())

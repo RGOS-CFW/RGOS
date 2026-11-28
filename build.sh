@@ -3,7 +3,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ALL_DEVICES=(h700-ddr3 h700-ddr4 rg-rotate miniloong)
-H700_CONSOLES=(rg34xxsp rg35xxh rg35xxsp)   # consoles the H700 images know; the one in your hands is picked at boot from the device tree
+H700_CONSOLES=(rg34xxsp rg35xxh rg35xxsp)
 
 usage() {
   cat <<EOF
@@ -95,8 +95,7 @@ case "$DEVICE" in
     ;;
   miniloong)
     DEVICE_DESC="MiniLoong Pocket 1 (Rockchip RK3566)"
-    PTABLE=dos   # confirmed against the real image right after it is attached (see "Detecting the partition table")
-    # The AURKNIX (ROCKNIX fork) "Specific" RK3566 image is the one that carries the MiniLoong Pocket 1 device tree.
+    PTABLE=dos
     ROCKNIX_RK3566_VERSION="${ROCKNIX_RK3566_VERSION:-20260809}"
     BASE_URL="https://github.com/AveyondFly/distribution_rocknix/releases/download/${ROCKNIX_RK3566_VERSION}/AURKNIX-RK3566.aarch64-${ROCKNIX_RK3566_VERSION}-Specific.img.gz"
     MINILOONG_DTB="${MINILOONG_DTB:-miniloong}"
@@ -109,67 +108,39 @@ echo "==> Device: $DEVICE_DESC  (mode: $MODE)"
 ROCKNIX_URL="${ROCKNIX_URL:-$BASE_URL}"
 DEBIAN_SUITE="${DEBIAN_SUITE:-trixie}"
 DEBIAN_MIRROR="${DEBIAN_MIRROR:-http://deb.debian.org/debian}"
-# cores.conf pins the version of each core (<CORE>_REF = tag, branch or commit; empty = latest). tools/cores-lib.sh reads it.
 source "$HERE/tools/cores-lib.sh"; load_cores_conf
 CORES_LOG="$HERE/work/$DEVICE/cores-built.txt"
 PSX_REPO="${PSX_REPO:-https://github.com/libretro/pcsx_rearmed.git}"
 GENESIS_REPO="${GENESIS_REPO:-https://github.com/libretro/Genesis-Plus-GX.git}"
 GC_REPO="${GC_REPO:-https://github.com/libretro/dolphin.git}"
-# Dreamcast: the Debian RetroArch is a GLES build, the libretro buildbot Flycast is desktop-GL only (it dies with "Requesting
-# OpenGL context, but RetroArch is compiled against OpenGLES"), so Flycast is built here as a GLES core. DC_REPO=none skips it.
 DC_REPO="${DC_REPO:-https://github.com/flyinghead/flycast.git}"
 DC_MAKE_ARGS="${DC_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
-# Compiler flags for every Flycast build (a Dreamcast emulator is CPU-bound on these SoCs: Cortex-A53/A55 class). -O3 plus
-# scheduling for an in-order/A55 core; override with DC_OPT="..." (e.g. add -flto, needs plenty of RAM when linking).
 DC_OPT="${DC_OPT:--O3 -mtune=cortex-a55 -fno-plt -fomit-frame-pointer}"
-# DC_BUILD=make|cmake forces one Flycast build system (default: Makefile if the tree has one, then CMake).
-# DC_REQUIRED=1 makes a failed Flycast build stop the whole build instead of producing an image without Dreamcast.
-# Nintendo 64: Mupen64Plus-Next is built here as a GLES core for the same reason as Flycast (RetroArch in the image is a GLES
-# build). N64_REPO=none skips it; N64_MAKE_ARGS changes the make arguments (aarch64 gets the ARM64 dynarec automatically);
-# N64_REQUIRED=1 makes a failed build stop the whole build instead of producing an image without Nintendo 64.
 N64_REPO="${N64_REPO:-https://github.com/libretro/mupen64plus-libretro-nx.git}"
 N64_MAKE_ARGS="${N64_MAKE_ARGS:-platform=unix FORCE_GLES=1}"
-# Sega Saturn: exactly one core is pre-installed, YabaSanshiro (the one built for ARM handhelds). The other Saturn cores
-# (Yabause, Beetle Saturn) are not built into the image: they are offered by Tools > Core Installer.
-# SATURN_REPO=none skips it; SATURN_BRANCH is the branch to clone (empty = the default branch); SATURN_MAKE_DIR is the folder of the core's libretro Makefile inside the repo;
-# SATURN_MAKE_ARGS changes the make arguments; SATURN_REQUIRED=1 makes a failed build stop the whole build.
-SATURN_REPO="${SATURN_REPO:-https://github.com/libretro/yabause.git}"   # the libretro YabaSanshiro port lives on the "yabasanshiro" branch of libretro/yabause
+SATURN_REPO="${SATURN_REPO:-https://github.com/libretro/yabause.git}"
 SATURN_BRANCH="${SATURN_BRANCH:-yabasanshiro}"
 SATURN_MAKE_DIR="${SATURN_MAKE_DIR:-yabause/src/libretro}"
 SATURN_MAKE_ARGS="${SATURN_MAKE_ARGS:-platform=unix}"
-# PICO-8 (fantasy console, `roms/pico8/`, .p8 and .p8.png carts): fake-08 (default) and retro8 are built as libretro cores; either
-# is enough, and each is best effort. PICO8_REPO is fake-08's repo, PICO8_ALT_REPO retro8's (set one to none to skip that core,
-# or PICO8_REPO=none PICO8_ALT_REPO=none to skip PICO-8); PICO8_MAKE_DIR is the folder of fake-08's libretro Makefile;
-# PICO8_REQUIRED=1 makes a build with neither core stop the whole build. Neither emulator needs a BIOS or the Lexaloffle runtime.
 PICO8_REPO="${PICO8_REPO:-https://github.com/jtothebell/fake-08.git}"
 PICO8_ALT_REPO="${PICO8_ALT_REPO:-https://github.com/libretro/retro8.git}"
 PICO8_MAKE_DIR="${PICO8_MAKE_DIR:-platform/libretro}"
 PICO8_MAKE_ARGS="${PICO8_MAKE_ARGS:-platform=unix}"
-# Standalone Flycast (Dreamcast, started by RG OS itself instead of RetroArch): built from DC_REPO as an OpenGL ES program
-# and installed as /usr/local/bin/flycast. DC_STANDALONE=0 skips it; DC_SA_CMAKE_ARGS adds CMake arguments;
-# DC_SA_REQUIRED=1 makes a failed build stop the whole build.
 DC_STANDALONE="${DC_STANDALONE:-1}"
 DC_SA_CMAKE_ARGS="${DC_SA_CMAKE_ARGS:-}"
 STELLA_REPO="${STELLA_REPO:-https://github.com/libretro/stella2014-libretro.git}"
 ATARI800_REPO="${ATARI800_REPO:-https://github.com/libretro/libretro-atari800.git}"
 PROSYSTEM_REPO="${PROSYSTEM_REPO:-https://github.com/libretro/prosystem-libretro.git}"
-# Arcade: MAME 2003-Plus (the handheld-friendly MAME core) is built as an extra next to FinalBurn Neo. MAME2003_REPO=none skips it.
-# Full current MAME is too heavy to build here: use "sudo ./build-cores.sh mame".
 MAME2003_REPO="${MAME2003_REPO:-https://github.com/libretro/mame2003-plus-libretro.git}"
-# GameCube (Dolphin libretro): RG Rotate and the Allwinner H700 consoles (same list as GC_DEVICES in rgos/menu.py).
 GC_DEVICE=0
 case "$DEVICE" in rg-rotate|h700-ddr3|h700-ddr4) GC_DEVICE=1 ;; esac
 (( GC_DEVICE )) || GC_REPO=none
-# Smallest possible image: unused stock ROCKNIX files are dropped (PRUNE_ROCKNIX) and the image is laid out again with a boot
-# partition that fits its content plus BOOT_HEADROOM_MB (COMPACT_IMAGE), instead of the stock ~2.2 GB layout.
 COMPACT_IMAGE="${COMPACT_IMAGE:-1}"; PRUNE_ROCKNIX="${PRUNE_ROCKNIX:-1}"; BOOT_HEADROOM_MB="${BOOT_HEADROOM_MB:-auto}"
 FIRMWARE_KEEP="${FIRMWARE_KEEP:-}"; PRUNE_BOOT_EXTRA="${PRUNE_BOOT_EXTRA:-}"
 [[ "$COMPACT_IMAGE" == 0 || "$COMPACT_IMAGE" == 1 ]] || { echo "COMPACT_IMAGE must be 0 or 1" >&2; exit 1; }
 [[ "$PRUNE_ROCKNIX" == 0 || "$PRUNE_ROCKNIX" == 1 ]] || { echo "PRUNE_ROCKNIX must be 0 or 1" >&2; exit 1; }
 [[ "$BOOT_HEADROOM_MB" =~ ^([0-9]+|auto)$ ]] || { echo "BOOT_HEADROOM_MB must be a whole number of MiB or auto" >&2; exit 1; }
 RGOS_INITRD="${RGOS_INITRD:-1}"
-# 1 (default): the image carries /rgos-wipe-roms, so the first boot after FLASHING erases the old ROMS partition left on the card
-# (flashing only rewrites the image area; ROMS lives behind it). 0: a reflash keeps games, saves and settings.
 RGOS_WIPE_ROMS="${RGOS_WIPE_ROMS:-1}"
 [[ "$RGOS_WIPE_ROMS" == 0 || "$RGOS_WIPE_ROMS" == 1 ]] || { echo "RGOS_WIPE_ROMS must be 0 or 1" >&2; exit 1; }
 [[ "$RGOS_INITRD" == 0 || "$RGOS_INITRD" == 1 ]] || { echo "RGOS_INITRD must be 0 or 1" >&2; exit 1; }
@@ -199,7 +170,6 @@ LOOP=""
 cleanup() { set +e; mountpoint -q "$WORK/mnt" && umount "$WORK/mnt"; [[ -n "$LOOP" ]] && losetup -d "$LOOP"; }
 trap cleanup EXIT
 
-# The stock image is downloaded once and reused by every build. Only "build.sh update-img" throws it away.
 fetch_stock() {
   echo "==> Downloading the stock ROCKNIX image for $DEVICE"; echo "    $ROCKNIX_URL"
   rm -f "$RX_GZ.part" "$RX_IMG.part"
@@ -252,8 +222,6 @@ if [[ "$DEVICE" == "miniloong" ]]; then
   [[ "$PT_LABEL" == dos ]] || { echo "!! the RK3566 stock image is '${PT_LABEL:-unknown}', not MBR (dos). rgos-roms only knows MBR (ROMS = partition 3) and the RG Rotate GPT layout, so ROMS would not be created. Paste 'sfdisk -d' of the image and the layout can be added." >&2; exit 1; }
 fi
 
-# Every chipset works like ROCKNIX: all stock device trees stay on the boot partition, NO dtb.img ships, and extlinux.conf loads
-# /dtb.img. After flashing the user copies the .dtb of the console to the root of the boot partition and renames it dtb.img.
 MEXT="$WORK/mnt/extlinux/extlinux.conf"; [[ -f "$MEXT" ]] || MEXT="$WORK/mnt/extlinux.conf"
 [[ -f "$MEXT" ]] || { echo "!! no extlinux.conf on the stock boot partition"; exit 1; }
 rm -f "$WORK/mnt/dtb.img"
@@ -287,8 +255,6 @@ if [[ "$DEVICE" == rg-rotate || "$DEVICE" == miniloong ]]; then
 fi
 
 if [[ "$DEVICE" == h700-* ]]; then
-  # Like ROCKNIX: every device tree stays in device_trees/ and there is NO dtb.img. The user copies the .dtb of the console to
-  # the root of the boot partition as dtb.img after flashing; extlinux.conf loads /dtb.img and RG OS reads the tree to find the console.
   [[ -d "$WORK/mnt/device_trees" ]] || { echo "!! the stock image has no device_trees/ folder on the boot partition ($(ls "$WORK/mnt" | tr '\n' ' '))"; exit 1; }
   rm -f "$WORK/mnt/dtb.img"
   for c in "${H700_CONSOLES[@]}"; do
@@ -334,7 +300,7 @@ mkdir -p "$ROOTFS/usr/sbin"; printf '#!/bin/sh\nexit 101\n' > "$ROOTFS/usr/sbin/
 chroot "$ROOTFS" /debootstrap/debootstrap --second-stage
 rm -f "$ROOTFS/usr/sbin/policy-rc.d"
 chroot "$ROOTFS" sh -c "dpkg-query -W -f='\${Package}\n' | xargs -r apt-mark manual" >/dev/null 2>&1 || true
-echo "${DEVICE%-ddr[34]}-rgos" > "$ROOTFS/etc/hostname"   # H700: rgos-init sets <console>-rgos once the console is known
+echo "${DEVICE%-ddr[34]}-rgos" > "$ROOTFS/etc/hostname"
 
 echo "root:rgos" | chroot "$ROOTFS" chpasswd || echo "!! could not set the default root password"
 rm -f "$ROOTFS"/etc/dropbear/dropbear_*_host_key "$ROOTFS"/etc/dropbear/dropbear_*_host_key.pub 2>/dev/null
@@ -356,15 +322,11 @@ for c in $(find "$WORK/system" -maxdepth 9 -type d -path '*lib/firmware' 2>/dev/
 done
 echo "==> Firmware directory: ${FWDIR:-NONE FOUND} ($FWBEST files)"
 [[ -n "$FWDIR" ]] && { mkdir -p "$ROOTFS/lib/firmware"; cp -a "$FWDIR"/. "$ROOTFS/lib/firmware/"; }
-# The stock SYSTEM can carry firmware in more than one directory (the Bluetooth blobs are not always in the biggest one):
-# merge the others in without overwriting anything already copied.
 for c in "${FWOTHER[@]}"; do
   [[ "$c" == "$FWDIR" ]] && continue
   echo "==> Merging extra firmware directory: $c"
   mkdir -p "$ROOTFS/lib/firmware"; cp -an "$c"/. "$ROOTFS/lib/firmware/" || true
 done
-# The kernel's btrtl driver (Realtek RTL8821CS on the H700 handhelds) asks for rtl_bt/<chip>_fw.bin and rtl_bt/<chip>_config.bin;
-# Realtek's vendor layout is rtlbt/<chip>_fw and rtlbt/<chip>_config, which the kernel never looks at. Alias them.
 if [[ -d "$ROOTFS/lib/firmware/rtlbt" ]]; then
   for f in "$ROOTFS"/lib/firmware/rtlbt/rtl*_fw "$ROOTFS"/lib/firmware/rtlbt/rtl*_config; do
     [[ -f "$f" ]] || continue
@@ -379,9 +341,6 @@ case "$DEVICE" in
         || echo "!! Bluetooth firmware rtl_bt/$f.bin is not in the image: the H700's RTL8821CS adapter cannot initialise without it (install firmware-realtek / linux-firmware into the rootfs, or drop the file into /lib/firmware/rtl_bt)"
     done ;;
 esac
-# The stock ROCKNIX firmware set covers hardware that cannot exist on these handhelds (PC/server GPUs, Intel/Qualcomm radios,
-# datacenter NICs). It is copied from the stock SYSTEM, so it is dropped here; everything a handheld can have stays
-# (Realtek, Broadcom, MediaTek, Atheros, Unisoc, AIC, Mali, regulatory.db, ...). FIRMWARE_KEEP="name ..." keeps entries of the list.
 if [[ "$PRUNE_ROCKNIX" == 1 && -d "$ROOTFS/lib/firmware" ]]; then
   FW_BEFORE="$(du -sk "$ROOTFS/lib/firmware" | cut -f1)"
   for pat in amdgpu radeon nvidia i915 xe intel amd amd-ucode amdnpu amdtee 'iwlwifi-*' qcom mellanox netronome qed bnx2 bnx2x \
@@ -389,7 +348,6 @@ if [[ "$PRUNE_ROCKNIX" == 1 && -d "$ROOTFS/lib/firmware" ]]; then
     case " $FIRMWARE_KEEP " in *" $pat "*) continue ;; esac
     find "$ROOTFS/lib/firmware" -maxdepth 1 -name "$pat" -exec rm -rf {} + 2>/dev/null || true
   done
-  # relative links that pointed into a removed directory (absolute ones are left alone: they do not resolve on the build host)
   find "$ROOTFS/lib/firmware" -type l ! -lname '/*' -xtype l -delete 2>/dev/null || true
   echo "==> Unused stock firmware removed: $(( FW_BEFORE / 1024 )) MiB -> $(( $(du -sk "$ROOTFS/lib/firmware" | cut -f1) / 1024 )) MiB"
 fi
@@ -421,9 +379,6 @@ for f in usr/sbin/dropbear usr/bin/dropbearkey usr/lib/openssh/sftp-server usr/b
   [[ -e "$ROOTFS/$f" || -e "$ROOTFS/usr/$f" ]] || echo "!! $f is missing from the image"
 done
 ls "$ROOTFS"/usr/libexec/bluetooth/bluetoothd "$ROOTFS"/usr/lib/bluetooth/bluetoothd >/dev/null 2>&1 || echo "!! bluetoothd is missing from the image"
-# /etc/rgos-chipset: what this image was built for (update tars and installer payloads are matched against it).
-# /etc/rgos-device: the console. Fixed for one-console chipsets; on the H700 it is a link to /run/rgos-device, which rgos-init
-# fills at every boot from the device tree (rgos-detect-device). The per-console files below are all installed.
 echo "$DEVICE" > "$ROOTFS/etc/rgos-chipset"
 case "$DEVICE" in
   h700-ddr3|h700-ddr4) ln -sfn /run/rgos-device "$ROOTFS/etc/rgos-device" ;;
@@ -443,7 +398,6 @@ case "$DEVICE" in
     ;;
   miniloong)
     mkdir -p "$ROOTFS/etc/rgos"
-    # one analog stick (left): the hub keeps the left stick axes, retroarch-miniloong.cfg leaves the right stick unbound
     echo '{"analog": true, "sticks": 1}' > "$ROOTFS/etc/rgos/input-$DEVICE.json"
     [[ -f "$HERE/config/retroarch-$DEVICE.cfg" ]] || { echo "!! $HERE/config/retroarch-$DEVICE.cfg missing"; exit 1; }
     cp "$HERE/config/retroarch-$DEVICE.cfg" "$ROOTFS/etc/rgos/retroarch-$DEVICE.cfg"
@@ -451,12 +405,9 @@ case "$DEVICE" in
 esac
 BOOTLOGO_RAW_DIR="$WORK/bootlogo-raw"
 rm -rf "$BOOTLOGO_RAW_DIR"
-# consoles of this chipset (one for every chipset except the H700)
 if [[ "$DEVICE" == h700-* ]]; then CONSOLES=("${H700_CONSOLES[@]}"); else CONSOLES=("$DEVICE"); fi
 for CONSOLE in "${CONSOLES[@]}"; do
   if [[ -f "$HERE/bootlogo/bootlogo-$CONSOLE.bmp" ]]; then
-    # raw copy of the boot logo, painted onto the framebuffer by the initramfs and by rgos-init long before the menu starts;
-    # the file name carries the resolution, so the logo that matches the screen is the one painted
     if python3 "$HERE/tools/bmp2fb.py" "$HERE/bootlogo/bootlogo-$CONSOLE.bmp" "$BOOTLOGO_RAW_DIR" >/dev/null; then
       mkdir -p "$ROOTFS/etc/rgos/bootlogo" && cp "$BOOTLOGO_RAW_DIR"/*.raw "$ROOTFS/etc/rgos/bootlogo/"
     else
@@ -468,12 +419,10 @@ if [[ -d "$HERE/splash" ]]; then
   mkdir -p "$ROOTFS/etc/rgos/splash"
   for CONSOLE in "${CONSOLES[@]}"; do
     SPLASH_DEV="$CONSOLE"
-    # fall back to the RG35XX H splash only when there is no splash-rg35xxsp.* file of any type
     [[ "$CONSOLE" == "rg35xxsp" ]] && ! compgen -G "$HERE/splash/splash-rg35xxsp.*" >/dev/null && SPLASH_DEV=rg35xxh
-    # MiniLoong Pocket 1: splash-miniloong.* is 960x720 (native panel size); the RG35XX H splash is only a fallback if it is removed
     [[ "$CONSOLE" == "miniloong" ]] && ! compgen -G "$HERE/splash/splash-miniloong.*" >/dev/null && SPLASH_DEV=rg35xxh
     for f in "$HERE"/splash/*; do
-      [[ -e "$f" ]] || continue   # empty splash/ folder: the glob stays literal and cp would abort the build
+      [[ -e "$f" ]] || continue
       b="$(basename "$f")"
       case "$b" in splash-*) [[ "$b" == splash-"$SPLASH_DEV".* ]] || continue; b="splash-$CONSOLE.${b#splash-"$SPLASH_DEV".}" ;; esac
       cp "$f" "$ROOTFS/etc/rgos/splash/$b"
@@ -487,9 +436,6 @@ if [[ -d "$HERE/music" ]]; then
 else
   echo "!! $HERE/music missing: no bundled launcher music in the image"
 fi
-# PortMaster preinstall: a read-only seed in the rootfs; rgos-session copies it to ROMS/roms/ports/PortMaster on the first boot
-# where that folder is missing, and PortMaster then updates itself in place there. PORTMASTER=0 skips it,
-# PORTMASTER_ZIP=<local PortMaster.zip> builds offline.
 PORTMASTER="${PORTMASTER:-1}"
 PORTMASTER_URL="${PORTMASTER_URL:-https://github.com/PortsMaster/PortMaster-GUI/releases/latest/download/PortMaster.zip}"
 if [[ "$PORTMASTER" == 1 ]]; then
@@ -512,9 +458,6 @@ if [[ "$PORTMASTER" == 1 ]]; then
     echo "!! no PortMaster zip: the image will NOT come with PortMaster (set PORTMASTER_ZIP=<file> to build offline)"
   fi
 fi
-# PortMaster's GUI runs on its LOVE 11.5 runtime (love.aarch64), which links the system libopenal.so.1 and does not bundle it;
-# without it PortMaster dies at start with "error while loading shared libraries: libopenal.so.1". libopenal1 is in EMU_PKGS;
-# the rest are the libraries LOVE commonly links, installed best-effort.
 if [[ "$PORTMASTER" == 1 ]]; then
   cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf" 2>/dev/null || true
   chroot "$ROOTFS" apt-get update >/dev/null 2>&1 || true
@@ -526,7 +469,6 @@ if [[ "$PORTMASTER" == 1 ]]; then
   if ! chroot "$ROOTFS" sh -c 'ldconfig -p 2>/dev/null | grep -q "libopenal.so.1"' && ! ls "$ROOTFS"/usr/lib/*/libopenal.so.1 >/dev/null 2>&1; then
     echo "!! libopenal.so.1 is not in the image: PortMaster will not start (install libopenal1 with EXTRA_PKGS=libopenal1)"; exit 1
   fi
-  # PortMaster.sh unpacks its pylibs.zip with unzip before the GUI starts; without it the GUI dies right after the splash.
   [[ -x "$ROOTFS/usr/bin/unzip" ]] || echo "!! unzip is not in the image: PortMaster may close right after its splash (a busybox unzip is linked in below as a fallback)"
 fi
 printf 'BUILD_ID=%s\n' "$(date +%Y%m%d-%H%M)" > "$ROOTFS/etc/rgos-release"
@@ -550,7 +492,6 @@ fi
 if ls "$HERE"/cores/*_libretro.so >/dev/null 2>&1; then
   echo "==> Copying prebuilt cores from cores/"; cp "$HERE"/cores/*_libretro.so "$LRDIR/"
 fi
-# Cores compiled ahead of time by ./build-cores.sh (work/cores): used instead of building them again below.
 CORES_DIR="$HERE/work/cores"
 if ls "$CORES_DIR"/*_libretro.so >/dev/null 2>&1 || [[ -x "$CORES_DIR/bin/flycast" ]]; then
   echo "==> Using the cores built by build-cores.sh ($CORES_DIR)"
@@ -563,7 +504,6 @@ if ls "$CORES_DIR"/*_libretro.so >/dev/null 2>&1 || [[ -x "$CORES_DIR/bin/flycas
     mkdir -p "$ROOTFS/usr/local/share/rgos/dolphin-emu"; rm -rf "$ROOTFS/usr/local/share/rgos/dolphin-emu/Sys"
     cp -r "$CORES_DIR/dolphin-Sys" "$ROOTFS/usr/local/share/rgos/dolphin-emu/Sys"
   fi
-  # runtime libraries the prebuilt cores link against (recorded by build-cores.sh)
   CORE_DEPS=""
   for f in "$CORES_DIR"/deps/*.txt; do
     [[ -e "$f" ]] || continue
@@ -603,7 +543,6 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
   if chroot "$ROOTFS" apt-get update && chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc g++ make; then
     if (( WANT_NGP )); then
       echo "==> Building the Neo Geo Pocket core (mednafen_ngp)"
-      # not "if ( ... )": bash ignores set -e inside an if condition
       set +e
       (
         set -e
@@ -619,7 +558,6 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
     fi
     if (( WANT_GEN )); then
       echo "==> Building the Genesis Plus GX core (genesis_plus_gx)"
-      # not "if ( ... )": bash ignores set -e inside an if condition
       set +e
       (
         set -e
@@ -636,7 +574,6 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
     fi
     if (( WANT_MAME )); then
       echo "==> Building the arcade core (mame2003_plus)"
-      # not "if ( ... )": bash ignores set -e inside an if condition
       set +e
       (
         set -e
@@ -651,8 +588,6 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
       else echo "!! could not build MAME 2003-Plus: arcade only has FinalBurn Neo (Core Installer) (put a prebuilt mame2003_plus_libretro.so in cores/ and rebuild)"; rm -f "$LRDIR/mame2003_plus_libretro.so"; fi
     fi
     if (( WANT_ATARI )); then
-      # Atari 2600 (Stella 2014), 5200 (Atari800) and 7800 (ProSystem): small, plain-Makefile cores. Each one is built on its own,
-      # so a failure only drops that one system from the menu.
       for spec in "stella2014|$STELLA_REPO|Atari 2600" "atari800|$ATARI800_REPO|Atari 5200" "prosystem|$PROSYSTEM_REPO|Atari 7800"; do
         IFS='|' read -r acore arepo asys <<<"$spec"
         [[ "$arepo" != none ]] && ! have_core "$acore" || continue

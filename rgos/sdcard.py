@@ -190,8 +190,6 @@ def sniff_fs(dev):
 
 
 def probe(dev):
-    # -p = low-level probe of the device itself. Plain blkid answers from /run/blkid + /etc/blkid.tab, which goes stale when
-    # a card is swapped or was probed before it was ready, and that made a perfectly good exFAT card look like "nothing".
     info = {}
     for args in (["blkid", "-p", "-o", "export", dev], ["blkid", "-o", "export", dev]):
         rc, out = sh(args, 8)
@@ -221,8 +219,7 @@ def pick_partition(disk, conf):
             continue
         known = fs in conf["fs"] and fs in MOUNT_TYPES
         if fs and not known:
-            continue                    # swap, an Android partition, a file system the user switched off, ...
-        # an unrecognised partition is still tried (fstype "auto"): better a failed mount in the log than a silently ignored card
+            continue
         cand = {"dev": dev, "disk": disk, "fstype": fs if known else "auto", "label": label, "sectors": sectors}
         key = (known, label.upper() == "ROMS", sectors)
         if best is None or key > best[0]:
@@ -411,7 +408,7 @@ def signature():
         if size > 0:
             try:
                 parts = tuple(sorted(x for x in os.listdir(os.path.join(SYS_BLOCK, n)) if x.startswith(n + "p")))
-            except OSError:         # card pulled between the size read and the listing: treat it as gone, keep the watcher alive
+            except OSError:
                 continue
             sig.append((n, size, parts))
     return tuple(sig)

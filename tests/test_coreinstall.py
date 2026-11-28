@@ -293,9 +293,9 @@ class ReinstallTests(unittest.TestCase):
             rows = {r["core"]: r for r in menu.core_installer_rows()}
         finally:
             menu.ROMS_ROOT, menu.installed_cores = old_root, old_inst
-        self.assertTrue(rows["gpsp"]["copy"])           # downloaded: X can reinstall it
-        self.assertFalse(rows["mgba"]["copy"])          # ships in the image: nothing to replace
-        self.assertFalse(rows["fbneo"]["copy"])         # not installed at all
+        self.assertTrue(rows["gpsp"]["copy"])
+        self.assertFalse(rows["mgba"]["copy"])
+        self.assertFalse(rows["fbneo"]["copy"])
 
     def test_the_menu_wires_x_to_reinstall_and_shows_it(self):
         src = open(os.path.join(helpers.RGOS, "menu.py"), encoding="utf-8").read()

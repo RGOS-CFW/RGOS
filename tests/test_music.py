@@ -33,9 +33,8 @@ class MusicTickTests(unittest.TestCase):
         walks = []
         real_walk = os.walk
         with mock.patch("os.walk", lambda *a, **k: (walks.append(1), real_walk(*a, **k))[1]):
-            for frame in range(200):  # ~3 s of frames at 60 fps
+            for frame in range(200):
                 menu._music_tick(now=1000.0 + frame / 60.0)
-        # one full pass over the 3 tracks (plus the immediate second pass), then it backs off
         self.assertLessEqual(self.pg.mixer.music.load.call_count, 6)
         self.assertLessEqual(len(walks), 2)
         self.assertLessEqual(len(self.logs), 6)
@@ -47,7 +46,7 @@ class MusicTickTests(unittest.TestCase):
         self.assertGreater(tried, 0)
         menu._music_tick(now=1000.0 + menu.MUSIC_RETRY_S - 5)
         self.assertEqual(self.pg.mixer.music.load.call_count, tried)
-        menu._music_retry_at[0] = 0.0  # backoff elapsed
+        menu._music_retry_at[0] = 0.0
         self.pg.mixer.music.load.side_effect = None
         menu._music_tick(now=2000.0)
         self.assertTrue(self.pg.mixer.music.play.called)
@@ -67,7 +66,7 @@ class MusicTickTests(unittest.TestCase):
     def test_next_track_starts_when_one_ends(self):
         menu._music_tick(now=1.0)
         self.assertEqual(self.pg.mixer.music.play.call_count, 1)
-        menu._music_tick(now=2.0)  # previous track finished, mixer idle again
+        menu._music_tick(now=2.0)
         self.assertEqual(self.pg.mixer.music.play.call_count, 2)
 
 

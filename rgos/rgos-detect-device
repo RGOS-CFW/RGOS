@@ -1,9 +1,4 @@
 #!/bin/sh
-# Prints the RG OS console id (rg34xxsp, rg35xxh, rg35xxsp, rg-rotate, miniloong) of the device tree the kernel booted with.
-# rgos-init runs it on the H700 images, whose /etc/rgos-device is a link to /run/rgos-device (one image for every console of
-# the chipset, the user copies the right .dtb to dtb.img). An unknown tree prints the default (rg35xxh) and says so on stderr.
-#   /boot/rgos-device.txt  forces a console (one of the ids above)
-#   RGOS_DT_DIR, RGOS_FORCE_FILE, RGOS_DEFAULT_DEVICE  override the paths / default (used by the tests)
 DT="${RGOS_DT_DIR:-/proc/device-tree}"
 FORCE="${RGOS_FORCE_FILE:-/boot/rgos-device.txt}"
 DEFAULT="${RGOS_DEFAULT_DEVICE:-rg35xxh}"
@@ -17,7 +12,6 @@ if [ -f "$FORCE" ]; then
     esac
 fi
 
-# the device tree's compatible strings are NUL separated; the model is a fallback
 ids=$( { tr '\0' ' ' < "$DT/compatible"; echo; tr '\0' ' ' < "$DT/model"; } 2>/dev/null | tr 'A-Z' 'a-z')
 case "$ids" in
     *rg34xx-sp*|*rg34xxsp*|*"rg34xx sp"*) echo rg34xxsp ;;

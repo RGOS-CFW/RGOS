@@ -15,7 +15,6 @@ def menu_system_ids():
 
 class SecondCardFolders(unittest.TestCase):
     def test_every_menu_system_gets_a_folder(self):
-        # A second SD card must get a roms/<system> folder for every system the menu lists (GameCube was missing).
         self.assertEqual(set(menu_system_ids()) - set(sdcard.SYSTEM_DIRS), set())
 
     def test_make_folders_creates_gc(self):
@@ -24,7 +23,6 @@ class SecondCardFolders(unittest.TestCase):
             self.assertTrue(os.path.isdir(os.path.join(mp, "roms", "gc")))
 
     def test_make_folders_fills_in_a_partial_roms_dir(self):
-        # a card that already has an (empty or half-filled) roms folder must still get every system folder
         with tempfile.TemporaryDirectory() as mp:
             os.makedirs(os.path.join(mp, "roms", "gba"))
             self.assertTrue(sdcard.make_folders(mp))
@@ -33,7 +31,7 @@ class SecondCardFolders(unittest.TestCase):
 
     def test_make_folders_reports_failure(self):
         with tempfile.TemporaryDirectory() as mp:
-            open(os.path.join(mp, "roms"), "w").close()  # a file where the folder should be
+            open(os.path.join(mp, "roms"), "w").close()
             self.assertFalse(sdcard.make_folders(mp))
 
     def test_readonly_detected_from_mount_table(self):
@@ -76,7 +74,6 @@ class CardDetection(unittest.TestCase):
         self.assertEqual(sdcard.sniff_fs(self._img(b"")), "")
 
     def test_exfat_card_found_even_when_blkid_is_silent(self):
-        # the RG35XXH-labelled exFAT card: blkid says nothing, the superblock sniff must still pick it
         conf = dict(sdcard.DEFAULTS)
         img = self._img(b"\xeb\x76\x90EXFAT   ")
         with mock.patch.object(sdcard, "partitions", return_value=[(img, 64 * 2048)]), \
@@ -100,7 +97,7 @@ class CardDetection(unittest.TestCase):
     def test_session_starts_watcher_before_portmaster_copy(self):
         with open(os.path.join(ROOT, "rgos", "rgos-session"), encoding="utf-8") as f:
             t = f.read()
-        self.assertLess(t.index("sdcard.py watch"), t.index("preinstalled PortMaster"))
+        self.assertLess(t.index("sdcard.py watch"), t.index("/opt/rgos/seed/PortMaster/PortMaster.sh"))
 
 
 if __name__ == "__main__":

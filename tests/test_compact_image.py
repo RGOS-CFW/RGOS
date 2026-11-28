@@ -13,7 +13,6 @@ SECTORS_2GB = 4194304
 
 
 def mbr_table():
-    # stock ROCKNIX-like MBR image: a 2 GiB FAT boot partition followed by a small STORAGE partition
     return {"label": "dos", "id": "0x12345678", "sectorsize": 512, "partitions": [
         {"num": 1, "node": "x.img1", "start": 32768, "size": SECTORS_2GB, "type": "c", "bootable": True},
         {"num": 2, "node": "x.img2", "start": 32768 + SECTORS_2GB, "size": 65536, "type": "83"}]}
@@ -35,11 +34,11 @@ class Layout(unittest.TestCase):
         t = mbr_table()
         layout, total = ci.plan_layout(t["partitions"], 262144, "dos")
         (p1, s1, z1), (p2, s2, z2) = layout
-        self.assertEqual((s1, z1), (32768, 262144))          # same start, new size
-        self.assertEqual(s2, 32768 + 262144)                 # directly after it
-        self.assertEqual(z2, 65536)                          # content size unchanged
-        self.assertEqual(total, s2 + z2)                     # dos: cut right after the last partition
-        self.assertLess(total * 512, 200 * 1024 * 1024)      # far below the stock 2.2 GB
+        self.assertEqual((s1, z1), (32768, 262144))
+        self.assertEqual(s2, 32768 + 262144)
+        self.assertEqual(z2, 65536)
+        self.assertEqual(total, s2 + z2)
+        self.assertLess(total * 512, 200 * 1024 * 1024)
 
     def test_gpt_keeps_partition_order_and_leaves_room_for_the_backup_table(self):
         t = gpt_table()
@@ -48,12 +47,12 @@ class Layout(unittest.TestCase):
         self.assertEqual(starts, sorted(starts))
         self.assertEqual([p["name"] for p, _, _ in layout], ["boot", "storage", "uboot"])
         last_end = layout[-1][1] + layout[-1][2]
-        self.assertGreaterEqual(total, last_end + 33)        # 32 entry sectors + header
+        self.assertGreaterEqual(total, last_end + 33)
         self.assertEqual(total % ci.ALIGN, 0)
 
     def test_moved_partitions_stay_aligned_and_never_overlap(self):
         for t, label in ((mbr_table(), "dos"), (gpt_table(), "gpt")):
-            layout, _ = ci.plan_layout(t["partitions"], 262144 + 123, label)   # an odd boot size
+            layout, _ = ci.plan_layout(t["partitions"], 262144 + 123, label)
             for (a, sa, za), (b, sb, zb) in zip(layout, layout[1:]):
                 self.assertGreaterEqual(sb, sa + za)
                 self.assertEqual(sb % ci.ALIGN, 0)
@@ -129,7 +128,6 @@ class BuildWiring(unittest.TestCase):
         self.assertIn("tools/compact-image.py", self.b)
         self.assertTrue(os.path.isfile(os.path.join(ROOT, "tools", "compact-image.py")))
         i = self.b.index("tools/compact-image.py")
-        # runs after the "update" exit and before the partition checks of the final image
         self.assertGreater(i, self.b.index('"$MODE" == "update" ]]; then\n  UPD_ID'))
         self.assertLess(i, self.b.index("Partitions in the image (partition 3"))
 
