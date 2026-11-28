@@ -420,3 +420,11 @@ class PinnedVersionTests(unittest.TestCase):
     def test_the_image_ships_cores_conf(self):
         with open(os.path.join(helpers.ROOT, "build.sh"), newline="") as f:
             self.assertIn("/etc/rgos/cores.conf", f.read())
+
+    def test_menu_rows_show_the_pinned_version(self):
+        self.write("N64_REF=v1.2\nGC_REF=0123456789abcdef0123456789abcdef01234567\n")
+        self.assertEqual(coreinstall.short_ref("0123456789abcdef0123456789abcdef01234567"), "0123456")
+        self.assertEqual(coreinstall.short_ref("v1.2"), "v1.2")
+        rows = {r["core"]: r for r in menu.core_installer_rows()}
+        self.assertEqual(rows["mupen64plus_next"]["version"], "v1.2")
+        self.assertEqual(rows["mgba"]["version"], "")

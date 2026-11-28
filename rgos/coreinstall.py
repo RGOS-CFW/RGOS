@@ -110,6 +110,11 @@ def pinned_ref(core, pins=None):
     return (read_pins() if pins is None else pins).get(var, "") if var else ""
 
 
+def short_ref(ref):
+    """A ref as shown on screen: a commit hash is cut to 7 characters, a tag or branch is left alone."""
+    return ref[:7] if re.fullmatch(r"[0-9a-f]{8,40}", ref or "") else (ref or "")
+
+
 def core_dir(roms_root):
     return os.path.join(roms_root, "cores")
 
