@@ -4,7 +4,7 @@
 usage: mkpayload.py OUTDIR ID DEVICE COMPONENT [COMPONENT ...]
   OUTDIR     receives manifest.json and one <component id>.tar.gz per component (copied to /rgos-payload on the boot partition)
   ID         build id, [A-Za-z0-9._-]{1,64}
-  DEVICE     rg34xxsp, rg35xxh, rg35xxsp, rg-rotate or miniloong (must match /etc/rgos-device on the device)
+  DEVICE     h700-ddr3, h700-ddr4, rg-rotate or miniloong (the chipset, must match /etc/rgos-chipset on the device)
   COMPONENT  "id|name|SRC_DIR|dest|target|if_missing"
                id          [A-Za-z0-9._-]{1,64}; also the file name of the archive and the name `skip=` in rgos-install.txt uses
                name        shown on the installer screen
@@ -73,7 +73,7 @@ def main(argv):
     out, bid, device = argv[1:4]
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", bid):
         sys.exit("bad id %r" % bid)
-    if device not in installer.DEVICES:
+    if device not in installer.DEVICES + installer.CONSOLES:
         sys.exit("unknown device %r (use one of: %s)" % (device, ", ".join(installer.DEVICES)))
     os.makedirs(out, exist_ok=True)
     comps = []

@@ -1,0 +1,31 @@
+#!/bin/sh
+# Prints the RG OS console id (rg34xxsp, rg35xxh, rg35xxsp, rg-rotate, miniloong) of the device tree the kernel booted with.
+# rgos-init runs it on the H700 images, whose /etc/rgos-device is a link to /run/rgos-device (one image for every console of
+# the chipset, the user copies the right .dtb to dtb.img). An unknown tree prints the default (rg35xxh) and says so on stderr.
+#   /boot/rgos-device.txt  forces a console (one of the ids above)
+#   RGOS_DT_DIR, RGOS_FORCE_FILE, RGOS_DEFAULT_DEVICE  override the paths / default (used by the tests)
+DT="${RGOS_DT_DIR:-/proc/device-tree}"
+FORCE="${RGOS_FORCE_FILE:-/boot/rgos-device.txt}"
+DEFAULT="${RGOS_DEFAULT_DEVICE:-rg35xxh}"
+
+if [ -f "$FORCE" ]; then
+    f=$(tr -dc 'a-z0-9-' < "$FORCE" 2>/dev/null | tr 'A-Z' 'a-z')
+    case "$f" in
+        rg34xxsp|rg35xxh|rg35xxsp|rg-rotate|miniloong) echo "$f"; echo "rgos-detect-device: forced by $FORCE" >&2; exit 0 ;;
+        "") ;;
+        *) echo "rgos-detect-device: ignoring unknown id '$f' in $FORCE" >&2 ;;
+    esac
+fi
+
+# the device tree's compatible strings are NUL separated; the model is a fallback
+ids=$( { tr '\0' ' ' < "$DT/compatible"; echo; tr '\0' ' ' < "$DT/model"; } 2>/dev/null | tr 'A-Z' 'a-z')
+case "$ids" in
+    *rg34xx-sp*|*rg34xxsp*|*"rg34xx sp"*) echo rg34xxsp ;;
+    *rg35xx-sp*|*rg35xxsp*|*"rg35xx sp"*) echo rg35xxsp ;;
+    *rg35xx-h*|*rg35xxh*|*"rg35xx h"*)    echo rg35xxh ;;
+    *miniloong*)                          echo miniloong ;;
+    *ums512*|*rg-rotate*|*"rg rotate"*)   echo rg-rotate ;;
+    *)
+        echo "rgos-detect-device: unknown device tree (${ids:-none found}); using $DEFAULT. Put the console id in rgos-device.txt on the boot partition to force one." >&2
+        echo "$DEFAULT" ;;
+esac

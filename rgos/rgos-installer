@@ -75,7 +75,7 @@ def header(pg, canvas, size, fonts, device="", step=None):
     pg.draw.rect(canvas, ACCENT, (m, 22, 8, 30), border_radius=3)
     canvas.blit(f_title.render("RG OS", True, TEXT), (m + 20, 18))
     canvas.blit(f_small.render("INSTALLER", True, ACCENT), (m + 20 + f_title.size("RG OS")[0] + 14, 36))
-    dev = installer.DEVICE_NAMES.get(device, device)
+    dev = installer.console_name(device) or device
     if dev:
         pw, ph = f_small.size(dev)[0] + 26, f_small.size(dev)[1] + 10
         pg.draw.rect(canvas, PANEL, (W - m - pw, 24, pw, ph), border_radius=ph // 2)
@@ -116,7 +116,7 @@ def draw(pg, canvas, size, fonts, snap, t, countdown=None):
     m = 28
     canvas.blit(f_title.render("RG OS", True, ACCENT), (m, 20))
     canvas.blit(f_small.render("Installer", True, DIM), (m + f_title.size("RG OS")[0] + 12, 34))
-    dev = installer.DEVICE_NAMES.get(snap["device"], snap["device"])
+    dev = installer.console_name() or installer.DEVICE_NAMES.get(snap["device"], snap["device"])
     if dev:
         s = f_small.render(dev, True, DIM)
         canvas.blit(s, (W - m - s.get_width(), 34))
@@ -667,7 +667,7 @@ def run(boost):
 
     inst = installer.Installer(fmt=fmt)
     start(inst)
-    device_name = installer.DEVICE_NAMES.get(installer.device_id(), "")
+    device_name = installer.console_name()
     feed = ConsoleFeed(time.time(), device_name)
     done_at = None
     while True:

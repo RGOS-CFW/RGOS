@@ -3,7 +3,7 @@
 
 usage: mkupdate.py OUT.tar ID DEVICE NAME=PATH [NAME=PATH ...]
   ID      build id, [A-Za-z0-9._-]{1,64}; an update whose id is already installed is skipped on the device
-  DEVICE  "rg-rotate", "rg34xxsp", "rg35xxh", "rg35xxsp" or "miniloong" (must match /etc/rgos-device on the device)
+  DEVICE  "h700-ddr3", "h700-ddr4", "rg-rotate" or "miniloong" (the chipset, must match /etc/rgos-chipset on the device)
   NAME    a boot-partition file name: SYSTEM, SYSTEM.md5, rgos-initrd.cpio, KERNEL, KERNEL.md5,
           dtb.img, device_trees/ums512-rg-rotate.dtb or extlinux/extlinux.conf
 Copy the tar to the update/ folder of the ROMS partition (or the boot partition) and reboot.

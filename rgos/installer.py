@@ -43,7 +43,8 @@ BOOT = os.environ.get("RGOS_BOOT_MNT", "/boot")
 ROMS = os.environ.get("RGOS_ROMS", "/media/roms")
 RUN = os.environ.get("RGOS_RUN", "/run/rgos")
 LOG_FILE = os.environ.get("RGOS_INSTALL_LOG", "/var/log/rgos-installer.log")
-DEVICE_FILE = os.environ.get("RGOS_DEVICE_FILE", "/etc/rgos-device")
+DEVICE_FILE = os.environ.get("RGOS_DEVICE_FILE", "/etc/rgos-device")      # the console (H700: found at boot from the device tree)
+CHIPSET_FILE = os.environ.get("RGOS_CHIPSET_FILE", "/etc/rgos-chipset")   # what the image was built for; payloads are matched against it
 ROMS_SCRIPT = os.environ.get("RGOS_ROMS_SCRIPT", "/opt/rgos/rgos-roms")
 
 # File systems offered for a new ROMS partition: id -> (menu label, one-line hint, what blkid reports once it is formatted)
@@ -66,10 +67,13 @@ FORMAT = 1
 MARGIN = 32 << 20           # free space that must be left on ROMS after everything is unpacked
 EXIT_REBOOT = 10            # exit status of rgos-installer: installed, reboot now
 EXIT_POWEROFF = 20          # exit status of rgos-installer: the person chose "Power off" on the welcome screen (same code as menu.py's EXIT_POWER)
-DEVICES = ("rg34xxsp", "rg35xxh", "rg35xxsp", "rg-rotate", "miniloong")
+DEVICES = ("h700-ddr3", "h700-ddr4", "rg-rotate", "miniloong")   # build.sh chipsets (payload manifests)
+CONSOLES = ("rg34xxsp", "rg35xxh", "rg35xxsp", "rg-rotate", "miniloong")   # what /etc/rgos-device can say
 CANVAS = {"rg-rotate": (720, 720), "rg34xxsp": (720, 480), "rg35xxh": (720, 540), "rg35xxsp": (720, 540), "miniloong": (720, 540)}
-DEVICE_NAMES = {"rg-rotate": "Anbernic RG Rotate", "rg34xxsp": "Anbernic RG34XXSP",
-                "rg35xxh": "Anbernic RG35XX H", "rg35xxsp": "Anbernic RG35XX SP", "miniloong": "MiniLoong Pocket 1"}
+DEVICE_NAMES = {"rg-rotate": "Anbernic RG Rotate", "h700-ddr3": "Allwinner H700 (DDR3)", "h700-ddr4": "Allwinner H700 (DDR4)",
+                "miniloong": "MiniLoong Pocket 1"}
+CONSOLE_NAMES = {"rg-rotate": "Anbernic RG Rotate", "rg34xxsp": "Anbernic RG34XXSP",
+                 "rg35xxh": "Anbernic RG35XX H", "rg35xxsp": "Anbernic RG35XX SP", "miniloong": "MiniLoong Pocket 1"}
 SHARED_DIRS = ("artwork", "bios", "config", "cores", "firmware", "music", "saves", "screenshots", "splash", "states", "update")
 # NOT created here: rgos-data. rgos-session copies the boot partition's settings there only when the folder is missing.
 
@@ -93,11 +97,29 @@ def log(msg):
 
 
 def device_id():
+    """The console (screen size, name on screen)."""
     try:
         with open(DEVICE_FILE) as f:
             return f.read().strip()
     except OSError:
         return ""
+
+
+def chipset_id():
+    """The chipset build the payload has to match; images without /etc/rgos-chipset use the console id as before."""
+    try:
+        with open(CHIPSET_FILE) as f:
+            c = f.read().strip()
+            if c:
+                return c
+    except OSError:
+        pass
+    return device_id()
+
+
+def console_name(dev=None):
+    dev = device_id() if dev is None else dev
+    return CONSOLE_NAMES.get(dev) or DEVICE_NAMES.get(dev, "")
 
 
 def safe_rel(name):
@@ -154,7 +176,7 @@ def load_manifest(pdir, device=None):
         raise InstallError("the installer payload is unreadable (%s)" % e)
     if not isinstance(man, dict) or man.get("format") != FORMAT:
         raise InstallError("the installer payload has an unknown format")
-    want = device if device is not None else device_id()
+    want = device if device is not None else chipset_id()
     if want and man.get("device") != want:
         raise InstallError("this payload is for %s, not %s" % (man.get("device"), want))
     if not isinstance(man.get("id"), str) or not ID_RE.match(man["id"]):
@@ -397,7 +419,7 @@ class Installer:
         self.fmt = fmt if fmt in ROMS_FORMATS else DEFAULT_ROMS_FORMAT
         self.partition = partition or (lambda: partition_roms(self.boot, self.fmt))
         self.mount = mount or (lambda dev: mount_roms(dev, self.roms))
-        self.device = device if device is not None else device_id()
+        self.device = device if device is not None else chipset_id()
         self.lock = threading.Lock()
         self.pdir = os.path.join(self.boot, PAYLOAD)
         self.opts = read_options(self.boot)

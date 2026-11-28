@@ -4,17 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       device:
-        description: Which device to build for
+        description: Which chipset to build for (H700 images cover the RG34XXSP, RG35XX H and RG35XX SP; copy your console's .dtb from device_trees/ to dtb.img after flashing)
         required: true
         type: choice
         options:
-          - rg34xxsp
-          - rg35xxh
-          - rg35xxsp
+          - h700-ddr4
+          - h700-ddr3
           - rg-rotate
           - miniloong
           - all
-        default: rg34xxsp
+        default: h700-ddr4
       artifact:
         description: What to build
         required: true
@@ -44,22 +43,6 @@ on:
         required: true
         type: boolean
         default: false
-      h700_ram:
-        description: RG34XXSP / RG35XX H / RG35XX SP only - RAM type of the console (the stock ROCKNIX U-Boot is built per RAM type; the wrong one gives a black screen and no boot)
-        required: true
-        type: choice
-        options:
-          - DDR4
-          - DDR3
-        default: DDR4
-      h700_panel:
-        description: RG34XXSP / RG35XX H / RG35XX SP only - device tree to use (alt = the -v2-panel / -rev6-panel tree; pick it if the screen stays black or shows garbage)
-        required: true
-        type: choice
-        options:
-          - standard
-          - alt
-        default: standard
       portmaster:
         description: preinstall PortMaster (and the libraries its LOVE runtime needs, such as libopenal1); off builds without it
         required: true
@@ -145,8 +128,6 @@ jobs:
           BUILD_PSX: ${{ inputs.build_psx }}
           BUILD_GC: ${{ inputs.build_gc }}
           ROCKNIX_URL_INPUT: ${{ inputs.rocknix_url }}
-          H700_RAM_INPUT: ${{ inputs.h700_ram }}
-          H700_PANEL_INPUT: ${{ inputs.h700_panel }}
           PORTMASTER_INPUT: ${{ inputs.portmaster }}
           EXTRA_PKGS_INPUT: ${{ inputs.extra_pkgs }}
         run: |
@@ -156,15 +137,9 @@ jobs:
           [[ "$BUILD_PSX" == "true" ]] || export PSX_REPO=none
           [[ "$BUILD_GC" == "true" ]] || export GC_REPO=none
           [[ -z "$ROCKNIX_URL_INPUT" ]] || export ROCKNIX_URL="$ROCKNIX_URL_INPUT"
-          export H700_RAM="$H700_RAM_INPUT"
-          if [[ "$H700_PANEL_INPUT" == "alt" ]]; then
-            export RG34XXSP_DTB=sun50i-h700-anbernic-rg34xx-sp-v2-panel
-            export RG35XXH_DTB=sun50i-h700-anbernic-rg35xx-h-rev6-panel
-            export RG35XXSP_DTB=sun50i-h700-anbernic-rg35xx-sp-rev6-panel
-          fi
           bash ./build.sh "$DEVICE" image
           if [[ "$DEVICE" == "all" ]]; then
-            test -s out/rg-rotate-rgos.img && test -s out/rg34xxsp-rgos.img && test -s out/rg35xxh-rgos.img && test -s out/rg35xxsp-rgos.img && test -s out/miniloong-rgos.img
+            test -s out/h700-ddr3-rgos.img && test -s out/h700-ddr4-rgos.img && test -s out/rg-rotate-rgos.img && test -s out/miniloong-rgos.img
           else
             test -s "out/$DEVICE-rgos.img"
           fi
@@ -193,8 +168,10 @@ jobs:
             for f in SYSTEM rgos-initrd.cpio extlinux/extlinux.conf extlinux/extlinux.conf.stock; do
               test -s "$mnt/$f" || { echo "$img: boot partition is missing $f" >&2; rc=1; }
             done
-            if [[ "$ptable" == dos && "$img" != *miniloong* ]]; then
-              test -s "$mnt/dtb.img" || { echo "$img: boot partition is missing dtb.img" >&2; rc=1; }
+            if [[ "$img" == *h700* ]]; then
+              # like ROCKNIX: every device tree is on the card, dtb.img is copied there by the user
+              ls "$mnt"/device_trees/*.dtb >/dev/null 2>&1 || { echo "$img: boot partition has no device_trees/*.dtb" >&2; rc=1; }
+              test ! -e "$mnt/dtb.img" || { echo "$img: boot partition must not ship a dtb.img" >&2; rc=1; }
             fi
             grep -q 'rdinit=/rgos-init' "$mnt/extlinux/extlinux.conf" || cmp -s "$mnt/extlinux/extlinux.conf" "$mnt/extlinux/extlinux.conf.stock" \
               || { echo "$img: extlinux.conf has no rdinit=/rgos-init and is not the stock one" >&2; rc=1; }
@@ -203,12 +180,11 @@ jobs:
             return $rc
           }
           case "${{ inputs.device }}" in
-            rg34xxsp)  verify out/rg34xxsp-rgos.img dos ;;
-            rg35xxh)   verify out/rg35xxh-rgos.img dos ;;
-            rg35xxsp)  verify out/rg35xxsp-rgos.img dos ;;
+            h700-ddr3) verify out/h700-ddr3-rgos.img dos ;;
+            h700-ddr4) verify out/h700-ddr4-rgos.img dos ;;
             rg-rotate) verify out/rg-rotate-rgos.img gpt ;;
             miniloong) verify out/miniloong-rgos.img dos ;;
-            all)       verify out/rg-rotate-rgos.img gpt; verify out/rg34xxsp-rgos.img dos; verify out/rg35xxh-rgos.img dos; verify out/rg35xxsp-rgos.img dos; verify out/miniloong-rgos.img dos ;;
+            all)       verify out/rg-rotate-rgos.img gpt; verify out/h700-ddr3-rgos.img dos; verify out/h700-ddr4-rgos.img dos; verify out/miniloong-rgos.img dos ;;
           esac
 
       - name: Verify PortMaster runtime libraries
@@ -261,8 +237,6 @@ jobs:
           BUILD_PSX: ${{ inputs.build_psx }}
           BUILD_GC: ${{ inputs.build_gc }}
           ROCKNIX_URL_INPUT: ${{ inputs.rocknix_url }}
-          H700_RAM_INPUT: ${{ inputs.h700_ram }}
-          H700_PANEL_INPUT: ${{ inputs.h700_panel }}
           PORTMASTER_INPUT: ${{ inputs.portmaster }}
           EXTRA_PKGS_INPUT: ${{ inputs.extra_pkgs }}
         run: |
@@ -273,15 +247,9 @@ jobs:
           [[ "$BUILD_PSX" == "true" ]] || export PSX_REPO=none
           [[ "$BUILD_GC" == "true" ]] || export GC_REPO=none
           [[ -z "$ROCKNIX_URL_INPUT" ]] || export ROCKNIX_URL="$ROCKNIX_URL_INPUT"
-          export H700_RAM="$H700_RAM_INPUT"
-          if [[ "$H700_PANEL_INPUT" == "alt" ]]; then
-            export RG34XXSP_DTB=sun50i-h700-anbernic-rg34xx-sp-v2-panel
-            export RG35XXH_DTB=sun50i-h700-anbernic-rg35xx-h-rev6-panel
-            export RG35XXSP_DTB=sun50i-h700-anbernic-rg35xx-sp-rev6-panel
-          fi
           bash ./build.sh "$DEVICE" installer
           if [[ "$DEVICE" == "all" ]]; then
-            for d in rg-rotate rg34xxsp rg35xxh rg35xxsp miniloong; do test -s "out/$d-rgos-installer.img"; done
+            for d in rg-rotate h700-ddr3 h700-ddr4 miniloong; do test -s "out/$d-rgos-installer.img"; done
           else
             test -s "out/$DEVICE-rgos-installer.img"
           fi
@@ -338,8 +306,6 @@ jobs:
           BUILD_GC: ${{ inputs.build_gc }}
           INCLUDE_EXTLINUX: ${{ inputs.update_extlinux }}
           ROCKNIX_URL_INPUT: ${{ inputs.rocknix_url }}
-          H700_RAM_INPUT: ${{ inputs.h700_ram }}
-          H700_PANEL_INPUT: ${{ inputs.h700_panel }}
           PORTMASTER_INPUT: ${{ inputs.portmaster }}
           EXTRA_PKGS_INPUT: ${{ inputs.extra_pkgs }}
         run: |
@@ -350,15 +316,9 @@ jobs:
           [[ "$BUILD_GC" == "true" ]] || export GC_REPO=none
           [[ "$INCLUDE_EXTLINUX" != "true" ]] || export UPDATE_EXTLINUX=1
           [[ -z "$ROCKNIX_URL_INPUT" ]] || export ROCKNIX_URL="$ROCKNIX_URL_INPUT"
-          export H700_RAM="$H700_RAM_INPUT"
-          if [[ "$H700_PANEL_INPUT" == "alt" ]]; then
-            export RG34XXSP_DTB=sun50i-h700-anbernic-rg34xx-sp-v2-panel
-            export RG35XXH_DTB=sun50i-h700-anbernic-rg35xx-h-rev6-panel
-            export RG35XXSP_DTB=sun50i-h700-anbernic-rg35xx-sp-rev6-panel
-          fi
           bash ./build.sh "$DEVICE" update
           if [[ "$DEVICE" == "all" ]]; then
-            test -s "out/rgos-update-rg-rotate-${UPDATE_ID}.tar" && test -s "out/rgos-update-rg34xxsp-${UPDATE_ID}.tar" && test -s "out/rgos-update-rg35xxh-${UPDATE_ID}.tar" && test -s "out/rgos-update-rg35xxsp-${UPDATE_ID}.tar" && test -s "out/rgos-update-miniloong-${UPDATE_ID}.tar" && test -s "out/rgos-update-rg35xxsp-${UPDATE_ID}.tar"
+            test -s "out/rgos-update-rg-rotate-${UPDATE_ID}.tar" && test -s "out/rgos-update-h700-ddr3-${UPDATE_ID}.tar" && test -s "out/rgos-update-h700-ddr4-${UPDATE_ID}.tar" && test -s "out/rgos-update-miniloong-${UPDATE_ID}.tar"
           else
             test -s "out/rgos-update-${DEVICE}-${UPDATE_ID}.tar"
           fi
