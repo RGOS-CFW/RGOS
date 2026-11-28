@@ -341,3 +341,82 @@ class MenuTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PinnedVersionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = helpers.sandbox()
+        self.dest = os.path.join(self.tmp, "cores")
+        self.conf = os.path.join(self.tmp, "cores.conf")
+        self.saved = (coreinstall.CORES_CONF, {k: os.environ.pop(k, None) for k in ("N64_REF", "RGOS_CORE_PIN_URL", "RGOS_CORE_URL")})
+        coreinstall.CORES_CONF = self.conf
+
+    def tearDown(self):
+        coreinstall.CORES_CONF = self.saved[0]
+        for k in ("N64_REF", "RGOS_CORE_PIN_URL", "RGOS_CORE_URL"):
+            os.environ.pop(k, None)
+        for k, v in self.saved[1].items():
+            if v is not None:
+                os.environ[k] = v
+
+    def write(self, text):
+        with open(self.conf, "w") as f:
+            f.write(text)
+
+    def test_reads_pins_like_the_build_does(self):
+        self.write("N64_REF = v1.2  # tag\nPSX_REF=\nBOGUS=1\nDC_REF=$(touch /tmp/x)\nGC_REF='abc1234'\n")
+        pins = coreinstall.read_pins()
+        self.assertEqual(pins, {"N64_REF": "v1.2", "PSX_REF": "", "GC_REF": "abc1234"})
+        self.assertEqual(coreinstall.pinned_ref("mupen64plus_next"), "v1.2")
+        self.assertEqual(coreinstall.pinned_ref("pcsx_rearmed"), "")
+        self.assertEqual(coreinstall.pinned_ref("gpsp"), "")
+
+    def test_environment_overrides_the_file_even_when_empty(self):
+        self.write("N64_REF=v1\n")
+        os.environ["N64_REF"] = "v2"
+        self.assertEqual(coreinstall.pinned_ref("mupen64plus_next"), "v2")
+        os.environ["N64_REF"] = ""
+        self.assertEqual(coreinstall.pinned_ref("mupen64plus_next"), "")
+
+    def test_no_conf_means_latest(self):
+        self.assertEqual(coreinstall.read_pins(), {})
+        op = serving({"/mupen64plus_next_libretro.so.zip": make_zip("mupen64plus_next_libretro.so", elf())})
+        coreinstall.download("mupen64plus_next", self.dest, "https://e.test", None, None, op)
+        self.assertEqual(op.seen, ["https://e.test/mupen64plus_next_libretro.so.zip"])
+
+    def test_pinned_core_is_fetched_from_its_version_folder(self):
+        self.write("N64_REF=v1.2\n")
+        op = serving({"/v1.2/mupen64plus_next_libretro.so.zip": make_zip("mupen64plus_next_libretro.so", elf())})
+        os.environ["RGOS_CORE_PIN_URL"] = "https://pins.test/cores/"
+        path = coreinstall.download("mupen64plus_next", self.dest, None, None, None, op)
+        self.assertEqual(op.seen, ["https://pins.test/cores/v1.2/mupen64plus_next_libretro.so.zip"])
+        self.assertTrue(os.path.isfile(path))
+
+    def test_pinned_core_never_falls_back_to_the_latest(self):
+        self.write("N64_REF=v1.2\n")
+        op = serving({"/mupen64plus_next_libretro.so.zip": make_zip("mupen64plus_next_libretro.so", elf())})
+        with self.assertRaisesRegex(coreinstall.CoreInstallError, "pins mupen64plus_next to v1.2"):
+            coreinstall.download("mupen64plus_next", self.dest, None, None, None, op)
+        self.assertEqual(op.seen, [])
+        os.environ["RGOS_CORE_PIN_URL"] = "https://pins.test"
+        op = serving({"/latest/mupen64plus_next_libretro.so.zip": make_zip("mupen64plus_next_libretro.so", elf())})
+        with self.assertRaisesRegex(coreinstall.CoreInstallError, "Version v1.2 not available"):
+            coreinstall.download("mupen64plus_next", self.dest, None, None, None, op)
+        self.assertEqual(op.seen, ["https://pins.test/v1.2/mupen64plus_next_libretro.so.zip"])
+        self.assertFalse(os.path.exists(os.path.join(self.dest, "mupen64plus_next_libretro.so")))
+
+    def test_unpinned_cores_still_use_the_latest_folder(self):
+        self.write("N64_REF=v1.2\n")
+        op = serving({"/gpsp_libretro.so.zip": make_zip("gpsp_libretro.so", elf())})
+        coreinstall.download("gpsp", self.dest, "https://e.test", None, None, op)
+        self.assertEqual(op.seen, ["https://e.test/gpsp_libretro.so.zip"])
+
+    def test_every_pinned_name_is_a_real_setting_of_the_build(self):
+        with open(os.path.join(helpers.ROOT, "tools", "cores-lib.sh")) as f:
+            lib = f.read()
+        for var in set(coreinstall.REF_VAR.values()):
+            self.assertIn(var, lib, var)
+
+    def test_the_image_ships_cores_conf(self):
+        with open(os.path.join(helpers.ROOT, "build.sh"), newline="") as f:
+            self.assertIn("/etc/rgos/cores.conf", f.read())

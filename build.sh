@@ -109,6 +109,9 @@ echo "==> Device: $DEVICE_DESC  (mode: $MODE)"
 ROCKNIX_URL="${ROCKNIX_URL:-$BASE_URL}"
 DEBIAN_SUITE="${DEBIAN_SUITE:-trixie}"
 DEBIAN_MIRROR="${DEBIAN_MIRROR:-http://deb.debian.org/debian}"
+# cores.conf pins the version of each core (<CORE>_REF = tag, branch or commit; empty = latest). tools/cores-lib.sh reads it.
+source "$HERE/tools/cores-lib.sh"; load_cores_conf
+CORES_LOG="$HERE/work/$DEVICE/cores-built.txt"
 PSX_REPO="${PSX_REPO:-https://github.com/libretro/pcsx_rearmed.git}"
 GENESIS_REPO="${GENESIS_REPO:-https://github.com/libretro/Genesis-Plus-GX.git}"
 GC_REPO="${GC_REPO:-https://github.com/libretro/dolphin.git}"
@@ -170,7 +173,7 @@ RGOS_INITRD="${RGOS_INITRD:-1}"
 RGOS_WIPE_ROMS="${RGOS_WIPE_ROMS:-1}"
 [[ "$RGOS_WIPE_ROMS" == 0 || "$RGOS_WIPE_ROMS" == 1 ]] || { echo "RGOS_WIPE_ROMS must be 0 or 1" >&2; exit 1; }
 [[ "$RGOS_INITRD" == 0 || "$RGOS_INITRD" == 1 ]] || { echo "RGOS_INITRD must be 0 or 1" >&2; exit 1; }
-NGP_SRC="${NGP_SRC:-https://github.com/libretro/beetle-ngp-libretro/archive/refs/heads/master.tar.gz}"
+NGP_SRC="${NGP_SRC:-https://github.com/libretro/beetle-ngp-libretro/archive/${NGP_REF:-refs/heads/master}.tar.gz}"
 EMU_PKGS="retroarch,libretro-gambatte,libretro-mgba,libretro-snes9x,libretro-nestopia,libretro-beetle-wswan,libretro-core-info,liblzo2-2,libgl1-mesa-dri,libegl1,libegl-mesa0,libgles2,libgbm1,libsdl2-2.0-0,libopenal1"
 EXTRA_PKGS="${EXTRA_PKGS:-}"
 
@@ -190,6 +193,7 @@ for t in "${need[@]}"; do
 done
 
 mkdir -p "$WORK" "$OUT" "$WORK/mnt"
+rm -f "$CORES_LOG"
 RX_GZ="$WORK/$(basename "$ROCKNIX_URL")"; RX_IMG="${RX_GZ%.gz}"
 LOOP=""
 cleanup() { set +e; mountpoint -q "$WORK/mnt" && umount "$WORK/mnt"; [[ -n "$LOOP" ]] && losetup -d "$LOOP"; }
@@ -604,6 +608,7 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
       (
         set -e
         wget -q -O "$WORK/ngp-src.tar.gz" "$NGP_SRC"
+        core_log ngp "$NGP_SRC" "${NGP_REF:-latest}" "$(sha256sum "$WORK/ngp-src.tar.gz" | cut -c1-16) (tarball hash)"
         mkdir -p "$ROOTFS/tmp/core-src/ngp"; tar -xzf "$WORK/ngp-src.tar.gz" -C "$ROOTFS/tmp/core-src/ngp" --strip-components=1
         chroot "$ROOTFS" sh -c 'cd /tmp/core-src/ngp && make -j"$(nproc)"'
         install -m 755 "$ROOTFS"/tmp/core-src/ngp/mednafen_ngp_libretro.so "$LRDIR/mednafen_ngp_libretro.so"
@@ -620,7 +625,7 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/genesis-plus-gx"
-        git clone -q --depth 1 "$GENESIS_REPO" "$WORK/genesis-plus-gx"
+        git_fetch genesis "$GENESIS_REPO" "$WORK/genesis-plus-gx" 0
         cp -r "$WORK/genesis-plus-gx" "$ROOTFS/tmp/core-src/gen"
         chroot "$ROOTFS" sh -c 'cd /tmp/core-src/gen && make -f Makefile.libretro platform=unix -j"$(nproc)"'
         install -m 755 "$ROOTFS"/tmp/core-src/gen/genesis_plus_gx_libretro.so "$LRDIR/genesis_plus_gx_libretro.so"
@@ -636,7 +641,7 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
       (
         set -e
         rm -rf "$WORK/mame2003-plus"
-        git clone -q --depth 1 "$MAME2003_REPO" "$WORK/mame2003-plus"
+        git_fetch mame2003_plus "$MAME2003_REPO" "$WORK/mame2003-plus" 0
         cp -r "$WORK/mame2003-plus" "$ROOTFS/tmp/core-src/mame2003"
         chroot "$ROOTFS" sh -c 'cd /tmp/core-src/mame2003 && make platform=unix -j"$(nproc)"'
         install -m 755 "$ROOTFS"/tmp/core-src/mame2003/mame2003_plus_libretro.so "$LRDIR/mame2003_plus_libretro.so"
@@ -654,7 +659,7 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
         echo "==> Building the $asys core ($acore)"
         if (
           command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
-          rm -rf "$WORK/$acore" && git clone -q --depth 1 "$arepo" "$WORK/$acore" || exit 1
+          git_fetch "$acore" "$arepo" "$WORK/$acore" 0 || exit 1
           cp -r "$WORK/$acore" "$ROOTFS/tmp/core-src/$acore" || exit 1
           chroot "$ROOTFS" sh -c "cd /tmp/core-src/$acore && make -j\"\$(nproc)\"" || exit 1
           so="$(find "$ROOTFS/tmp/core-src/$acore" -name "${acore}_libretro.so" -type f | head -n1)"
@@ -672,7 +677,7 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/pcsx_rearmed"
-        git clone -q --depth 1 --recurse-submodules --shallow-submodules "$PSX_REPO" "$WORK/pcsx_rearmed"
+        git_fetch psx "$PSX_REPO" "$WORK/pcsx_rearmed"
         cp -r "$WORK/pcsx_rearmed" "$ROOTFS/tmp/core-src/psx"
         chroot "$ROOTFS" sh -c 'cd /tmp/core-src/psx && make -f Makefile.libretro -j"$(nproc)"'
         install -m 755 "$ROOTFS"/tmp/core-src/psx/pcsx_rearmed_libretro.so "$LRDIR/pcsx_rearmed_libretro.so"
@@ -690,7 +695,7 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/flycast"
-        git clone -q --depth 1 --recurse-submodules --shallow-submodules "$DC_REPO" "$WORK/flycast"
+        git_fetch flycast "$DC_REPO" "$WORK/flycast"
         rm -rf "$ROOTFS/tmp/core-src/dc"; cp -r "$WORK/flycast" "$ROOTFS/tmp/core-src/dc"
         # one package at a time: a package that is missing in this Debian suite must not stop the others from installing
         for pkg in libgles-dev libegl-dev zlib1g-dev libcurl4-openssl-dev pkg-config libzip-dev libasound2-dev; do
@@ -751,7 +756,7 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/flycast-sa"
-        git clone -q --depth 1 --recurse-submodules --shallow-submodules "$DC_REPO" "$WORK/flycast-sa"
+        git_fetch flycast-standalone "$DC_REPO" "$WORK/flycast-sa"
         rm -rf "$ROOTFS/tmp/core-src/dcsa"; cp -r "$WORK/flycast-sa" "$ROOTFS/tmp/core-src/dcsa"
         # one package at a time: a package that is missing in this Debian suite must not stop the others from installing
         for pkg in cmake ninja-build pkg-config libsdl2-dev libgles-dev libegl-dev libgbm-dev libdrm-dev zlib1g-dev libcurl4-openssl-dev libzip-dev libasound2-dev libpulse-dev; do
@@ -799,7 +804,7 @@ KEEP
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/mupen64plus-next"
-        git clone -q --depth 1 --recurse-submodules --shallow-submodules "$N64_REPO" "$WORK/mupen64plus-next"
+        git_fetch n64 "$N64_REPO" "$WORK/mupen64plus-next"
         rm -rf "$ROOTFS/tmp/core-src/n64"; cp -r "$WORK/mupen64plus-next" "$ROOTFS/tmp/core-src/n64"
         # one package at a time: a package that is missing in this Debian suite must not stop the others from installing
         for pkg in libgles-dev libegl-dev zlib1g-dev libpng-dev; do
@@ -840,7 +845,7 @@ KEEP
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/yabasanshiro"
-        git clone -q --depth 1 ${SATURN_BRANCH:+--branch "$SATURN_BRANCH"} --recurse-submodules --shallow-submodules "$SATURN_REPO" "$WORK/yabasanshiro"
+        git_fetch saturn "$SATURN_REPO" "$WORK/yabasanshiro"
         rm -rf "$ROOTFS/tmp/core-src/saturn"; cp -r "$WORK/yabasanshiro" "$ROOTFS/tmp/core-src/saturn"
         for pkg in libgles-dev libegl-dev zlib1g-dev libpng-dev; do
           chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg" >>"$SATURN_LOG" 2>&1 \
@@ -879,7 +884,7 @@ KEEP
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/fake08"
-        git clone -q --depth 1 --recurse-submodules --shallow-submodules "$PICO8_REPO" "$WORK/fake08"
+        git_fetch fake08 "$PICO8_REPO" "$WORK/fake08"
         rm -rf "$ROOTFS/tmp/core-src/fake08"; cp -r "$WORK/fake08" "$ROOTFS/tmp/core-src/fake08"
         built=0
         for jobs in "$(nproc)" 2 1; do
@@ -908,7 +913,7 @@ KEEP
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/retro8"
-        git clone -q --depth 1 --recurse-submodules --shallow-submodules "$PICO8_ALT_REPO" "$WORK/retro8"
+        git_fetch retro8 "$PICO8_ALT_REPO" "$WORK/retro8"
         rm -rf "$ROOTFS/tmp/core-src/retro8"; cp -r "$WORK/retro8" "$ROOTFS/tmp/core-src/retro8"
         chroot "$ROOTFS" sh -c 'cd /tmp/core-src/retro8 && make platform=unix -j"$(nproc)"' >>"$R8_LOG" 2>&1 \
           || { echo "retro8: make failed, last lines of $R8_LOG:"; tail -n 40 "$R8_LOG"; exit 1; }
@@ -930,7 +935,7 @@ KEEP
            libcurl4-openssl-dev libpng-dev libminizip-dev liblzo2-dev libmbedtls-dev libhidapi-dev zlib1g-dev libxi-dev libxrandr-dev libx11-dev \
            && (
         rm -rf "$WORK/dolphin-libretro"
-        git clone -q --depth 1 --recurse-submodules --shallow-submodules "$GC_REPO" "$WORK/dolphin-libretro" || exit 1
+        git_fetch dolphin "$GC_REPO" "$WORK/dolphin-libretro" || exit 1
         cp -r "$WORK/dolphin-libretro" "$ROOTFS/tmp/core-src/gc" || exit 1
         chroot "$ROOTFS" sh -c 'cd /tmp/core-src/gc && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-mtune=cortex-a55 -DCMAKE_CXX_FLAGS=-mtune=cortex-a55 -DLIBRETRO=ON -DENABLE_QT=OFF -DENABLE_NOGUI=OFF -DENABLE_X11=OFF -DENABLE_TESTS=OFF -DENABLE_ANALYTICS=OFF -DENABLE_LTO=OFF -DUSE_DISCORD_PRESENCE=OFF -DENABLE_CLI_TOOL=OFF && cmake --build build -j"$(nproc)"' || exit 1
         so="$(find "$ROOTFS/tmp/core-src/gc" -name dolphin_libretro.so -type f | head -n1)"
@@ -1160,6 +1165,10 @@ echo "==> Precompiling Python bytecode"
 chroot "$ROOTFS" python3 -m compileall -q --invalidation-mode checked-hash /opt/rgos /usr/lib/python3 /usr/lib/python3/dist-packages >/dev/null 2>&1 \
   || echo "   (bytecode precompile reported errors; continuing, the sources still work)"
 
+# what the cores were built from: pinned by cores.conf, or the latest source at build time
+{ echo "# core | repo | ref (cores.conf) | commit"; cat "$CORES_LOG" "$HERE/work/cores/cores-built.txt" 2>/dev/null | sort -u; } > "$ROOTFS/etc/rgos/cores-built.txt"
+echo "==> Core versions (cores.conf):"; sed -n '2,$p' "$ROOTFS/etc/rgos/cores-built.txt" | sed 's/^/   /'
+cp "$HERE/cores.conf" "$ROOTFS/etc/rgos/cores.conf" 2>/dev/null || : > "$ROOTFS/etc/rgos/cores.conf"   # the on-device Core Installer installs the versions pinned here
 echo "==> Building SYSTEM squashfs"
 rm -f "$WORK/SYSTEM"
 mksquashfs "$ROOTFS" "$WORK/SYSTEM" -comp "$COMP" -b "$BSIZE" -noappend -quiet

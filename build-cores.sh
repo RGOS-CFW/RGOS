@@ -10,8 +10,10 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$HERE/work"; OUTC="$WORK/cores"; SRC="$WORK/cores-src"; LOGS="$WORK/cores-logs"; B="$WORK/cores-builder/rootfs"
+source "$HERE/tools/cores-lib.sh"; load_cores_conf   # cores.conf: <CORE>_REF = the version to build (empty = latest)
+CORES_LOG="$OUTC/cores-built.txt"
 DEBIAN_SUITE="${DEBIAN_SUITE:-trixie}"; DEBIAN_MIRROR="${DEBIAN_MIRROR:-http://deb.debian.org/debian}"
-NGP_SRC="${NGP_SRC:-https://github.com/libretro/beetle-ngp-libretro/archive/refs/heads/master.tar.gz}"
+NGP_SRC="${NGP_SRC:-https://github.com/libretro/beetle-ngp-libretro/archive/${NGP_REF:-refs/heads/master}.tar.gz}"
 GENESIS_REPO="${GENESIS_REPO:-https://github.com/libretro/Genesis-Plus-GX.git}"
 PSX_REPO="${PSX_REPO:-https://github.com/libretro/pcsx_rearmed.git}"
 GC_REPO="${GC_REPO:-https://github.com/libretro/dolphin.git}"
@@ -107,7 +109,7 @@ cp -L /etc/resolv.conf "$B/etc/resolv.conf"; mounts
 mkdir -p "$B/tmp/core-src"
 
 # helpers -----------------------------------------------------------------------------------------------------------------
-fetch() { rm -rf "$SRC/$1"; git clone -q --depth 1 ${3:+--branch "$3"} --recurse-submodules --shallow-submodules "$2" "$SRC/$1"; rm -rf "$B/tmp/core-src/$1"; cp -r "$SRC/$1" "$B/tmp/core-src/$1"; }
+fetch() { git_fetch "$1" "$2" "$SRC/$1" || return 1; rm -rf "$B/tmp/core-src/$1"; cp -r "$SRC/$1" "$B/tmp/core-src/$1"; }
 # run a build command in the chroot, retrying with fewer jobs (big C++ projects get OOM-killed in small VMs); $1=log, $2=command with @J@ for the job count
 retry() { local log="$1" cmd="$2" j; for j in "$(nproc)" 2 1; do echo "   -j$j (log: $log)"; cx sh -c "${cmd//@J@/$j}" >>"$log" 2>&1 && return 0; echo "   -j$j failed, retrying with fewer jobs"; done; tail -n 40 "$log"; return 1; }
 no_desktop_gl() { readelf -d "$1" 2>/dev/null | grep -Eq 'NEEDED.*\[(libGL|libOpenGL)\.so' && { echo "$(basename "$1") links desktop OpenGL (libGL), not OpenGL ES"; return 1; } || return 0; }
@@ -122,7 +124,7 @@ simple_make() { # name repo so [make args]
   [[ -n "$f" ]] || { echo "$so was not produced (log: $log)"; return 1; }; take "$f" "$so"; }
 
 build_ngp() { rm -rf "$SRC/ngp" "$B/tmp/core-src/ngp"; mkdir -p "$SRC/ngp" "$B/tmp/core-src/ngp"
-  wget -q -O "$SRC/ngp.tar.gz" "$NGP_SRC"; tar -xzf "$SRC/ngp.tar.gz" -C "$B/tmp/core-src/ngp" --strip-components=1
+  wget -q -O "$SRC/ngp.tar.gz" "$NGP_SRC"; core_log ngp "$NGP_SRC" "${NGP_REF:-latest}" "$(sha256sum "$SRC/ngp.tar.gz" | cut -c1-16) (tarball hash)"; tar -xzf "$SRC/ngp.tar.gz" -C "$B/tmp/core-src/ngp" --strip-components=1
   retry "$LOGS/ngp.log" "cd /tmp/core-src/ngp && make -j@J@"; take "$(find_so ngp mednafen_ngp_libretro.so)" mednafen_ngp_libretro.so; }
 build_genesis() { simple_make genesis "$GENESIS_REPO" genesis_plus_gx_libretro.so -f Makefile.libretro platform=unix; }
 build_stella2014() { simple_make stella2014 "$STELLA_REPO" stella2014_libretro.so; }
@@ -186,8 +188,10 @@ core_outputs() { case "$1" in
   retro8) echo retro8_libretro.so ;; dolphin) echo "dolphin_libretro.so dolphin-Sys" ;; mame) echo mame_libretro.so ;;
 esac; }
 # current upstream revision: the HEAD commit of the git repo (what the shallow clone would get); for ngp, a hash of its source tarball
-core_rev() { local r; r="$(core_repo "$1")"; local ref=HEAD; [[ "$1" == saturn && -n "$SATURN_BRANCH" ]] && ref="refs/heads/$SATURN_BRANCH"
+core_rev() { local r pin; r="$(core_repo "$1")"; local ref=HEAD; pin="$(core_ref "$1")"   # pin = the cores.conf version (Saturn: its branch)
   if [[ "$1" == ngp ]]; then wget -q -O - "$r" 2>/dev/null | sha256sum | cut -d' ' -f1 | grep -v '^e3b0c44298fc1c14' || true
+  elif [[ "$pin" =~ ^[0-9a-f]{7,40}$ ]]; then echo "$pin"   # a pinned commit never changes
+  elif [[ -n "$pin" ]]; then timeout 60 git ls-remote "$r" "$pin" "$pin^{}" 2>/dev/null | cut -f1 | tail -n1 || true   # tag (peeled) or branch
   else timeout 60 git ls-remote "$r" "$ref" 2>/dev/null | cut -f1 | head -n1 || true; fi; }
 outputs_present() { local o; for o in $(core_outputs "$1"); do [[ -e "$OUTC/$o" ]] || return 1; done; }
 sig_of() { printf '%s\n' "$(core_repo "$1")" "$(core_cfg "$1")" "$DEBIAN_SUITE" "$2"; }

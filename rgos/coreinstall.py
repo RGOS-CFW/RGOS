@@ -8,6 +8,12 @@ survives reboots and updates (the system image itself is read-only). cores.py an
 
 The download address can be changed with the RGOS_CORE_URL environment variable or {"url": "..."} in
 /etc/rgos/coreinstall.json (a mirror, or a folder of your own with the same `<core>_libretro.so.zip` layout).
+
+Versions: the image carries the build's cores.conf as /etc/rgos/cores.conf (<CORE>_REF=<tag | branch | commit>). A core that is
+pinned there is fetched from `<pin_url>/<ref>/<core>_libretro.so.zip` (RGOS_CORE_PIN_URL or {"pin_url": "..."} in coreinstall.json),
+never from the latest-nightly folder: like the image build, a pinned version that cannot be had is an error, not a silent fall
+back to the latest source. A core with an empty (or no) ref installs the latest as before. An environment variable of the same
+name as the setting (e.g. N64_REF) overrides the file, as it does in build.sh.
 """
 import json
 import os
@@ -21,6 +27,13 @@ import zipfile
 
 DEFAULT_URL = "https://buildbot.libretro.com/nightly/linux/aarch64/latest"
 CONF_FILE = os.environ.get("RGOS_CORE_CONF", "/etc/rgos/coreinstall.json")
+CORES_CONF = os.environ.get("RGOS_CORES_CONF", "/etc/rgos/cores.conf")
+# core name (as in cores.SYSTEM_CORE_COMPATIBILITY) -> the cores.conf setting that pins it (same map as core_ref_var in tools/cores-lib.sh)
+REF_VAR = {"mednafen_ngp": "NGP_REF", "genesis_plus_gx": "GENESIS_REF", "pcsx_rearmed": "PSX_REF", "dolphin": "GC_REF",
+           "flycast": "DC_REF", "flycast_standalone": "DC_REF", "mupen64plus_next": "N64_REF", "yabasanshiro": "SATURN_REF",
+           "fake08": "PICO8_REF", "retro8": "PICO8_ALT_REF", "stella2014": "STELLA_REF", "atari800": "ATARI800_REF",
+           "prosystem": "PROSYSTEM_REF", "mame2003_plus": "MAME2003_REF", "mame": "MAME_REF"}
+REF_RE = re.compile(r"^[A-Za-z0-9._/@+-]*$")
 # Cores that must not be offered: dolphin needs its Sys data folder, which only the RG Rotate and H700 images carry, and
 # flycast_standalone is a program, not a libretro core (there is nothing to download from the buildbot).
 EXCLUDE = frozenset(("dolphin", "flycast_standalone"))
@@ -50,6 +63,51 @@ def base_url():
             url = ""
     url = (url or DEFAULT_URL).strip().rstrip("/")
     return url if url.startswith(("http://", "https://")) else DEFAULT_URL
+
+
+def _conf_value(key):
+    try:
+        with open(CONF_FILE) as f:
+            return str(json.load(f).get(key, "") or "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def pin_url():
+    """Where pinned versions live: `<pin_url>/<ref>/<core>_libretro.so.zip`. Empty = no such source is configured."""
+    url = (os.environ.get("RGOS_CORE_PIN_URL") or _conf_value("pin_url")).strip().rstrip("/")
+    return url if url.startswith(("http://", "https://")) else ""
+
+
+def read_pins(path=None):
+    """{SETTING: ref} from cores.conf, read like tools/cores-lib.sh does (KEY=value lines, # comments, nothing is executed; only
+    the known *_REF names and plain ref characters are accepted). An environment variable of the same name wins, even when empty."""
+    pins = {}
+    try:
+        with open(path or CORES_CONF, newline="") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    known = set(REF_VAR.values())
+    for line in lines:
+        line = line.split("#", 1)[0]
+        if "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k, v = re.sub(r"\s+", "", k), v.strip().strip("\"'")
+        if k in known and REF_RE.match(v):
+            pins[k] = v
+    for k in known:
+        if k in os.environ:
+            v = os.environ[k].strip()
+            pins[k] = v if REF_RE.match(v) else pins.get(k, "")
+    return pins
+
+
+def pinned_ref(core, pins=None):
+    """The version cores.conf pins `core` to, or "" when it follows the latest (or is not covered by cores.conf)."""
+    var = REF_VAR.get(core)
+    return (read_pins() if pins is None else pins).get(var, "") if var else ""
 
 
 def core_dir(roms_root):
@@ -104,22 +162,35 @@ def _check_elf(path):
         raise CoreInstallError("That core is built for a different CPU")
 
 
-def _http_error(e):
+def _http_error(e, ref=""):
     if e.code == 404:
-        return "Not available for this device"
+        return ("Version %s not available" % ref) if ref else "Not available for this device"
     return "Server error %d" % e.code
 
 
-def download(core, dest, base=None, progress=None, cancelled=None, opener=None):
-    """Download and install one core into dest. Returns the installed path; raises CoreInstallError."""
+def core_url(core, base=None, ref=None):
+    """Address of one core's zip. `ref` is the cores.conf version (None = look it up); "" = the latest."""
+    ref = pinned_ref(core) if ref is None else ref
+    if not ref:
+        return "%s/%s_libretro.so.zip" % (base or base_url(), core)
+    root = (base or pin_url()).rstrip("/")
+    if not root:
+        raise CoreInstallError("cores.conf pins %s to %s, but no source for that version is set" % (core, ref))
+    return "%s/%s/%s_libretro.so.zip" % (root, ref, core)
+
+
+def download(core, dest, base=None, progress=None, cancelled=None, opener=None, ref=None):
+    """Download and install one core into dest, at the version cores.conf pins it to (the latest when it does not).
+    Returns the installed path; raises CoreInstallError."""
     if not NAME_RE.match(core):
         raise CoreInstallError("Bad core name")
-    if core in DESKTOP_GL_ONLY and not base and base_url() == DEFAULT_URL:
+    ref = pinned_ref(core) if ref is None else ref
+    if core in DESKTOP_GL_ONLY and not base and base_url() == DEFAULT_URL and not (ref and pin_url()):
         raise CoreInstallError("Desktop GL only, won't run. Rebuild image")
     progress = progress or (lambda pct: None)
     cancelled = cancelled or (lambda: False)
     opener = opener or urllib.request.urlopen
-    url = "%s/%s_libretro.so.zip" % (base or base_url(), core)
+    url = core_url(core, base, ref)
     final = os.path.join(dest, core + "_libretro.so")
     zpart, spart = os.path.join(dest, ".%s.zip.part" % core), os.path.join(dest, ".%s.so.part" % core)
     try:
@@ -128,7 +199,7 @@ def download(core, dest, base=None, progress=None, cancelled=None, opener=None):
         try:
             resp = opener(req, timeout=20)
         except urllib.error.HTTPError as e:
-            raise CoreInstallError(_http_error(e))
+            raise CoreInstallError(_http_error(e, ref))
         except (urllib.error.URLError, OSError, ValueError) as e:
             raise CoreInstallError("Can't reach the server. Check Wi-Fi in Settings")
         with resp:
