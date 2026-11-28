@@ -599,18 +599,24 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
   if chroot "$ROOTFS" apt-get update && chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc g++ make; then
     if (( WANT_NGP )); then
       echo "==> Building the Neo Geo Pocket core (mednafen_ngp)"
-      if (
+      # not "if ( ... )": bash ignores set -e inside an if condition
+      set +e
+      (
         set -e
         wget -q -O "$WORK/ngp-src.tar.gz" "$NGP_SRC"
         mkdir -p "$ROOTFS/tmp/core-src/ngp"; tar -xzf "$WORK/ngp-src.tar.gz" -C "$ROOTFS/tmp/core-src/ngp" --strip-components=1
         chroot "$ROOTFS" sh -c 'cd /tmp/core-src/ngp && make -j"$(nproc)"'
         install -m 755 "$ROOTFS"/tmp/core-src/ngp/mednafen_ngp_libretro.so "$LRDIR/mednafen_ngp_libretro.so"
-      ); then echo "   mednafen_ngp_libretro.so built"
+      )
+      rc=$?; set -e
+      if (( rc == 0 )); then echo "   mednafen_ngp_libretro.so built"
       else echo "!! could not build the Neo Geo Pocket core: NGP/NGPC will have no core (put a prebuilt mednafen_ngp_libretro.so in cores/ and rebuild)"; fi
     fi
     if (( WANT_GEN )); then
       echo "==> Building the Genesis Plus GX core (genesis_plus_gx)"
-      if (
+      # not "if ( ... )": bash ignores set -e inside an if condition
+      set +e
+      (
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/genesis-plus-gx"
@@ -618,19 +624,25 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
         cp -r "$WORK/genesis-plus-gx" "$ROOTFS/tmp/core-src/gen"
         chroot "$ROOTFS" sh -c 'cd /tmp/core-src/gen && make -f Makefile.libretro platform=unix -j"$(nproc)"'
         install -m 755 "$ROOTFS"/tmp/core-src/gen/genesis_plus_gx_libretro.so "$LRDIR/genesis_plus_gx_libretro.so"
-      ); then echo "   genesis_plus_gx_libretro.so built"
+      )
+      rc=$?; set -e
+      if (( rc == 0 )); then echo "   genesis_plus_gx_libretro.so built"
       else echo "!! could not build Genesis Plus GX: Mega Drive / Master System / Game Gear / Sega CD will have no core (put a prebuilt genesis_plus_gx_libretro.so in cores/ and rebuild)"; fi
     fi
     if (( WANT_MAME )); then
       echo "==> Building the arcade core (mame2003_plus)"
-      if (
+      # not "if ( ... )": bash ignores set -e inside an if condition
+      set +e
+      (
         set -e
         rm -rf "$WORK/mame2003-plus"
         git clone -q --depth 1 "$MAME2003_REPO" "$WORK/mame2003-plus"
         cp -r "$WORK/mame2003-plus" "$ROOTFS/tmp/core-src/mame2003"
         chroot "$ROOTFS" sh -c 'cd /tmp/core-src/mame2003 && make platform=unix -j"$(nproc)"'
         install -m 755 "$ROOTFS"/tmp/core-src/mame2003/mame2003_plus_libretro.so "$LRDIR/mame2003_plus_libretro.so"
-      ); then echo "   mame2003_plus_libretro.so built"
+      )
+      rc=$?; set -e
+      if (( rc == 0 )); then echo "   mame2003_plus_libretro.so built"
       else echo "!! could not build MAME 2003-Plus: arcade only has FinalBurn Neo (Core Installer) (put a prebuilt mame2003_plus_libretro.so in cores/ and rebuild)"; rm -f "$LRDIR/mame2003_plus_libretro.so"; fi
     fi
     if (( WANT_ATARI )); then
@@ -654,7 +666,9 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
     fi
     if (( WANT_PSX )); then
       echo "==> Building the PlayStation core (pcsx_rearmed, aarch64 dynarec)"
-      if (
+      # not "if ( ... )": bash ignores set -e inside an if condition
+      set +e
+      (
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/pcsx_rearmed"
@@ -662,13 +676,17 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
         cp -r "$WORK/pcsx_rearmed" "$ROOTFS/tmp/core-src/psx"
         chroot "$ROOTFS" sh -c 'cd /tmp/core-src/psx && make -f Makefile.libretro -j"$(nproc)"'
         install -m 755 "$ROOTFS"/tmp/core-src/psx/pcsx_rearmed_libretro.so "$LRDIR/pcsx_rearmed_libretro.so"
-      ); then echo "   pcsx_rearmed_libretro.so built"
+      )
+      rc=$?; set -e
+      if (( rc == 0 )); then echo "   pcsx_rearmed_libretro.so built"
       else echo "!! could not build pcsx_rearmed: PlayStation falls back to mednafen_psx (Beetle PSX, slower; software renderer)"; fi
     fi
     if (( WANT_DC )); then
       echo "==> Building the Dreamcast core (flycast, OpenGL ES to match RetroArch)"
       DC_LOG="$WORK/flycast-build.log"; : > "$DC_LOG"
-      if (
+      # not "if ( ... )": bash ignores set -e inside an if condition
+      set +e
+      (
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/flycast"
@@ -713,7 +731,9 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
           echo "flycast_libretro.so links desktop OpenGL (libGL), not OpenGL ES: check DC_MAKE_ARGS=$DC_MAKE_ARGS (FORCE_GLES=1)"; exit 1
         fi
         install -m 755 "$so" "$LRDIR/flycast_libretro.so"
-      ); then echo "   flycast_libretro.so built (GLES)"
+      )
+      rc=$?; set -e
+      if (( rc == 0 )); then echo "   flycast_libretro.so built (GLES)"
       else
         echo "!! could not build Flycast: Dreamcast will have NO core in this image (log: $DC_LOG)."
         echo "!! Do not use Tools > Core Installer for it: the libretro buildbot Flycast is desktop-GL and cannot run on this RetroArch."
@@ -725,7 +745,9 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
     if (( WANT_DCSA )); then
       echo "==> Building the standalone Dreamcast emulator (flycast, OpenGL ES; started by RG OS, no RetroArch)"
       DCSA_LOG="$WORK/flycast-standalone-build.log"; : > "$DCSA_LOG"
-      if (
+      # not "if ( ... )": bash ignores set -e inside an if condition
+      set +e
+      (
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/flycast-sa"
@@ -758,7 +780,9 @@ if (( WANT_MAME || WANT_NGP || WANT_PSX || WANT_GEN || WANT_GC || WANT_ATARI || 
 ldd /usr/local/bin/flycast | awk '/=>/ {print $3}' | while read -r l; do r="$(readlink -f "$l")"; dpkg -S "$r" 2>/dev/null || dpkg -S "$l" 2>/dev/null || dpkg -S "${r#/usr}" 2>/dev/null; done | cut -d: -f1 | sort -u | xargs -r apt-mark manual
 KEEP
         chroot "$ROOTFS" sh /tmp/core-src/keep-flycast-libs.sh
-      ); then echo "   standalone flycast built (GLES), installed as /usr/local/bin/flycast"
+      )
+      rc=$?; set -e
+      if (( rc == 0 )); then echo "   standalone flycast built (GLES), installed as /usr/local/bin/flycast"
       else
         echo "!! could not build the standalone Flycast: only the libretro Flycast will be offered for Dreamcast (log: $DCSA_LOG)."
         echo "!! Fix the build error above, or put a GLES-built flycast executable in cores/standalone/ on the ROMS card."
@@ -769,7 +793,9 @@ KEEP
     if (( WANT_N64 )); then
       echo "==> Building the Nintendo 64 core (mupen64plus_next, OpenGL ES to match RetroArch)"
       N64_LOG="$WORK/mupen64plus-next-build.log"; : > "$N64_LOG"
-      if (
+      # not "if ( ... )": bash ignores set -e inside an if condition
+      set +e
+      (
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/mupen64plus-next"
@@ -795,7 +821,9 @@ KEEP
           echo "mupen64plus_next_libretro.so links desktop OpenGL (libGL), not OpenGL ES: check N64_MAKE_ARGS=$N64_MAKE_ARGS (FORCE_GLES=1)"; exit 1
         fi
         install -m 755 "$so" "$LRDIR/mupen64plus_next_libretro.so"
-      ); then echo "   mupen64plus_next_libretro.so built (GLES)"
+      )
+      rc=$?; set -e
+      if (( rc == 0 )); then echo "   mupen64plus_next_libretro.so built (GLES)"
       else
         echo "!! could not build Mupen64Plus-Next: Nintendo 64 will have NO core in this image (log: $N64_LOG)."
         echo "!! Fix the build error above, or put a GLES-built mupen64plus_next_libretro.so in cores/ and rebuild."
@@ -806,7 +834,9 @@ KEEP
     if (( WANT_SATURN )); then
       echo "==> Building the Sega Saturn core (yabasanshiro, the only pre-installed Saturn core)"
       SATURN_LOG="$WORK/yabasanshiro-build.log"; : > "$SATURN_LOG"
-      if (
+      # not "if ( ... )": bash ignores set -e inside an if condition
+      set +e
+      (
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/yabasanshiro"
@@ -830,7 +860,9 @@ KEEP
           echo "yabasanshiro_libretro.so links desktop OpenGL (libGL), not OpenGL ES: check SATURN_MAKE_ARGS=$SATURN_MAKE_ARGS"; exit 1
         fi
         install -m 755 "$so" "$LRDIR/yabasanshiro_libretro.so"
-      ); then echo "   yabasanshiro_libretro.so built"
+      )
+      rc=$?; set -e
+      if (( rc == 0 )); then echo "   yabasanshiro_libretro.so built"
       else
         echo "!! could not build YabaSanshiro: Sega Saturn will have NO pre-installed core in this image (log: $SATURN_LOG)."
         echo "!! Install a Saturn core from Tools > Core Installer on the device, or put a yabasanshiro_libretro.so in cores/ and rebuild."
@@ -841,7 +873,9 @@ KEEP
     if (( WANT_FAKE08 )); then
       echo "==> Building the PICO-8 core (fake08)"
       P8_LOG="$WORK/fake08-build.log"; : > "$P8_LOG"
-      if (
+      # not "if ( ... )": bash ignores set -e inside an if condition
+      set +e
+      (
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/fake08"
@@ -857,7 +891,9 @@ KEEP
         so="$(find "$ROOTFS/tmp/core-src/fake08" -name fake08_libretro.so -type f | head -n1)"
         [[ -n "$so" ]] || { echo "fake08: make finished but fake08_libretro.so was not produced (check PICO8_MAKE_DIR=$PICO8_MAKE_DIR, log: $P8_LOG)"; exit 1; }
         install -m 755 "$so" "$LRDIR/fake08_libretro.so"
-      ); then echo "   fake08_libretro.so built"
+      )
+      rc=$?; set -e
+      if (( rc == 0 )); then echo "   fake08_libretro.so built"
       else
         echo "!! could not build fake-08 (log: $P8_LOG): PICO-8 will use retro8 if that builds, otherwise it has no core."
         rm -f "$LRDIR/fake08_libretro.so"
@@ -866,7 +902,9 @@ KEEP
     if (( WANT_RETRO8 )); then
       echo "==> Building the PICO-8 alternative core (retro8)"
       R8_LOG="$WORK/retro8-build.log"; : > "$R8_LOG"
-      if (
+      # not "if ( ... )": bash ignores set -e inside an if condition
+      set +e
+      (
         set -e
         command -v git >/dev/null || { echo "git is not installed on this PC (apt install git)"; exit 1; }
         rm -rf "$WORK/retro8"
@@ -877,7 +915,9 @@ KEEP
         so="$(find "$ROOTFS/tmp/core-src/retro8" -name retro8_libretro.so -type f | head -n1)"
         [[ -n "$so" ]] || { echo "retro8: make finished but retro8_libretro.so was not produced (log: $R8_LOG)"; exit 1; }
         install -m 755 "$so" "$LRDIR/retro8_libretro.so"
-      ); then echo "   retro8_libretro.so built"
+      )
+      rc=$?; set -e
+      if (( rc == 0 )); then echo "   retro8_libretro.so built"
       else
         echo "!! could not build retro8 (log: $R8_LOG): it will not be offered as an alternative PICO-8 core (Tools > Core Installer can fetch it)."
         rm -f "$LRDIR/retro8_libretro.so"
